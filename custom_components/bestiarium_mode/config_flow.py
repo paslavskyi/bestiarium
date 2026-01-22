@@ -1,0 +1,270 @@
+"""Adds config flow for Bestiarium Mode."""
+
+from __future__ import annotations
+
+import voluptuous as vol
+from homeassistant import config_entries
+from homeassistant.config_entries import SOURCE_RECONFIGURE
+from homeassistant.helpers import selector
+
+from .const import DOMAIN
+
+CONF_OPTIONS = "options"
+CONF_NAME = "name"
+CONF_DESCRIPTION = "description"
+CONF_ICON = "icon"
+
+
+class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
+    """Config flow for Bestiarium Mode."""
+
+    VERSION = 1
+
+    def __init__(self) -> None:
+        """Initialize the config flow."""
+        super().__init__()
+        self._options: list[dict[str, str]] = []
+
+    def _build_menu_options(self) -> dict[str, str]:
+        """Build menu options for the options list step."""
+        menu_options: dict[str, str] = {}
+        for i, option in enumerate(self._options):
+            option_name = option.get(CONF_NAME, f"Option {i+1}")
+            menu_options[f"edit_{i}"] = option_name
+
+        menu_options["add"] = "Add option"
+        menu_options["complete"] = "Complete"
+
+        return menu_options
+
+    def _get_list_step_id(self) -> str:
+        """Get the step ID for the options list (user or reconfigure)."""
+        return "reconfigure" if self.source == SOURCE_RECONFIGURE else "user"
+
+    async def _async_step_options_list(
+        self,
+        user_input: dict | None = None,  # noqa: ARG002
+    ) -> config_entries.ConfigFlowResult:
+        """Handle the options list step (shared by user and reconfigure flows)."""
+        return self.async_show_menu(
+            step_id=self._get_list_step_id(),
+            menu_options=self._build_menu_options(),
+        )
+
+    async def async_step_user(
+        self,
+        user_input: dict | None = None,  # noqa: ARG002
+    ) -> config_entries.ConfigFlowResult:
+        """Handle a flow initialized by the user."""
+        await self.async_set_unique_id("bestiarium_mode")
+        self._abort_if_unique_id_configured()
+
+        return await self._async_step_options_list()
+
+    async def async_step_reconfigure(
+        self,
+        user_input: dict | None = None,  # noqa: ARG002
+    ) -> config_entries.ConfigFlowResult:
+        """Handle reconfiguration of an existing config entry."""
+        entry = self._get_reconfigure_entry()
+        await self.async_set_unique_id("bestiarium_mode")
+        self._abort_if_unique_id_mismatch()
+
+        # Load existing options from the config entry
+        if not self._options:
+            self._options = entry.data.get(CONF_OPTIONS, []).copy()
+
+        return await self._async_step_options_list()
+
+    async def async_step_add(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle adding a new option."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            name = user_input.get(CONF_NAME, "").strip()
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            else:
+                option = {
+                    CONF_NAME: name,
+                    CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
+                    CONF_ICON: user_input.get(CONF_ICON, "mdi:circle-outline"),
+                }
+                self._options.append(option)
+                return await self._async_step_options_list()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(CONF_NAME, default=""): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
+                ),
+                vol.Optional(CONF_DESCRIPTION, default=""): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
+                ),
+                vol.Optional(
+                    CONF_ICON, default="mdi:circle-outline"
+                ): selector.IconSelector(
+                    selector.IconSelectorConfig(),
+                ),
+            },
+        )
+
+        return self.async_show_form(
+            step_id="add",
+            data_schema=data_schema,
+            errors=errors,
+        )
+
+    async def async_step_complete(
+        self,
+        user_input: dict | None = None,  # noqa: ARG002
+    ) -> config_entries.ConfigFlowResult:
+        """Handle completing the configuration."""
+        if not self._options:
+            return await self._async_step_options_list()
+
+        # If this is a reconfigure flow, update the existing entry
+        if self.source == SOURCE_RECONFIGURE:
+            entry = self._get_reconfigure_entry()
+            return self.async_update_reload_and_abort(
+                entry,
+                data_updates={CONF_OPTIONS: self._options},
+            )
+
+        # Otherwise, create a new entry
+        return self.async_create_entry(
+            title="Bestiarium Mode",
+            data={CONF_OPTIONS: self._options},
+        )
+
+    async def async_step_edit_0(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 0."""
+        return await self._async_step_edit(0, user_input)
+
+    async def async_step_edit_1(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 1."""
+        return await self._async_step_edit(1, user_input)
+
+    async def async_step_edit_2(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 2."""
+        return await self._async_step_edit(2, user_input)
+
+    async def async_step_edit_3(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 3."""
+        return await self._async_step_edit(3, user_input)
+
+    async def async_step_edit_4(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 4."""
+        return await self._async_step_edit(4, user_input)
+
+    async def async_step_edit_5(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 5."""
+        return await self._async_step_edit(5, user_input)
+
+    async def async_step_edit_6(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 6."""
+        return await self._async_step_edit(6, user_input)
+
+    async def async_step_edit_7(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 7."""
+        return await self._async_step_edit(7, user_input)
+
+    async def async_step_edit_8(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 8."""
+        return await self._async_step_edit(8, user_input)
+
+    async def async_step_edit_9(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing option 9."""
+        return await self._async_step_edit(9, user_input)
+
+    async def _async_step_edit(
+        self,
+        edit_index: int,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle editing an existing option."""
+        if edit_index < 0 or edit_index >= len(self._options):
+            return await self._async_step_options_list()
+
+        option = self._options[edit_index]
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            # Check if user wants to delete
+            if user_input.get("delete"):
+                self._options.pop(edit_index)
+                return await self._async_step_options_list()
+
+            name = user_input.get(CONF_NAME, "").strip()
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            else:
+                self._options[edit_index] = {
+                    CONF_NAME: name,
+                    CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
+                    CONF_ICON: user_input.get(CONF_ICON, "mdi:circle-outline"),
+                }
+                return await self._async_step_options_list()
+
+        data_schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_NAME, default=option.get(CONF_NAME, "")
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
+                ),
+                vol.Optional(
+                    CONF_DESCRIPTION,
+                    default=option.get(CONF_DESCRIPTION, ""),
+                ): selector.TextSelector(
+                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
+                ),
+                vol.Optional(
+                    CONF_ICON, default=option.get(CONF_ICON, "mdi:circle-outline")
+                ): selector.IconSelector(
+                    selector.IconSelectorConfig(),
+                ),
+                vol.Optional("delete", default=False): selector.BooleanSelector(
+                    selector.BooleanSelectorConfig(),
+                ),
+            },
+        )
+
+        return self.async_show_form(
+            step_id=f"edit_{edit_index}",
+            data_schema=data_schema,
+            errors=errors,
+        )

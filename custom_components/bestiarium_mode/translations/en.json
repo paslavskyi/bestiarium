@@ -1,0 +1,218 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium Mode",
+        "description": "Configure Bestiarium Mode options. Add options to define different modes for electricity restrictions.",
+        "menu_options": {
+          "add": "Add option",
+          "complete": "Complete"
+        },
+        "menu_option_descriptions": {
+          "add": "Add a new mode option",
+          "complete": "Finish configuration and create the select entity"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Bestiarium Mode",
+        "description": "Update your Bestiarium Mode options. Add, edit, or remove modes as needed.",
+        "menu_options": {
+          "add": "Add option",
+          "complete": "Complete"
+        },
+        "menu_option_descriptions": {
+          "add": "Add a new mode option",
+          "complete": "Save changes and update the select entity"
+        }
+      },
+      "add": {
+        "title": "Add Option",
+        "description": "Create a new Bestiarium Mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode"
+        }
+      },
+      "edit_0": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_1": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_2": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_3": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_4": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_5": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_6": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_7": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_8": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      },
+      "edit_9": {
+        "title": "Edit Option",
+        "description": "Modify or delete this mode option",
+        "data": {
+          "name": "Name",
+          "description": "Description",
+          "icon": "Icon",
+          "delete": "Delete this option"
+        },
+        "data_description": {
+          "name": "The name of this mode option (required)",
+          "description": "Optional description for this mode",
+          "icon": "Icon to display for this mode",
+          "delete": "Check to delete this option"
+        }
+      }
+    },
+    "error": {
+      "name_required": "Name is required",
+      "no_options": "At least one option must be configured before completing"
+    },
+    "abort": {
+      "already_configured": "Bestiarium Mode is already configured. Only one instance is allowed."
+    }
+  },
+  "entity": {
+    "select": {
+      "mode": {
+        "name": "Mode"
+      }
+    }
+  }
+}

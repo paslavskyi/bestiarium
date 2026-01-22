@@ -1,4 +1,4 @@
-name: Validate
+name: Integration Validation
 
 on:
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions: {}
 
 jobs:
   hassfest: # https://developers.home-assistant.io/blog/2020/04/16/hassfest
-    name: Hassfest validation
+    name: "Hassfest (Integration checks)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
@@ -25,7 +25,7 @@ jobs:
         uses: home-assistant/actions/hassfest@87c064c607f3c5cc673a24258d0c98d23033bfc3 # master
 
   hacs: # https://github.com/hacs/action
-    name: HACS validation
+    name: "HACS (Store validation)"
     runs-on: ubuntu-latest
     steps:
       - name: Run HACS validation
