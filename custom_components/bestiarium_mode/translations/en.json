@@ -5,24 +5,58 @@
         "title": "Bestiarium Mode",
         "description": "Configure Bestiarium Mode options. Add options to define different modes for electricity restrictions.",
         "menu_options": {
-          "add": "Add option",
-          "complete": "Complete"
+          "options": "Options",
+          "actions": "Actions"
         },
         "menu_option_descriptions": {
-          "add": "Add a new mode option",
-          "complete": "Finish configuration and create the select entity"
+          "options": "View and edit existing options",
+          "actions": "Add options or complete setup"
         }
       },
       "reconfigure": {
         "title": "Reconfigure Bestiarium Mode",
         "description": "Update your Bestiarium Mode options. Add, edit, or remove modes as needed.",
         "menu_options": {
+          "options": "Options",
+          "actions": "Actions"
+        },
+        "menu_option_descriptions": {
+          "options": "View and edit existing options",
+          "actions": "Add options or save changes"
+        }
+      },
+      "options": {
+        "title": "Options",
+        "description": "Select an option to edit."
+      },
+      "actions": {
+        "title": "Actions",
+        "description": "Add options or finish configuration.",
+        "menu_options": {
+          "configure_ac_load_limits": "Configure AC load limits",
           "add": "Add option",
           "complete": "Complete"
         },
         "menu_option_descriptions": {
+          "configure_ac_load_limits": "Set AC power sensor and thresholds",
           "add": "Add a new mode option",
-          "complete": "Save changes and update the select entity"
+          "complete": "Finish configuration and create the select entity"
+        }
+      },
+      "configure_ac_load_limits": {
+        "title": "Configure AC Load Limits",
+        "description": "Select the AC power sensor and set load thresholds.",
+        "data": {
+          "ac_power_sensor": "AC power sensor",
+          "ac_load_limit_w": "AC load limit (W)",
+          "ac_yellow_zone_percent": "Yellow zone (%)",
+          "ac_red_zone_percent": "Red zone (%)"
+        },
+        "data_description": {
+          "ac_power_sensor": "Sensor that measures AC power (W)",
+          "ac_load_limit_w": "Maximum AC load before limiting (W)",
+          "ac_yellow_zone_percent": "Yellow warning threshold percentage",
+          "ac_red_zone_percent": "Red critical threshold percentage"
         }
       },
       "add": {
@@ -202,6 +236,8 @@
     },
     "error": {
       "name_required": "Name is required",
+      "yellow_zone_min": "Yellow zone must be at least 50%",
+      "red_zone_must_exceed_yellow": "Red zone must be higher than yellow zone",
       "no_options": "At least one option must be configured before completing"
     },
     "abort": {

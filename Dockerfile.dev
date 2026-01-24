@@ -2,11 +2,13 @@ FROM python:3.13-slim
 
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get -y install --no-install-recommends \
+    build-essential \
     ffmpeg \
     libturbojpeg0 \
     libpcap-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Revision 202601231125
 COPY requirements.txt .
 RUN pip3 install --upgrade pip \
     && pip3 install -r requirements.txt

@@ -1,18 +1,30 @@
+#!/usr/bin/env python3
 """Adds config flow for Bestiarium Mode."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_RECONFIGURE
 from homeassistant.helpers import selector
 
-from .const import DOMAIN
+from .const import (
+    CONF_AC_LOAD_LIMIT_W,
+    CONF_AC_LOAD_LIMITS,
+    CONF_AC_POWER_SENSOR,
+    CONF_AC_RED_ZONE_PERCENT,
+    CONF_AC_YELLOW_ZONE_PERCENT,
+    DOMAIN,
+)
 
 CONF_OPTIONS = "options"
 CONF_NAME = "name"
 CONF_DESCRIPTION = "description"
 CONF_ICON = "icon"
+DEFAULT_ICON = "mdi:home"
+MIN_YELLOW_ZONE_PERCENT = 50
 
 
 class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -24,16 +36,18 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         super().__init__()
         self._options: list[dict[str, str]] = []
+        self._ac_load_limits: dict[str, Any] | None = None
 
     def _build_menu_options(self) -> dict[str, str]:
         """Build menu options for the options list step."""
         menu_options: dict[str, str] = {}
         for i, option in enumerate(self._options):
-            option_name = option.get(CONF_NAME, f"Option {i+1}")
-            menu_options[f"edit_{i}"] = option_name
+            option_name = option.get(CONF_NAME, f"Option {i + 1}")
+            menu_options[f"edit_{i}"] = f"🏷️ {option_name}"
 
-        menu_options["add"] = "Add option"
-        menu_options["complete"] = "Complete"
+        menu_options["configure_ac_load_limits"] = "⚡ Configure AC load limits"
+        menu_options["add"] = "➕ Add option"
+        menu_options["complete"] = "💾 Save"
 
         return menu_options
 
@@ -73,6 +87,8 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # Load existing options from the config entry
         if not self._options:
             self._options = entry.data.get(CONF_OPTIONS, []).copy()
+        if self._ac_load_limits is None:
+            self._ac_load_limits = entry.data.get(CONF_AC_LOAD_LIMITS)
 
         return await self._async_step_options_list()
 
@@ -91,7 +107,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 option = {
                     CONF_NAME: name,
                     CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
-                    CONF_ICON: user_input.get(CONF_ICON, "mdi:circle-outline"),
+                    CONF_ICON: user_input.get(CONF_ICON, DEFAULT_ICON),
                 }
                 self._options.append(option)
                 return await self._async_step_options_list()
@@ -104,9 +120,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_DESCRIPTION, default=""): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
                 ),
-                vol.Optional(
-                    CONF_ICON, default="mdi:circle-outline"
-                ): selector.IconSelector(
+                vol.Optional(CONF_ICON, default=DEFAULT_ICON): selector.IconSelector(
                     selector.IconSelectorConfig(),
                 ),
             },
@@ -126,18 +140,117 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._options:
             return await self._async_step_options_list()
 
+        if self._ac_load_limits is None:
+            return await self.async_step_configure_ac_load_limits()
+
         # If this is a reconfigure flow, update the existing entry
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
             return self.async_update_reload_and_abort(
                 entry,
-                data_updates={CONF_OPTIONS: self._options},
+                data_updates={
+                    CONF_OPTIONS: self._options,
+                    CONF_AC_LOAD_LIMITS: self._ac_load_limits,
+                },
             )
 
         # Otherwise, create a new entry
         return self.async_create_entry(
             title="Bestiarium Mode",
-            data={CONF_OPTIONS: self._options},
+            data={
+                CONF_OPTIONS: self._options,
+                CONF_AC_LOAD_LIMITS: self._ac_load_limits,
+            },
+        )
+
+    async def async_step_configure_ac_load_limits(
+        self,
+        user_input: dict | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle configuring AC load limits."""
+        errors: dict[str, str] = {}
+
+        existing_limits = self._ac_load_limits or {}
+        default_sensor = existing_limits.get(CONF_AC_POWER_SENSOR)
+        default_limit = existing_limits.get(CONF_AC_LOAD_LIMIT_W)
+        default_yellow = existing_limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
+        default_red = existing_limits.get(CONF_AC_RED_ZONE_PERCENT, 90)
+
+        if user_input is not None:
+            yellow = int(user_input[CONF_AC_YELLOW_ZONE_PERCENT])
+            red = int(user_input[CONF_AC_RED_ZONE_PERCENT])
+
+            if yellow < MIN_YELLOW_ZONE_PERCENT:
+                errors[CONF_AC_YELLOW_ZONE_PERCENT] = "yellow_zone_min"
+            if yellow >= red:
+                errors[CONF_AC_RED_ZONE_PERCENT] = "red_zone_must_exceed_yellow"
+
+            if not errors:
+                self._ac_load_limits = {
+                    CONF_AC_POWER_SENSOR: user_input[CONF_AC_POWER_SENSOR],
+                    CONF_AC_LOAD_LIMIT_W: int(user_input[CONF_AC_LOAD_LIMIT_W]),
+                    CONF_AC_YELLOW_ZONE_PERCENT: yellow,
+                    CONF_AC_RED_ZONE_PERCENT: red,
+                }
+                return await self._async_step_options_list()
+
+        sensor_key = (
+            vol.Required(CONF_AC_POWER_SENSOR, default=default_sensor)
+            if default_sensor
+            else vol.Required(CONF_AC_POWER_SENSOR)
+        )
+        limit_key = (
+            vol.Required(CONF_AC_LOAD_LIMIT_W, default=default_limit)
+            if default_limit is not None
+            else vol.Required(CONF_AC_LOAD_LIMIT_W)
+        )
+
+        data_schema = vol.Schema(
+            {
+                sensor_key: selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor",
+                        device_class="power",
+                    ),
+                ),
+                limit_key: selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=100000,
+                        step=1,
+                        unit_of_measurement="W",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_YELLOW_ZONE_PERCENT, default=default_yellow
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=100,
+                        step=1,
+                        unit_of_measurement="%",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_RED_ZONE_PERCENT, default=default_red
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=100,
+                        step=1,
+                        unit_of_measurement="%",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+            },
+        )
+
+        return self.async_show_form(
+            step_id="configure_ac_load_limits",
+            data_schema=data_schema,
+            errors=errors,
         )
 
     async def async_step_edit_0(
@@ -235,7 +348,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 self._options[edit_index] = {
                     CONF_NAME: name,
                     CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
-                    CONF_ICON: user_input.get(CONF_ICON, "mdi:circle-outline"),
+                    CONF_ICON: user_input.get(CONF_ICON, DEFAULT_ICON),
                 }
                 return await self._async_step_options_list()
 
@@ -253,7 +366,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
                 ),
                 vol.Optional(
-                    CONF_ICON, default=option.get(CONF_ICON, "mdi:circle-outline")
+                    CONF_ICON, default=option.get(CONF_ICON, DEFAULT_ICON)
                 ): selector.IconSelector(
                     selector.IconSelectorConfig(),
                 ),

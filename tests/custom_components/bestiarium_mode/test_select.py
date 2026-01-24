@@ -1,6 +1,9 @@
 """Tests for the Bestiarium Mode select entity."""
 
+# ruff: noqa: S101
+
 import pytest
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -9,7 +12,7 @@ from custom_components.bestiarium_mode.const import DOMAIN
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
-async def test_select_entity_state_and_attributes(hass) -> None:
+async def test_select_entity_state_and_attributes(hass: HomeAssistant) -> None:
     """Test select entity state, options, and attributes."""
     entry = MockConfigEntry(
         domain=DOMAIN,
