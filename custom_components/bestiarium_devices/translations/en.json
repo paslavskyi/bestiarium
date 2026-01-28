@@ -1,0 +1,82 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium Devices",
+        "description": "Create or extend devices with load priority management.",
+        "menu_options": {
+          "create_virtual": "Create a new virtual device",
+          "extend_device": "Extend an existing device"
+        }
+      },
+      "create_virtual": {
+        "title": "Create Virtual Device",
+        "description": "Create a new virtual device by combining existing entities.",
+        "data": {
+          "device_name": "Device name",
+          "switch_entity_id": "Switch entity",
+          "power_sensor_entity_id": "Power sensor"
+        },
+        "data_description": {
+          "device_name": "Name for the new virtual device",
+          "switch_entity_id": "Switch entity to control the device",
+          "power_sensor_entity_id": "Power sensor (must have unit W)"
+        }
+      },
+      "extend_device": {
+        "title": "Extend Existing Device",
+        "description": "Add load priority management to an existing device.",
+        "data": {
+          "device_id": "Device"
+        },
+        "data_description": {
+          "device_id": "Select a device with a switch to extend"
+        }
+      },
+      "select_power_sensor": {
+        "title": "Select Power Sensor",
+        "description": "The device has multiple power sensors. Select which one to use.",
+        "data": {
+          "power_sensor_entity_id": "Power sensor"
+        }
+      },
+      "configure_priorities": {
+        "title": "Configure Load Priorities",
+        "description": "Set load priorities for each mode. 0 = always off, 9999 = always on.",
+        "data": {
+          "default_priority": "Default priority"
+        },
+        "data_description": {
+          "default_priority": "Default load priority (0-9999)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Device",
+        "description": "Update the device configuration."
+      }
+    },
+    "error": {
+      "no_bestiarium_mode": "Bestiarium Mode integration must be configured first",
+      "no_power_sensor": "Selected device has no power sensor. Use 'Create virtual device' instead.",
+      "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
+      "name_required": "Device name is required",
+      "required": "This field is required"
+    },
+    "abort": {
+      "not_implemented": "Configuration flow not yet implemented",
+      "already_configured": "This device is already configured",
+      "no_bestiarium_mode": "Bestiarium Mode integration must be configured first",
+      "no_devices_with_switch": "No devices with switch entities found"
+    }
+  },
+  "entity": {
+    "number": {
+      "default_priority": {
+        "name": "Default Load Priority"
+      },
+      "mode_priority": {
+        "name": "{mode_name} Load Priority"
+      }
+    }
+  }
+}
