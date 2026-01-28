@@ -245,6 +245,20 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "power_load_green": {
+        "name": "Навантаження - Зелене"
+      },
+      "power_load_yellow": {
+        "name": "Навантаження - Жовте"
+      },
+      "power_load_red": {
+        "name": "Навантаження - Червоне"
+      },
+      "power_load_overload": {
+        "name": "Перевантаження"
+      }
+    },
     "select": {
       "mode": {
         "name": "Режим"

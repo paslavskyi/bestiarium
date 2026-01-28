@@ -245,6 +245,20 @@
     }
   },
   "entity": {
+    "binary_sensor": {
+      "power_load_green": {
+        "name": "Power Load - Green"
+      },
+      "power_load_yellow": {
+        "name": "Power Load - Yellow"
+      },
+      "power_load_red": {
+        "name": "Power Load - Red"
+      },
+      "power_load_overload": {
+        "name": "Overload"
+      }
+    },
     "select": {
       "mode": {
         "name": "Mode"

@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .data import BestiariumModeConfigEntry
 
 PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
     Platform.SELECT,
 ]
 
