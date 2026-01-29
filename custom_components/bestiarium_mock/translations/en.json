@@ -1,0 +1,44 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium Mock Devices",
+        "description": "This will create {device_count} mock devices for testing purposes:\n\n- Mock Grid (power monitoring with alarm)\n- Mock Boiler, AC, Router, Kettle, Heating, Fridge (fixed power)\n- Mock Cooker, Washing Machine, Dishwasher (variable power)\n\nEach device includes a switch, power sensor, and mock behavior controls."
+      }
+    },
+    "abort": {
+      "already_configured": "Mock devices are already configured. Only one instance is allowed."
+    }
+  },
+  "entity": {
+    "switch": {
+      "device_switch": {
+        "name": "Switch"
+      },
+      "mock_enabled": {
+        "name": "Mock Enabled"
+      }
+    },
+    "sensor": {
+      "power": {
+        "name": "Power"
+      },
+      "grid_power": {
+        "name": "Grid Power"
+      }
+    },
+    "binary_sensor": {
+      "state": {
+        "name": "State"
+      },
+      "grid_alarm": {
+        "name": "Grid Overload Alarm"
+      }
+    },
+    "number": {
+      "mock_power": {
+        "name": "Mock Power"
+      }
+    }
+  }
+}
