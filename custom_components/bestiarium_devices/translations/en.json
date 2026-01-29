@@ -33,11 +33,16 @@
           "device_id": "Select a device with a switch to extend"
         }
       },
-      "select_power_sensor": {
-        "title": "Select Power Sensor",
-        "description": "The device has multiple power sensors. Select which one to use.",
+      "select_entities": {
+        "title": "Select Entities",
+        "description": "The device has multiple switches or power sensors. Select which ones to use.",
         "data": {
+          "switch_entity_id": "Switch entity",
           "power_sensor_entity_id": "Power sensor"
+        },
+        "data_description": {
+          "switch_entity_id": "Switch entity to control the device",
+          "power_sensor_entity_id": "Power sensor (must have unit W)"
         }
       },
       "configure_priorities": {
@@ -57,7 +62,9 @@
     },
     "error": {
       "no_bestiarium_mode": "Bestiarium Mode integration must be configured first",
+      "no_switch": "Selected device has no switch entity. Use 'Create virtual device' instead.",
       "no_power_sensor": "Selected device has no power sensor. Use 'Create virtual device' instead.",
+      "invalid_switch": "Invalid switch entity selected",
       "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
       "name_required": "Device name is required",
       "required": "This field is required"

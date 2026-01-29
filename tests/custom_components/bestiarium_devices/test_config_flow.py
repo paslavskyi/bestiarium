@@ -560,3 +560,427 @@ async def test_config_flow_reconfigure_extended_device(
     assert updated_entry is not None
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 7000  # noqa: PLR2004
     assert updated_entry.data[CONF_LOAD_PRIORITIES]["Boost"] == 9500  # noqa: PLR2004
+
+
+async def test_config_flow_extend_device_no_switch(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test extending device with only disabled switch shows error."""
+    # Create a mock config entry for the device
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_no_switch")
+    test_entry.add_to_hass(hass)
+
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_no_switch")},
+        name="Test Device No Switch",
+    )
+
+    # Add a disabled switch (so device shows up in selector but has no usable switch)
+    switch_entity = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_disabled",
+        device_id=device.id,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    hass.states.async_set(switch_entity.entity_id, "off")
+
+    # Add power sensor
+    power_entity = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_no_switch",
+        device_id=device.id,
+    )
+    hass.states.async_set(
+        power_entity.entity_id,
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "extend_device"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE_ID: device.id},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["errors"][CONF_DEVICE_ID] == "no_switch"
+
+
+async def test_config_flow_extend_device_multiple_switches(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test extending device with multiple switches shows combined selection step."""
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_multi_switch")
+    test_entry.add_to_hass(hass)
+
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_multi_switch")},
+        name="Test Device Multi Switch",
+    )
+
+    # Add multiple switches
+    switch1 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_a",
+        device_id=device.id,
+    )
+    switch2 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(switch1.entity_id, "off")
+    hass.states.async_set(switch2.entity_id, "off")
+
+    # Add single power sensor
+    power_entity = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_multi_switch",
+        device_id=device.id,
+    )
+    hass.states.async_set(
+        power_entity.entity_id,
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "extend_device"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE_ID: device.id},
+    )
+    # Should show combined selection step
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "select_entities"
+
+    # Select the switch (sensor is pre-selected since only one)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_SWITCH_ENTITY_ID: switch1.entity_id},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].data[CONF_SWITCH_ENTITY_ID] == switch1.entity_id
+    assert entries[0].data[CONF_POWER_SENSOR_ENTITY_ID] == power_entity.entity_id
+
+
+async def test_config_flow_extend_device_multiple_sensors(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test extending device with multiple sensors shows combined selection step."""
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_multi_sensor")
+    test_entry.add_to_hass(hass)
+
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_multi_sensor")},
+        name="Test Device Multi Sensor",
+    )
+
+    # Add single switch
+    switch_entity = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_multi_sensor",
+        device_id=device.id,
+    )
+    hass.states.async_set(switch_entity.entity_id, "off")
+
+    # Add multiple power sensors
+    power1 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_a",
+        device_id=device.id,
+    )
+    power2 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(
+        power1.entity_id,
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        power2.entity_id,
+        "200",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "extend_device"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE_ID: device.id},
+    )
+    # Should show combined selection step
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "select_entities"
+
+    # Select the sensor (switch is pre-selected since only one)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_POWER_SENSOR_ENTITY_ID: power2.entity_id},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].data[CONF_SWITCH_ENTITY_ID] == switch_entity.entity_id
+    assert entries[0].data[CONF_POWER_SENSOR_ENTITY_ID] == power2.entity_id
+
+
+async def test_config_flow_extend_device_multiple_both(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test extending device with multiple switches AND sensors shows combined step."""
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_multi_both")
+    test_entry.add_to_hass(hass)
+
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_multi_both")},
+        name="Test Device Multi Both",
+    )
+
+    # Add multiple switches
+    switch1 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_both_a",
+        device_id=device.id,
+    )
+    switch2 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_both_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(switch1.entity_id, "off")
+    hass.states.async_set(switch2.entity_id, "off")
+
+    # Add multiple power sensors
+    power1 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_both_a",
+        device_id=device.id,
+    )
+    power2 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_both_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(
+        power1.entity_id,
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        power2.entity_id,
+        "200",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "extend_device"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEVICE_ID: device.id},
+    )
+    # Should show combined selection step
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "select_entities"
+
+    # Select both switch and sensor
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_SWITCH_ENTITY_ID: switch2.entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: power1.entity_id,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].data[CONF_SWITCH_ENTITY_ID] == switch2.entity_id
+    assert entries[0].data[CONF_POWER_SENSOR_ENTITY_ID] == power1.entity_id
+
+
+async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test reconfiguring an extended device with multiple switches/sensors."""
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_reconfig_multi")
+    test_entry.add_to_hass(hass)
+
+    device_registry = dr.async_get(hass)
+    entity_registry = er.async_get(hass)
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_reconfig_multi")},
+        name="Extended Device Multi",
+    )
+
+    # Add multiple switches
+    switch1 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_reconfig_a",
+        device_id=device.id,
+    )
+    switch2 = entity_registry.async_get_or_create(
+        "switch",
+        "test",
+        "switch_reconfig_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(switch1.entity_id, "off")
+    hass.states.async_set(switch2.entity_id, "off")
+
+    # Add multiple power sensors
+    power1 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_reconfig_a",
+        device_id=device.id,
+    )
+    power2 = entity_registry.async_get_or_create(
+        "sensor",
+        "test",
+        "power_reconfig_b",
+        device_id=device.id,
+    )
+    hass.states.async_set(
+        power1.entity_id,
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    hass.states.async_set(
+        power2.entity_id,
+        "200",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_EXTENDED,
+            CONF_DEVICE_ID: device.id,
+            CONF_SWITCH_ENTITY_ID: switch1.entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: power1.entity_id,
+            CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000, "Eco": 1000},
+            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY, "Eco"],
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    # Should show select_entities step since device has multiple switches/sensors
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "select_entities"
+
+    # Change to different switch and sensor
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_SWITCH_ENTITY_ID: switch2.entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: power2.entity_id,
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 6000, "priority_Eco": 3000, "priority_Boost": 9000},
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry is not None
+    assert updated_entry.data[CONF_SWITCH_ENTITY_ID] == switch2.entity_id
+    assert updated_entry.data[CONF_POWER_SENSOR_ENTITY_ID] == power2.entity_id
+    assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 6000  # noqa: PLR2004

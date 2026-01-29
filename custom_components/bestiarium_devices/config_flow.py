@@ -83,6 +83,25 @@ def find_devices_with_switch(hass: HomeAssistant) -> list[str]:
     return list(devices_with_switch)
 
 
+def find_switches_for_device(
+    hass: HomeAssistant,
+    device_id: str,
+) -> list[str]:
+    """Find switch entities for a device, filtering out disabled switches."""
+    entity_registry = er.async_get(hass)
+    switches: list[str] = []
+
+    for entity in entity_registry.entities.values():
+        if (
+            entity.domain == DOMAIN_SWITCH
+            and entity.device_id == device_id
+            and entity.disabled_by is None
+        ):
+            switches.append(entity.entity_id)
+
+    return switches
+
+
 def is_virtual_device(hass: HomeAssistant, device_id: str) -> bool:
     """Check if device is a virtual device created by this integration."""
     device_registry = dr.async_get(hass)
@@ -125,6 +144,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._device_name: str | None = None
         self._switch_entity_id: str | None = None
         self._power_sensor_entity_id: str | None = None
+        self._switches: list[str] = []
         self._power_sensors: list[str] = []
         self._load_priorities: dict[str, int] = {}
 
@@ -242,23 +262,38 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                             reason="already_configured",
                         )
 
-                # Find power sensors for this device
+                # Find switches and power sensors for this device
+                switches = find_switches_for_device(self.hass, device_id)
                 power_sensors = find_power_sensors_for_device(self.hass, device_id)
 
-                if not power_sensors:
+                # Validate device has required entities
+                if not switches:
+                    errors[CONF_DEVICE_ID] = "no_switch"
+                elif not power_sensors:
                     errors[CONF_DEVICE_ID] = "no_power_sensor"
-                elif len(power_sensors) == 1:
-                    # Single power sensor, use it directly
+                else:
+                    # Store device info
                     self._device_type = DEVICE_TYPE_EXTENDED
                     self._device_id = device_id
+                    self._switches = switches
+                    self._power_sensors = power_sensors
+
+                    # Determine flow based on entity counts
+                    needs_selection = len(switches) > 1 or len(power_sensors) > 1
+
+                    if needs_selection:
+                        # Multiple switches or sensors - use combined selection step
+                        # Pre-select if only one of each type
+                        if len(switches) == 1:
+                            self._switch_entity_id = switches[0]
+                        if len(power_sensors) == 1:
+                            self._power_sensor_entity_id = power_sensors[0]
+                        return await self.async_step_select_entities()
+
+                    # Single switch AND single sensor - use directly
+                    self._switch_entity_id = switches[0]
                     self._power_sensor_entity_id = power_sensors[0]
                     return await self.async_step_configure_priorities()
-                else:
-                    # Multiple power sensors, need to select
-                    self._device_type = DEVICE_TYPE_EXTENDED
-                    self._device_id = device_id
-                    self._power_sensors = power_sensors
-                    return await self.async_step_select_power_sensor()
 
         # Check if there are any devices with switches
         devices_with_switch = find_devices_with_switch(self.hass)
@@ -279,37 +314,71 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_select_power_sensor(
+    async def async_step_select_entities(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Handle selecting power sensor when device has multiple."""
+        """Handle selecting switch and/or sensor when device has multiple."""
         errors: dict[str, str] = {}
 
-        if user_input is not None:
-            power_sensor_entity_id = user_input.get(CONF_POWER_SENSOR_ENTITY_ID)
+        # Determine what needs selection
+        needs_switch_selection = len(self._switches) > 1
+        needs_sensor_selection = len(self._power_sensors) > 1
 
-            if not power_sensor_entity_id:
-                errors[CONF_POWER_SENSOR_ENTITY_ID] = "required"
-            elif power_sensor_entity_id not in self._power_sensors:
-                errors[CONF_POWER_SENSOR_ENTITY_ID] = "invalid_power_sensor"
-            else:
-                self._power_sensor_entity_id = power_sensor_entity_id
+        if user_input is not None:
+            # Validate and store switch selection if needed
+            if needs_switch_selection:
+                switch_entity_id = user_input.get(CONF_SWITCH_ENTITY_ID)
+                if not switch_entity_id:
+                    errors[CONF_SWITCH_ENTITY_ID] = "required"
+                elif switch_entity_id not in self._switches:
+                    errors[CONF_SWITCH_ENTITY_ID] = "invalid_switch"
+                else:
+                    self._switch_entity_id = switch_entity_id
+
+            # Validate and store sensor selection if needed
+            if needs_sensor_selection:
+                power_sensor_entity_id = user_input.get(CONF_POWER_SENSOR_ENTITY_ID)
+                if not power_sensor_entity_id:
+                    errors[CONF_POWER_SENSOR_ENTITY_ID] = "required"
+                elif power_sensor_entity_id not in self._power_sensors:
+                    errors[CONF_POWER_SENSOR_ENTITY_ID] = "invalid_power_sensor"
+                else:
+                    self._power_sensor_entity_id = power_sensor_entity_id
+
+            if not errors:
                 return await self.async_step_configure_priorities()
 
-        data_schema = vol.Schema(
-            {
-                vol.Required(CONF_POWER_SENSOR_ENTITY_ID): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=DOMAIN_SENSOR,
-                        device_class=DEVICE_CLASS_POWER,
-                    ),
+        # Build dynamic schema based on what needs selection
+        schema_dict: dict[Any, Any] = {}
+
+        if needs_switch_selection:
+            schema_dict[
+                vol.Required(
+                    CONF_SWITCH_ENTITY_ID,
+                    default=self._switch_entity_id,
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(domain=DOMAIN_SWITCH),
+            )
+
+        if needs_sensor_selection:
+            schema_dict[
+                vol.Required(
+                    CONF_POWER_SENSOR_ENTITY_ID,
+                    default=self._power_sensor_entity_id,
+                )
+            ] = selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=DOMAIN_SENSOR,
+                    device_class=DEVICE_CLASS_POWER,
                 ),
-            },
-        )
+            )
+
+        data_schema = vol.Schema(schema_dict)
 
         return self.async_show_form(
-            step_id="select_power_sensor",
+            step_id="select_entities",
             data_schema=data_schema,
             errors=errors,
         )
@@ -386,6 +455,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Build config entry data dictionary."""
         data: dict[str, Any] = {
             CONF_DEVICE_TYPE: self._device_type,
+            CONF_SWITCH_ENTITY_ID: self._switch_entity_id,
             CONF_POWER_SENSOR_ENTITY_ID: self._power_sensor_entity_id,
             CONF_LOAD_PRIORITIES: self._load_priorities,
             CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
@@ -393,7 +463,6 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         if self._device_type == DEVICE_TYPE_VIRTUAL:
             data[CONF_DEVICE_NAME] = self._device_name
-            data[CONF_SWITCH_ENTITY_ID] = self._switch_entity_id
         elif self._device_type == DEVICE_TYPE_EXTENDED:
             data[CONF_DEVICE_ID] = self._device_id
 
@@ -417,5 +486,20 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         if self._device_type == DEVICE_TYPE_VIRTUAL:
             # Use same form as create
             return await self.async_step_create_virtual()
-        # Extended device - go to priorities
+
+        # Extended device - find available switches and sensors
+        if self._device_id:
+            self._switches = find_switches_for_device(self.hass, self._device_id)
+            self._power_sensors = find_power_sensors_for_device(
+                self.hass, self._device_id
+            )
+
+        # Determine if entity selection is needed
+        needs_selection = len(self._switches) > 1 or len(self._power_sensors) > 1
+
+        if needs_selection:
+            # Route through select_entities step to allow changing switch/sensor
+            return await self.async_step_select_entities()
+
+        # Single switch AND single sensor - go directly to priorities
         return await self.async_step_configure_priorities()
