@@ -1,7 +1,7 @@
 {
     "name": "ludeeus/integration_blueprint",
     "image": "mcr.microsoft.com/devcontainers/python:3.13",
-    "postCreateCommand": "scripts/setup",
+    "postCreateCommand": "make setup && make setup-go2rtc",
     "forwardPorts": [
         8123
     ],
