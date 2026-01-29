@@ -50,13 +50,15 @@
           "ac_power_sensor": "AC power sensor",
           "ac_load_limit_w": "AC load limit (W)",
           "ac_yellow_zone_percent": "Yellow zone (%)",
-          "ac_red_zone_percent": "Red zone (%)"
+          "ac_red_zone_percent": "Red zone (%)",
+          "ac_overload_recovery_seconds": "Recovery time (s)"
         },
         "data_description": {
           "ac_power_sensor": "Sensor that measures AC power (W)",
           "ac_load_limit_w": "Maximum AC load before limiting (W)",
           "ac_yellow_zone_percent": "Yellow warning threshold percentage",
-          "ac_red_zone_percent": "Red critical threshold percentage"
+          "ac_red_zone_percent": "Red critical threshold percentage",
+          "ac_overload_recovery_seconds": "Wait time after load decreases below threshold before allowing device turn-on"
         }
       },
       "add": {

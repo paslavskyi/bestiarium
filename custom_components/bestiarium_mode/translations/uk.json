@@ -50,13 +50,15 @@
           "ac_power_sensor": "Сенсор AC потужності",
           "ac_load_limit_w": "Ліміт AC навантаження (W)",
           "ac_yellow_zone_percent": "Жовта зона (%)",
-          "ac_red_zone_percent": "Червона зона (%)"
+          "ac_red_zone_percent": "Червона зона (%)",
+          "ac_overload_recovery_seconds": "Час відновлення (с)"
         },
         "data_description": {
           "ac_power_sensor": "Сенсор, що вимірює AC потужність (W)",
           "ac_load_limit_w": "Максимальне AC навантаження перед обмеженням (W)",
           "ac_yellow_zone_percent": "Поріг попередження для жовтої зони",
-          "ac_red_zone_percent": "Критичний поріг для червоної зони"
+          "ac_red_zone_percent": "Критичний поріг для червоної зони",
+          "ac_overload_recovery_seconds": "Час очікування після зниження навантаження нижче порогу перед увімкненням пристроїв"
         }
       },
       "add": {

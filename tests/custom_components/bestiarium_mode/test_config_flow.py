@@ -11,9 +11,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.bestiarium_mode.const import (
     CONF_AC_LOAD_LIMIT_W,
     CONF_AC_LOAD_LIMITS,
+    CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
+    DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DOMAIN,
 )
 
@@ -82,6 +84,7 @@ async def test_config_flow_create_entry(hass: HomeAssistant) -> None:
         CONF_AC_LOAD_LIMIT_W: 3500,
         CONF_AC_YELLOW_ZONE_PERCENT: 75,
         CONF_AC_RED_ZONE_PERCENT: 90,
+        CONF_AC_OVERLOAD_RECOVERY_SECONDS: DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     }
 
 
@@ -197,4 +200,5 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
         CONF_AC_LOAD_LIMIT_W: 3200,
         CONF_AC_YELLOW_ZONE_PERCENT: 75,
         CONF_AC_RED_ZONE_PERCENT: 90,
+        CONF_AC_OVERLOAD_RECOVERY_SECONDS: DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     }

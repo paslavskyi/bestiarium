@@ -13,9 +13,11 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_AC_LOAD_LIMIT_W,
     CONF_AC_LOAD_LIMITS,
+    CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
+    DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DOMAIN,
 )
 
@@ -175,6 +177,9 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         default_limit = existing_limits.get(CONF_AC_LOAD_LIMIT_W)
         default_yellow = existing_limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
         default_red = existing_limits.get(CONF_AC_RED_ZONE_PERCENT, 90)
+        default_recovery = existing_limits.get(
+            CONF_AC_OVERLOAD_RECOVERY_SECONDS, DEFAULT_OVERLOAD_RECOVERY_SECONDS
+        )
 
         if user_input is not None:
             yellow = int(user_input[CONF_AC_YELLOW_ZONE_PERCENT])
@@ -191,6 +196,9 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AC_LOAD_LIMIT_W: int(user_input[CONF_AC_LOAD_LIMIT_W]),
                     CONF_AC_YELLOW_ZONE_PERCENT: yellow,
                     CONF_AC_RED_ZONE_PERCENT: red,
+                    CONF_AC_OVERLOAD_RECOVERY_SECONDS: int(
+                        user_input[CONF_AC_OVERLOAD_RECOVERY_SECONDS]
+                    ),
                 }
                 return await self._async_step_options_list()
 
@@ -241,6 +249,17 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                         max=100,
                         step=1,
                         unit_of_measurement="%",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_OVERLOAD_RECOVERY_SECONDS, default=default_recovery
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=300,
+                        step=1,
+                        unit_of_measurement="s",
                         mode=selector.NumberSelectorMode.BOX,
                     ),
                 ),

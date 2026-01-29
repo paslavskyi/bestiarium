@@ -1,5 +1,25 @@
-# https://www.home-assistant.io/integrations/default_config/
-default_config:
+assist_pipeline:
+bluetooth:
+cloud:
+conversation:
+dhcp:
+energy:
+#file:
+#go2rtc:
+history:
+#homeassistant_alerts:
+logbook:
+media_source:
+mobile_app:
+my:
+ssdp:
+stream:
+sun:
+#usage_prediction:
+usb:
+webhook:
+zeroconf:
+automation: !include automations.yaml
 
 # https://www.home-assistant.io/integrations/homeassistant/
 homeassistant:
