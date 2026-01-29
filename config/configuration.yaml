@@ -10,3 +10,5 @@ logger:
   default: info
   logs:
     custom_components.bestiarium_mode: debug
+    custom_components.bestiarium_devices: debug
+    custom_components.bestiarium_mock: debug
