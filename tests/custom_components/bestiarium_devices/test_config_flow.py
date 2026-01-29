@@ -23,6 +23,7 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
+    LOAD_PRIORITY_DEFAULT,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -121,6 +122,106 @@ async def test_config_flow_create_virtual_device(
         "Eco",
         "Boost",
     }
+
+
+async def test_config_flow_create_device_with_only_default_priority(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test creating a device with only default priority (no per-mode values)."""
+    # Create test entities
+    hass.states.async_set("switch.test_switch", "off")
+    hass.states.async_set(
+        "sensor.test_power",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "create_virtual"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Test Device Optional",
+            CONF_SWITCH_ENTITY_ID: "switch.test_switch",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_power",
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    # Only provide default priority, skip per-mode priorities
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 4000,
+            # Eco and Boost are optional and not provided
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    # Default priority should be what user specified
+    assert entries[0].data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 4000  # noqa: PLR2004
+    # Per-mode priorities should use LOAD_PRIORITY_DEFAULT
+    assert entries[0].data[CONF_LOAD_PRIORITIES]["Eco"] == LOAD_PRIORITY_DEFAULT
+    assert entries[0].data[CONF_LOAD_PRIORITIES]["Boost"] == LOAD_PRIORITY_DEFAULT
+
+
+async def test_config_flow_create_device_with_partial_priorities(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test creating a device with only some per-mode priorities specified."""
+    # Create test entities
+    hass.states.async_set("switch.test_switch2", "off")
+    hass.states.async_set(
+        "sensor.test_power2",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "create_virtual"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Test Device Partial",
+            CONF_SWITCH_ENTITY_ID: "switch.test_switch2",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_power2",
+        },
+    )
+
+    # Provide default and only Eco priority, skip Boost
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 3000,
+            "priority_Eco": 1500,
+            # Boost is optional and not provided
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 3000  # noqa: PLR2004
+    assert entries[0].data[CONF_LOAD_PRIORITIES]["Eco"] == 1500  # noqa: PLR2004
+    # Boost should use LOAD_PRIORITY_DEFAULT since not provided
+    assert entries[0].data[CONF_LOAD_PRIORITIES]["Boost"] == LOAD_PRIORITY_DEFAULT
 
 
 async def test_config_flow_create_virtual_device_validation(

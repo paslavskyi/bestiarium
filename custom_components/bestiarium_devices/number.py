@@ -24,7 +24,7 @@ from .const import (
     LOAD_PRIORITY_MIN,
     LOGGER,
 )
-from .helpers import get_device_id_from_entry
+from .helpers import build_priority_unique_id, get_device_id_from_entry
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -83,8 +83,7 @@ class LoadPriorityNumber(NumberEntity, RestoreEntity):
 
         # Set unique ID
         device_id = get_device_id_from_entry(entry)
-        suffix = "_default" if mode_name is None else f"_{mode_name}"
-        self._attr_unique_id = f"{device_id}_priority{suffix}"
+        self._attr_unique_id = build_priority_unique_id(device_id, mode_name)
 
         # Set device info
         self._attr_device_info = self._get_device_info()

@@ -42,7 +42,7 @@
       },
       "configure_priorities": {
         "title": "Configure Load Priorities",
-        "description": "Set load priorities for each mode. 0 = always off, 9999 = always on.",
+        "description": "Set load priorities for each mode. Per-mode priorities are optional and will use the default priority if not specified. 0 = always off, 9999 = always on.",
         "data": {
           "default_priority": "Default priority"
         },

@@ -33,6 +33,7 @@ from .const import (
     LOAD_PRIORITY_DEFAULT,
 )
 from .helpers import (
+    build_priority_form_key,
     build_priority_number_selector,
     extract_priorities_from_user_input,
     validate_power_sensor,
@@ -328,11 +329,11 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             build_priority_number_selector()
         )
 
-        # Per-mode priorities
+        # Per-mode priorities (optional - will use default if not provided)
         for mode_name in mode_names:
-            key = f"priority_{mode_name}"
+            key = build_priority_form_key(mode_name)
             default_value = existing.get(mode_name, LOAD_PRIORITY_DEFAULT)
-            schema_dict[vol.Required(key, default=default_value)] = (
+            schema_dict[vol.Optional(key, default=default_value)] = (
                 build_priority_number_selector()
             )
 

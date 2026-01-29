@@ -33,5 +33,9 @@ CONF_DEFAULT_PRIORITY = "default"
 # Entity domain and device class constants
 DOMAIN_SWITCH = "switch"
 DOMAIN_SENSOR = "sensor"
+DOMAIN_NUMBER = "number"
 DEVICE_CLASS_POWER = "power"
 UNIT_WATT = "W"
+
+# Cross-integration entity IDs
+BESTIARIUM_MODE_SELECT_ENTITY_ID = "select.bestiarium_mode"
