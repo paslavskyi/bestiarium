@@ -48,7 +48,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             menu_options[f"edit_{i}"] = f"🏷️ {option_name}"
 
         menu_options["configure_ac_load_limits"] = "⚡ Configure AC load limits"
-        menu_options["add"] = "➕ Add option"
+        menu_options["add"] = "➕ Add option"  # noqa: RUF001
         menu_options["complete"] = "💾 Save"
 
         return menu_options
