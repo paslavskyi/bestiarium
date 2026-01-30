@@ -8,7 +8,8 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     libpcap-dev \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Revision 202601231125
+RUN echo "Revision 202601300825"
+
 COPY requirements.txt .
 RUN pip3 install --upgrade pip \
     && pip3 install -r requirements.txt
