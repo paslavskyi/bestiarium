@@ -89,17 +89,13 @@ def find_switches_for_device(
 ) -> list[str]:
     """Find switch entities for a device, filtering out disabled switches."""
     entity_registry = er.async_get(hass)
-    switches: list[str] = []
-
-    for entity in entity_registry.entities.values():
-        if (
-            entity.domain == DOMAIN_SWITCH
-            and entity.device_id == device_id
-            and entity.disabled_by is None
-        ):
-            switches.append(entity.entity_id)
-
-    return switches
+    return [
+        entity.entity_id
+        for entity in entity_registry.entities.values()
+        if entity.domain == DOMAIN_SWITCH
+        and entity.device_id == device_id
+        and entity.disabled_by is None
+    ]
 
 
 def is_virtual_device(hass: HomeAssistant, device_id: str) -> bool:
@@ -240,7 +236,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_extend_device(
+    async def async_step_extend_device(  # noqa: PLR0912
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
@@ -277,6 +273,16 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     self._device_id = device_id
                     self._switches = switches
                     self._power_sensors = power_sensors
+
+                    # Get device name from registry
+                    device_registry = dr.async_get(self.hass)
+                    device = device_registry.async_get(device_id)
+                    if device:
+                        self._device_name = (
+                            device.name_by_user or device.name or f"Device {device_id}"
+                        )
+                    else:
+                        self._device_name = f"Device {device_id}"
 
                     # Determine flow based on entity counts
                     needs_selection = len(switches) > 1 or len(power_sensors) > 1
@@ -392,19 +398,22 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         existing = existing_priorities or {}
         schema_dict: dict[str, Any] = {}
 
-        # Default priority
+        # Default priority (only field with a default value in the UI)
         default_value = existing.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
         schema_dict[vol.Required(CONF_DEFAULT_PRIORITY, default=default_value)] = (
             build_priority_number_selector()
         )
 
-        # Per-mode priorities (optional - will use default if not provided)
+        # Per-mode priorities (optional, no default - user leaves empty to omit)
         for mode_name in mode_names:
             key = build_priority_form_key(mode_name)
-            default_value = existing.get(mode_name, LOAD_PRIORITY_DEFAULT)
-            schema_dict[vol.Optional(key, default=default_value)] = (
-                build_priority_number_selector()
-            )
+            existing_val = existing.get(mode_name)
+            if existing_val is not None:
+                schema_dict[vol.Optional(key, default=existing_val)] = (
+                    build_priority_number_selector()
+                )
+            else:
+                schema_dict[vol.Optional(key)] = build_priority_number_selector()
 
         return vol.Schema(schema_dict)
 
@@ -465,6 +474,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_DEVICE_NAME] = self._device_name
         elif self._device_type == DEVICE_TYPE_EXTENDED:
             data[CONF_DEVICE_ID] = self._device_id
+            data[CONF_DEVICE_NAME] = self._device_name
 
         return data
 

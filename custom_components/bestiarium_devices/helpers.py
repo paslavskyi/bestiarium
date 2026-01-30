@@ -10,10 +10,12 @@ from .const import (
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
     CONF_DEFAULT_PRIORITY,
     CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
+    CONF_LOAD_PRIORITIES,
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
-    DOMAIN_NUMBER,
+    DOMAIN,
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
     LOAD_PRIORITY_MIN,
@@ -55,7 +57,12 @@ def extract_priorities_from_user_input(
     user_input: dict[str, Any],
     mode_names: list[str],
 ) -> dict[str, int]:
-    """Extract load priorities from user input."""
+    """
+    Extract load priorities from user input.
+
+    Default priority is always stored. Per-mode priorities are only stored when
+    the user provided a value; omitted mode fields are left out of the config.
+    """
     priorities: dict[str, int] = {}
     priorities[CONF_DEFAULT_PRIORITY] = int(
         user_input.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT),
@@ -63,9 +70,9 @@ def extract_priorities_from_user_input(
 
     for mode_name in mode_names:
         key = build_priority_form_key(mode_name)
-        priorities[mode_name] = int(
-            user_input.get(key, LOAD_PRIORITY_DEFAULT),
-        )
+        value = user_input.get(key)
+        if value is not None and value != "":
+            priorities[mode_name] = int(value)
 
     return priorities
 
@@ -78,31 +85,17 @@ def get_device_id_from_entry(entry: ConfigEntry) -> str:
     return entry.data.get(CONF_DEVICE_ID, entry.entry_id)
 
 
-def build_priority_unique_id(device_id: str, mode_name: str | None = None) -> str:
-    """Build unique ID for a priority entity."""
-    suffix = "_default" if mode_name is None else f"_{mode_name}"
-    return f"{device_id}_priority{suffix}"
-
-
-def build_priority_entity_id(device_id: str, mode_name: str | None = None) -> str:
-    """Build entity ID for a priority entity (includes domain prefix)."""
-    return f"{DOMAIN_NUMBER}.{build_priority_unique_id(device_id, mode_name)}"
+def get_device_name_from_entry(entry: ConfigEntry) -> str:
+    """Get display name for a device from config entry (fallback to device_id)."""
+    name = entry.data.get(CONF_DEVICE_NAME)
+    if name:
+        return name
+    return get_device_id_from_entry(entry)
 
 
 def build_priority_form_key(mode_name: str) -> str:
     """Build form field key for a mode priority in config flow."""
     return f"priority_{mode_name}"
-
-
-def _parse_priority_from_state(hass: HomeAssistant, entity_id: str) -> int | None:
-    """Parse priority value from entity state, returning None if invalid."""
-    state = hass.states.get(entity_id)
-    if not state or state.state in ("unknown", "unavailable"):
-        return None
-    try:
-        return int(float(state.state))
-    except (ValueError, TypeError):
-        return None
 
 
 def get_current_priority(
@@ -117,18 +110,13 @@ def get_current_priority(
 
     current_mode = mode_state.state
 
-    # Try mode-specific priority entity
-    mode_priority = _parse_priority_from_state(
-        hass, build_priority_entity_id(device_id, current_mode)
-    )
-    if mode_priority is not None:
-        return mode_priority
-
-    # Fall back to default priority entity
-    default_priority = _parse_priority_from_state(
-        hass, build_priority_entity_id(device_id, None)
-    )
-    if default_priority is not None:
-        return default_priority
+    # Find config entry for this device and read priority from entry data
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        entry_device_id = get_device_id_from_entry(entry)
+        if entry_device_id == device_id:
+            priorities = entry.data.get(CONF_LOAD_PRIORITIES, {})
+            if current_mode in priorities:
+                return priorities[current_mode]
+            return priorities.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
 
     return LOAD_PRIORITY_DEFAULT

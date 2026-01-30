@@ -23,7 +23,6 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
-    LOAD_PRIORITY_DEFAULT,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -170,9 +169,9 @@ async def test_config_flow_create_device_with_only_default_priority(
     assert len(entries) == 1
     # Default priority should be what user specified
     assert entries[0].data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 4000  # noqa: PLR2004
-    # Per-mode priorities should use LOAD_PRIORITY_DEFAULT
-    assert entries[0].data[CONF_LOAD_PRIORITIES]["Eco"] == LOAD_PRIORITY_DEFAULT
-    assert entries[0].data[CONF_LOAD_PRIORITIES]["Boost"] == LOAD_PRIORITY_DEFAULT
+    # Per-mode priorities omitted by user are left out of config
+    assert "Eco" not in entries[0].data[CONF_LOAD_PRIORITIES]
+    assert "Boost" not in entries[0].data[CONF_LOAD_PRIORITIES]
 
 
 async def test_config_flow_create_device_with_partial_priorities(
@@ -220,8 +219,8 @@ async def test_config_flow_create_device_with_partial_priorities(
     assert len(entries) == 1
     assert entries[0].data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 3000  # noqa: PLR2004
     assert entries[0].data[CONF_LOAD_PRIORITIES]["Eco"] == 1500  # noqa: PLR2004
-    # Boost should use LOAD_PRIORITY_DEFAULT since not provided
-    assert entries[0].data[CONF_LOAD_PRIORITIES]["Boost"] == LOAD_PRIORITY_DEFAULT
+    # Boost omitted by user is left out of config
+    assert "Boost" not in entries[0].data[CONF_LOAD_PRIORITIES]
 
 
 async def test_config_flow_create_virtual_device_validation(
