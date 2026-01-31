@@ -120,6 +120,7 @@ class PowerLoadBinarySensor(BinarySensorEntity):
         # Entity attributes
         self._attr_unique_id = f"power_load_{zone.value}"
         self._attr_translation_key = f"power_load_{zone.value}"
+        self._attr_suggested_object_id = f"power_load_{zone.value}"
 
         # Set icon based on zone (Signal/Status style)
         match zone:
