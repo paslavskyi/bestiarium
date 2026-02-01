@@ -323,13 +323,13 @@ class TestGreenStrategy:
         finally:
             await coordinator.async_stop()
 
-    async def test_off_and_always_on_priority_devices_skipped(
+    async def test_off_skipped_always_on_off_turned_on(
         self,
         hass: HomeAssistant,
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Green strategy skips devices with OFF or ALWAYS_ON priority (even if OFF)."""
+        """Green skips OFF priority; if ALWAYS_ON device is OFF, turn it on and exit."""
         hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
         # Device with OFF in Eco - switch OFF, should not be turned on
         entry_off = MockConfigEntry(
@@ -346,7 +346,7 @@ class TestGreenStrategy:
         )
         entry_off.add_to_hass(hass)
         hass.states.async_set("switch.off_priority", STATE_OFF)
-        # Device with ALWAYS_ON in Eco - switch OFF, green still skips it
+        # ALWAYS_ON device OFF - green turns it on and exits
         entry_always = MockConfigEntry(
             domain=DOMAIN,
             data={
@@ -373,7 +373,8 @@ class TestGreenStrategy:
                 turn_on_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_on"
                 ]
-                assert len(turn_on_calls) == 0
+                assert len(turn_on_calls) == 1
+                assert turn_on_calls[0][0][2]["entity_id"] == "switch.always_priority"
         finally:
             await coordinator.async_stop()
 

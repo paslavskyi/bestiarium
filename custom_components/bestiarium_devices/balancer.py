@@ -403,8 +403,7 @@ class BalancingCoordinator:
             # Get current priority
             priority = get_current_priority(self._hass, device_id)
 
-            # Skip devices with special priorities (OFF or ALWAYS_ON)
-            if priority in (LOAD_PRIORITY_OFF, LOAD_PRIORITY_ALWAYS_ON):
+            if priority == LOAD_PRIORITY_OFF:
                 continue
 
             candidates.append((priority, switch_entity_id, device_id, device_name))
