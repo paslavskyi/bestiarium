@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bestiarium Mock Devices",
-        "description": "This will create {device_count} mock devices for testing purposes:\n\n- Mock Grid (power monitoring with alarm)\n- Mock Boiler, AC, Router, Kettle, Heating, Fridge (fixed power)\n- Mock Cooker, Washing Machine, Dishwasher (variable power)\n\nEach device includes a switch, power sensor, and mock behavior controls."
+        "description": "This will create mock devices for testing purposes:\n\n- Mock Grid (power monitoring with alarm)\n- Mock Boiler, AC, Router, Kettle, Heating, Fridge (fixed power)\n- Mock Cooker, Washing Machine, Dishwasher (variable power)\n- 4 Mock Smart Sockets (600W fixed power)\n- 4 Mock Thermometers (temperature sensors with manual input)\n\nEach device includes a switch, power sensor, and mock behavior controls."
       }
     },
     "abort": {
@@ -25,6 +25,9 @@
       },
       "grid_power": {
         "name": "Grid Power"
+      },
+      "temperature": {
+        "name": "Temperature"
       }
     },
     "binary_sensor": {
@@ -38,6 +41,9 @@
     "number": {
       "mock_power": {
         "name": "Mock Power"
+      },
+      "mock_temperature": {
+        "name": "Set Temperature"
       }
     }
   }

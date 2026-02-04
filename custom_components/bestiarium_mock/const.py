@@ -33,7 +33,18 @@ class MockDeviceSpec:
         return self.power_min_w is not None and self.power_max_w is not None
 
 
-# Device specifications
+@dataclass(frozen=True)
+class MockThermometerSpec:
+    """Specification for a mock thermometer device."""
+
+    device_id: str
+    name: str
+    default_temp_c: float = 20.0
+    temp_min_c: float = -20.0
+    temp_max_c: float = 50.0
+
+
+# Device specifications (smart sockets with power monitoring)
 MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     MockDeviceSpec(device_id="boiler", name="Mock Boiler", power_w=1800),
     MockDeviceSpec(device_id="ac", name="Mock AC", power_w=1200),
@@ -62,6 +73,19 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
         power_max_w=1800,
     ),
     MockDeviceSpec(device_id="fridge", name="Mock Fridge", power_w=80),
+    # 4 additional smart sockets with fixed 600W power
+    MockDeviceSpec(device_id="socket_1", name="Mock Socket 1", power_w=600),
+    MockDeviceSpec(device_id="socket_2", name="Mock Socket 2", power_w=600),
+    MockDeviceSpec(device_id="socket_3", name="Mock Socket 3", power_w=600),
+    MockDeviceSpec(device_id="socket_4", name="Mock Socket 4", power_w=600),
+)
+
+# Thermometer specifications (passive temperature sensors)
+MOCK_THERMOMETERS: tuple[MockThermometerSpec, ...] = (
+    MockThermometerSpec(device_id="thermo_1", name="Mock Thermometer 1"),
+    MockThermometerSpec(device_id="thermo_2", name="Mock Thermometer 2"),
+    MockThermometerSpec(device_id="thermo_3", name="Mock Thermometer 3"),
+    MockThermometerSpec(device_id="thermo_4", name="Mock Thermometer 4"),
 )
 
 # Grid device (special - not a smart socket)

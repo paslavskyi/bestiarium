@@ -17,6 +17,7 @@ from .const import (
     GRID_UPDATE_INTERVAL_SECONDS,
     LOGGER,
     MOCK_DEVICES,
+    MOCK_THERMOMETERS,
 )
 
 if TYPE_CHECKING:
@@ -24,8 +25,12 @@ if TYPE_CHECKING:
 
     from .binary_sensor import MockDeviceStateSensor, MockGridAlarmSensor
     from .data import BestiariumMockConfigEntry
-    from .number import MockPowerNumber
-    from .sensor import MockDevicePowerSensor, MockGridPowerSensor
+    from .number import MockPowerNumber, MockTemperatureNumber
+    from .sensor import (
+        MockDevicePowerSensor,
+        MockGridPowerSensor,
+        MockThermometerTemperatureSensor,
+    )
     from .switch import MockDeviceSwitch, MockEnabledSwitch
 
 
@@ -49,6 +54,10 @@ class MockDevicesCoordinator:
         self._state_sensors: dict[str, MockDeviceStateSensor] = {}
         self._grid_power_sensor: MockGridPowerSensor | None = None
         self._grid_alarm_sensor: MockGridAlarmSensor | None = None
+
+        # Thermometer entity references
+        self._temperature_sensors: dict[str, MockThermometerTemperatureSensor] = {}
+        self._temperature_numbers: dict[str, MockTemperatureNumber] = {}
 
         # Grid state
         self._grid_random_power: float = 0
@@ -89,12 +98,25 @@ class MockDevicesCoordinator:
         """Register the grid alarm sensor."""
         self._grid_alarm_sensor = sensor
 
+    def register_temperature_sensor(
+        self, device_id: str, sensor: MockThermometerTemperatureSensor
+    ) -> None:
+        """Register a temperature sensor."""
+        self._temperature_sensors[device_id] = sensor
+
+    def register_temperature_number(
+        self, device_id: str, number: MockTemperatureNumber
+    ) -> None:
+        """Register a temperature number entity."""
+        self._temperature_numbers[device_id] = number
+
     async def async_start(self) -> None:
         """Start the coordinator."""
         LOGGER.debug("Starting mock devices coordinator")
 
         # Initial update
         self._update_all_devices()
+        self._update_all_thermometers()
         self._update_grid()
 
         # Start periodic grid updates
@@ -128,6 +150,28 @@ class MockDevicesCoordinator:
         """Handle power number change."""
         self._update_device(device_id)
         self._update_grid()
+
+    @callback
+    def notify_temperature_number_changed(self, device_id: str) -> None:
+        """Handle temperature number change."""
+        self._update_thermometer(device_id)
+
+    def _update_thermometer(self, device_id: str) -> None:
+        """Update a single thermometer's temperature."""
+        temp_sensor = self._temperature_sensors.get(device_id)
+        temp_number = self._temperature_numbers.get(device_id)
+
+        if not temp_sensor or not temp_number:
+            return
+
+        # Get temperature from number input
+        if temp_number.native_value is not None:
+            temp_sensor.set_temperature(float(temp_number.native_value))
+
+    def _update_all_thermometers(self) -> None:
+        """Update all thermometers."""
+        for thermo_spec in MOCK_THERMOMETERS:
+            self._update_thermometer(thermo_spec.device_id)
 
     def _update_device(self, device_id: str) -> None:
         """Update a single device's power and state."""
