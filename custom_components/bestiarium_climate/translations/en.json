@@ -1,0 +1,152 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium Climate",
+        "description": "Configure capacity and timing for heating/cooling device rotation.",
+        "data": {
+          "capacity": "Capacity",
+          "min_working_time": "Minimum working time",
+          "recovery_timeout": "Recovery timeout"
+        },
+        "data_description": {
+          "capacity": "How many devices can run simultaneously (0–100)",
+          "min_working_time": "Minimum time a device must run before rotation",
+          "recovery_timeout": "How long to wait before retrying a non-responding switch"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Bestiarium Climate",
+        "description": "Update capacity and timing settings.",
+        "data": {
+          "capacity": "Capacity",
+          "min_working_time": "Minimum working time",
+          "recovery_timeout": "Recovery timeout"
+        }
+      }
+    },
+    "error": {
+      "invalid_capacity": "Capacity must be between 0 and 100",
+      "name_required": "Name is required",
+      "required": "This field is required",
+      "invalid_min_power": "Minimum power must be a number"
+    },
+    "abort": {
+      "reconfigure_successful": "Reconfiguration successful"
+    }
+  },
+  "entity": {
+    "number": {
+      "capacity": {
+        "name": "Capacity"
+      }
+    }
+  },
+  "config_subentries": {
+    "switch": {
+      "entry_type": "Virtual Switch",
+      "initiate_flow": {
+        "user": "Add virtual switch",
+        "reconfigure": "Reconfigure virtual switch"
+      },
+      "step": {
+        "user": {
+          "title": "Add Virtual Switch",
+          "description": "Configure a virtual switch with heating/cooling and off actions, and power monitoring.",
+          "data": {
+            "name": "Name",
+            "mode": "Heating or cooling mode",
+            "heating_action": "Heating action",
+            "cooling_action": "Cooling action",
+            "off_action": "Off action",
+            "power_entity": "Power sensor",
+            "min_power": "Minimum power (W) to treat device as on"
+          },
+          "data_description": {
+            "name": "Friendly name for this switch",
+            "mode": "Whether this switch is used for heating or cooling",
+            "heating_action": "Action to run when switch is turned on in heating mode",
+            "cooling_action": "Action to run when switch is turned on in cooling mode",
+            "off_action": "Action to run when switch is turned off",
+            "power_entity": "Sensor that measures device power (W)",
+            "min_power": "Power above this value is considered \"on\""
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure Virtual Switch",
+          "data": {
+            "name": "Name",
+            "mode": "Heating or cooling mode",
+            "heating_action": "Heating action",
+            "cooling_action": "Cooling action",
+            "off_action": "Off action",
+            "power_entity": "Power sensor",
+            "min_power": "Minimum power (W) to treat device as on"
+          }
+        }
+      },
+      "error": {
+        "name_required": "Name is required",
+        "required": "This field is required",
+        "invalid_min_power": "Minimum power must be a number"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration successful"
+      }
+    },
+    "thermostat": {
+      "entry_type": "Virtual Thermostat",
+      "initiate_flow": {
+        "user": "Add virtual thermostat",
+        "reconfigure": "Reconfigure virtual thermostat"
+      },
+      "step": {
+        "basic": {
+          "title": "Thermostat Settings",
+          "description": "Configure the temperature sensor, target switch, and tolerances.",
+          "data": {
+            "name": "Name",
+            "temperature_sensor": "Temperature sensor",
+            "target_switch": "Target switch",
+            "thermostat_mode": "Heating or cooling",
+            "cold_tolerance": "Cold tolerance (°C)",
+            "hot_tolerance": "Hot tolerance (°C)",
+            "min_cycle_duration": "Minimum cycle duration",
+            "min_temp": "Minimum temperature",
+            "max_temp": "Maximum temperature"
+          },
+          "data_description": {
+            "name": "Friendly name for this thermostat",
+            "temperature_sensor": "Sensor that provides current temperature",
+            "target_switch": "Switch entity to control (any switch in Home Assistant)",
+            "thermostat_mode": "Whether this thermostat controls heating or cooling",
+            "cold_tolerance": "Temperature band below target before turning on",
+            "hot_tolerance": "Temperature band above target before turning off",
+            "min_cycle_duration": "Minimum time between on/off cycles (optional)",
+            "min_temp": "Minimum set temperature (optional)",
+            "max_temp": "Maximum set temperature (optional)"
+          }
+        },
+        "presets": {
+          "title": "Preset Temperatures",
+          "description": "Optional preset target temperatures.",
+          "data": {
+            "away_temp": "Away temperature",
+            "comfort_temp": "Comfort temperature",
+            "eco_temp": "Eco temperature",
+            "home_temp": "Home temperature",
+            "sleep_temp": "Sleep temperature",
+            "activity_temp": "Activity temperature"
+          }
+        }
+      },
+      "error": {
+        "name_required": "Name is required",
+        "required": "This field is required"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration successful"
+      }
+    }
+  }
+}

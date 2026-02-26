@@ -7,7 +7,8 @@
       }
     },
     "abort": {
-      "already_configured": "Mock devices are already configured. Only one instance is allowed."
+      "already_configured": "Mock devices are already configured. Only one instance is allowed.",
+      "reconfigure_successful": "Reconfiguration successful"
     }
   },
   "entity": {

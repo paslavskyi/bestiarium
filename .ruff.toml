@@ -22,5 +22,18 @@ fixture-parentheses = false
 [lint.pyupgrade]
 keep-runtime-typing = true
 
+[lint.per-file-ignores]
+"tests/custom_components/bestiarium_climate/**" = [
+    "ANN",
+    "E501",
+    "PLR2004",
+    "SLF001",
+    "PLC0415",
+    "I001",
+    "PT018",
+    "F401",
+    "F841",
+]
+
 [lint.mccabe]
 max-complexity = 25

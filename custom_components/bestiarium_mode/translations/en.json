@@ -243,7 +243,8 @@
       "no_options": "At least one option must be configured before completing"
     },
     "abort": {
-      "already_configured": "Bestiarium Mode is already configured. Only one instance is allowed."
+      "already_configured": "Bestiarium Mode is already configured. Only one instance is allowed.",
+      "reconfigure_successful": "Reconfiguration successful"
     }
   },
   "entity": {

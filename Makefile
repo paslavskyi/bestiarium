@@ -4,7 +4,8 @@
 help:
 	@echo "Available targets:"
 	@echo "  setup	    - Install dependencies from requirements.txt"
-	@echo "  develop	- Start Home Assistant in debug mode"
+	@echo "  develop	- Start Home Assistant"
+	@echo "  develop-debug - Start Home Assistant with remote debugger (debugpy)"
 	@echo "  lint	    - Format and fix code with ruff"
 	@echo "  lint-check - Check code without fixing (for CI)"
 	@echo "  test	    - Run unit tests with pytest"
@@ -21,6 +22,15 @@ develop:
 		hass --config config --script ensure_config; \
 	fi
 	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" hass --config config --debug
+
+# Start Home Assistant in remote debug mode (debugpy)
+# Listens on port 5678 and waits for debugger to attach
+debug:
+	@if [ ! -d "config" ]; then \
+		mkdir -p config; \
+		hass --config config --script ensure_config; \
+	fi
+	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client -m homeassistant --config config --debug
 
 # Format and fix code with ruff
 lint:

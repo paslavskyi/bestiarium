@@ -31,4 +31,5 @@ logger:
   logs:
     custom_components.bestiarium_mode: debug
     custom_components.bestiarium_devices: debug
+    custom_components.bestiarium_climate: debug
     custom_components.bestiarium_mock: debug

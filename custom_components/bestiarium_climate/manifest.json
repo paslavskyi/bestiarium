@@ -1,0 +1,11 @@
+{
+  "domain": "bestiarium_climate",
+  "name": "Bestiarium Climate",
+  "codeowners": [
+    "@paslavsky"
+  ],
+  "config_flow": true,
+  "dependencies": ["bestiarium_mode"],
+  "documentation": "https://github.com/paslavsky/bestiarium",
+  "version": "0.1.0"
+}

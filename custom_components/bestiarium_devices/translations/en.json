@@ -73,7 +73,8 @@
       "not_implemented": "Configuration flow not yet implemented",
       "already_configured": "This device is already configured",
       "no_bestiarium_mode": "Bestiarium Mode integration must be configured first",
-      "no_devices_with_switch": "No devices with switch entities found"
+      "no_devices_with_switch": "No devices with switch entities found",
+      "reconfigure_successful": "Reconfiguration successful"
     }
   },
   "entity": {
