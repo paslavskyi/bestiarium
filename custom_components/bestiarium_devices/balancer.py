@@ -533,7 +533,7 @@ class BalancingCoordinator:
         return count
 
     async def _execute_overload_strategy(self) -> None:
-        """Execute overload: two-step shutdown (first queue, then second if still overloaded)."""
+        """Run overload handling using a two-step shutdown strategy."""
         LOGGER.warning("OVERLOAD: Executing two-step emergency shutdown")
         entries = self._hass.config_entries.async_entries(DOMAIN)
 

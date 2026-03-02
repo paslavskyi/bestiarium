@@ -62,7 +62,7 @@ async def test_configure_priorities_form_includes_overload_first_queue(
     hass: HomeAssistant,
     bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
 ) -> None:
-    """Test that configure_priorities step includes overload_first_queue and stores it."""
+    """Configure_priorities step exposes overload_first_queue and stores it."""
     hass.states.async_set("switch.test", "off")
     hass.states.async_set(
         "sensor.test",

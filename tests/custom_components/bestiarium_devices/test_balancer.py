@@ -41,6 +41,9 @@ from custom_components.bestiarium_devices.const import (
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
+EXPECTED_TURN_OFF_CALLS = 2
+MIN_SERVICE_CALL_ARGS = 3
+
 
 @pytest.fixture
 def zone_binary_sensors(hass: HomeAssistant) -> None:
@@ -609,7 +612,7 @@ class TestOverloadStrategy:
 
 
 class TestOverloadTwoStepStrategy:
-    """Tests for two-step overload (first queue, then second queue if overload persists)."""
+    """Tests for two-step overload strategy."""
 
     async def test_two_step_overload_first_then_second_after_wait(
         self,
@@ -617,7 +620,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """First-queue devices turned off, then after 5s second-queue (overload persists)."""
+        """Turn off first-queue devices, then after 5s turn off second queue."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -658,12 +661,12 @@ class TestOverloadTwoStepStrategy:
                 ) as mock_call,
             ):
                 await coordinator._execute_overload_strategy()  # noqa: SLF001
-                turn_off_calls = [
-                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
-                ]
-                assert len(turn_off_calls) == 2
-                assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
-                assert turn_off_calls[1][0][2]["entity_id"] == "switch.second"
+            turn_off_calls = [
+                c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+            ]
+            assert len(turn_off_calls) == EXPECTED_TURN_OFF_CALLS
+            assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
+            assert turn_off_calls[1][0][2]["entity_id"] == "switch.second"
         finally:
             await coordinator.async_stop()
 
@@ -673,7 +676,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """If overload clears after first-queue shutdown (checkpoint 1), second-queue is NOT turned off."""
+        """Overload clears after first shutdown; second queue stays on."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -700,8 +703,10 @@ class TestOverloadTwoStepStrategy:
         entry_second.add_to_hass(hass)
         hass.states.async_set("switch.second", STATE_ON)
 
-        async def clear_overload_on_first_turn_off(*args: object, **kwargs: object) -> None:
-            if len(args) >= 3 and args[1] == "turn_off":
+        async def clear_overload_on_first_turn_off(
+            *args: object,
+        ) -> None:
+            if len(args) >= MIN_SERVICE_CALL_ARGS and args[1] == "turn_off":
                 data = args[2]
                 entity_id = data.get("entity_id") if isinstance(data, dict) else None
                 if entity_id == "switch.first":
@@ -730,7 +735,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """If overload clears during 5s wait (checkpoint 2), second-queue is NOT turned off."""
+        """If overload clears during 5s wait, second queue is not turned off."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -757,7 +762,7 @@ class TestOverloadTwoStepStrategy:
         entry_second.add_to_hass(hass)
         hass.states.async_set("switch.second", STATE_ON)
 
-        async def clear_overload_after_sleep(*args: object, **kwargs: object) -> None:
+        async def clear_overload_after_sleep(_seconds: float) -> None:
             hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
         coordinator = BalancingCoordinator(hass)
@@ -788,7 +793,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """All devices in first queue: only first queue turned off, second queue is no-op."""
+        """All devices in first queue: second queue is a no-op."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry1 = MockConfigEntry(
             domain=DOMAIN,
@@ -832,7 +837,7 @@ class TestOverloadTwoStepStrategy:
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
-                assert len(turn_off_calls) == 2
+                assert len(turn_off_calls) == EXPECTED_TURN_OFF_CALLS
                 entity_ids = {c[0][2]["entity_id"] for c in turn_off_calls}
                 assert entity_ids == {"switch.first1", "switch.first2"}
         finally:
@@ -844,7 +849,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """No first-queue devices: all turned off immediately, no 5s wait (backward compat)."""
+        """No first-queue devices: all turned off immediately, no 5s wait."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry1 = MockConfigEntry(
             domain=DOMAIN,
@@ -889,7 +894,7 @@ class TestOverloadTwoStepStrategy:
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
-                assert len(turn_off_calls) == 2
+                assert len(turn_off_calls) == EXPECTED_TURN_OFF_CALLS
                 entity_ids = {c[0][2]["entity_id"] for c in turn_off_calls}
                 assert entity_ids == {"switch.a", "switch.b"}
                 sleep_mock.assert_not_called()
@@ -902,7 +907,7 @@ class TestOverloadTwoStepStrategy:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Mixed first/second queue with overload persisting: ALL devices eventually turned off."""
+        """Mixed queues with persistent overload: all devices eventually turn off."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -949,7 +954,7 @@ class TestOverloadTwoStepStrategy:
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
-                assert len(turn_off_calls) == 2
+                assert len(turn_off_calls) == EXPECTED_TURN_OFF_CALLS
                 assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
                 assert turn_off_calls[1][0][2]["entity_id"] == "switch.second"
         finally:
