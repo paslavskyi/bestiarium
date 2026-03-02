@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
@@ -19,12 +20,14 @@ from .const import (
     BINARY_SENSOR_OVERLOAD,
     BINARY_SENSOR_RED,
     BINARY_SENSOR_YELLOW,
+    CONF_OVERLOAD_FIRST_QUEUE,
     CONF_SWITCH_ENTITY_ID,
     DOMAIN,
     GREEN_INTERVAL_SECONDS,
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
     LOGGER,
+    OVERLOAD_WAIT_SECONDS,
     RED_INTERVAL_SECONDS,
 )
 from .helpers import (
@@ -36,6 +39,7 @@ from .helpers import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
 # Notification ID for missing sensors warning
@@ -495,25 +499,20 @@ class BalancingCoordinator:
                 err,
             )
 
-    async def _execute_overload_strategy(self) -> None:
-        """Execute overload: EMERGENCY - turn off ALL devices including ALWAYS_ON."""
-        LOGGER.warning("OVERLOAD: Executing emergency shutdown of all devices")
-        entries = self._hass.config_entries.async_entries(DOMAIN)
-
-        devices_turned_off = 0
-
+    async def _turn_off_devices(
+        self,
+        entries: list[ConfigEntry],
+    ) -> int:
+        """Turn off switches for the given config entries. Returns count turned off."""
+        count = 0
         for entry in entries:
             device_id = get_device_id_from_entry(entry)
             device_name = get_device_name_from_entry(entry)
             switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
-
             if not switch_entity_id:
                 continue
-
-            # Turn off ALL devices - no exceptions, even ALWAYS_ON
-            # This is an emergency shutdown
             LOGGER.info(
-                "OVERLOAD: Turning off device %s (%s) (emergency shutdown)",
+                "OVERLOAD: Turning off device %s (%s)",
                 device_name,
                 device_id,
             )
@@ -523,7 +522,7 @@ class BalancingCoordinator:
                     "turn_off",
                     {"entity_id": switch_entity_id},
                 )
-                devices_turned_off += 1
+                count += 1
             except Exception as err:  # noqa: BLE001
                 LOGGER.warning(
                     "OVERLOAD: failed to turn off device %s (%s): %s",
@@ -531,10 +530,55 @@ class BalancingCoordinator:
                     device_id,
                     err,
                 )
+        return count
 
+    async def _execute_overload_strategy(self) -> None:
+        """Execute overload: two-step shutdown (first queue, then second if still overloaded)."""
+        LOGGER.warning("OVERLOAD: Executing two-step emergency shutdown")
+        entries = self._hass.config_entries.async_entries(DOMAIN)
+
+        first_queue = [
+            e
+            for e in entries
+            if e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
+        ]
+        second_queue = [
+            e
+            for e in entries
+            if not e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
+        ]
+
+        if not first_queue:
+            # Backward compat: no first-queue devices → turn off all immediately
+            n = await self._turn_off_devices(entries)
+            LOGGER.warning(
+                "OVERLOAD: No first-queue devices; turned off all %d devices",
+                n,
+            )
+            return
+
+        n1 = await self._turn_off_devices(first_queue)
+        LOGGER.warning("OVERLOAD: First queue shutdown complete - %d devices off", n1)
+
+        if not self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
+            LOGGER.info(
+                "OVERLOAD: Overload cleared after first queue; skipping second queue"
+            )
+            return
+
+        await asyncio.sleep(OVERLOAD_WAIT_SECONDS)
+
+        if not self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
+            LOGGER.info(
+                "OVERLOAD: Overload cleared during wait; skipping second queue"
+            )
+            return
+
+        n2 = await self._turn_off_devices(second_queue)
         LOGGER.warning(
-            "OVERLOAD: Emergency shutdown complete - %d devices turned off",
-            devices_turned_off,
+            "OVERLOAD: Two-step shutdown complete - first=%d second=%d",
+            n1,
+            n2,
         )
 
 

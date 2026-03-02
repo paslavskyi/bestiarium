@@ -49,10 +49,12 @@
         "title": "Configure Load Priorities",
         "description": "Set load priorities for each mode. Per-mode priorities are optional and will use the default priority if not specified. 0 = always off, 9999 = always on.",
         "data": {
-          "default_priority": "Default priority"
+          "default_priority": "Default priority",
+          "overload_first_queue": "Turn off in first queue during overload"
         },
         "data_description": {
-          "default_priority": "Default load priority (0-9999)"
+          "default_priority": "Default load priority (0-9999)",
+          "overload_first_queue": "When enabled, this device is turned off in the first wave when overload protection is activated; otherwise it is turned off only if overload persists after 5 seconds."
         }
       },
       "reconfigure": {

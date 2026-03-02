@@ -28,6 +28,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
+    CONF_OVERLOAD_FIRST_QUEUE,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
@@ -603,6 +604,354 @@ class TestOverloadStrategy:
                 assert (
                     turn_off_after_overload[0][0][2]["entity_id"] == "switch.always_on"
                 )
+        finally:
+            await coordinator.async_stop()
+
+
+class TestOverloadTwoStepStrategy:
+    """Tests for two-step overload (first queue, then second queue if overload persists)."""
+
+    async def test_two_step_overload_first_then_second_after_wait(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """First-queue devices turned off, then after 5s second-queue (overload persists)."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First Queue",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second Queue",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with (
+                patch(
+                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "homeassistant.core.ServiceRegistry.async_call",
+                    new_callable=AsyncMock,
+                ) as mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                turn_off_calls = [
+                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+                ]
+                assert len(turn_off_calls) == 2
+                assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
+                assert turn_off_calls[1][0][2]["entity_id"] == "switch.second"
+        finally:
+            await coordinator.async_stop()
+
+    async def test_overload_cleared_after_first_queue_skips_second(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """If overload clears after first-queue shutdown (checkpoint 1), second-queue is NOT turned off."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        async def clear_overload_on_first_turn_off(*args: object, **kwargs: object) -> None:
+            if len(args) >= 3 and args[1] == "turn_off":
+                data = args[2]
+                entity_id = data.get("entity_id") if isinstance(data, dict) else None
+                if entity_id == "switch.first":
+                    hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            mock_call = AsyncMock(side_effect=clear_overload_on_first_turn_off)
+            with patch(
+                "homeassistant.core.ServiceRegistry.async_call",
+                mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+            turn_off_calls = [
+                c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+            ]
+            assert len(turn_off_calls) == 1
+            assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
+        finally:
+            await coordinator.async_stop()
+
+    async def test_overload_cleared_during_wait_skips_second_queue(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """If overload clears during 5s wait (checkpoint 2), second-queue is NOT turned off."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        async def clear_overload_after_sleep(*args: object, **kwargs: object) -> None:
+            hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with (
+                patch(
+                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    side_effect=clear_overload_after_sleep,
+                ),
+                patch(
+                    "homeassistant.core.ServiceRegistry.async_call",
+                    new_callable=AsyncMock,
+                ) as mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                turn_off_calls = [
+                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+                ]
+                assert len(turn_off_calls) == 1
+                assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
+        finally:
+            await coordinator.async_stop()
+
+    async def test_all_devices_in_first_queue_second_queue_no_op(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """All devices in first queue: only first queue turned off, second queue is no-op."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry1 = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First1",
+                CONF_SWITCH_ENTITY_ID: "switch.first1",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry1.add_to_hass(hass)
+        entry2 = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First2",
+                CONF_SWITCH_ENTITY_ID: "switch.first2",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry2.add_to_hass(hass)
+        hass.states.async_set("switch.first1", STATE_ON)
+        hass.states.async_set("switch.first2", STATE_ON)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with (
+                patch(
+                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "homeassistant.core.ServiceRegistry.async_call",
+                    new_callable=AsyncMock,
+                ) as mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                turn_off_calls = [
+                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+                ]
+                assert len(turn_off_calls) == 2
+                entity_ids = {c[0][2]["entity_id"] for c in turn_off_calls}
+                assert entity_ids == {"switch.first1", "switch.first2"}
+        finally:
+            await coordinator.async_stop()
+
+    async def test_no_first_queue_devices_turn_off_all_immediately(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """No first-queue devices: all turned off immediately, no 5s wait (backward compat)."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry1 = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "A",
+                CONF_SWITCH_ENTITY_ID: "switch.a",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry1.add_to_hass(hass)
+        entry2 = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "B",
+                CONF_SWITCH_ENTITY_ID: "switch.b",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry2.add_to_hass(hass)
+        hass.states.async_set("switch.a", STATE_ON)
+        hass.states.async_set("switch.b", STATE_ON)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            sleep_mock = AsyncMock()
+            with (
+                patch(
+                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    sleep_mock,
+                ),
+                patch(
+                    "homeassistant.core.ServiceRegistry.async_call",
+                    new_callable=AsyncMock,
+                ) as mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                turn_off_calls = [
+                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+                ]
+                assert len(turn_off_calls) == 2
+                entity_ids = {c[0][2]["entity_id"] for c in turn_off_calls}
+                assert entity_ids == {"switch.a", "switch.b"}
+                sleep_mock.assert_not_called()
+        finally:
+            await coordinator.async_stop()
+
+    async def test_mixed_queues_overload_persists_all_turned_off(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Mixed first/second queue with overload persisting: ALL devices eventually turned off."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {
+                    CONF_DEFAULT_PRIORITY: 5000,
+                    "Eco": LOAD_PRIORITY_ALWAYS_ON,
+                },
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with (
+                patch(
+                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "homeassistant.core.ServiceRegistry.async_call",
+                    new_callable=AsyncMock,
+                ) as mock_call,
+            ):
+                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                turn_off_calls = [
+                    c for c in mock_call.call_args_list if c[0][1] == "turn_off"
+                ]
+                assert len(turn_off_calls) == 2
+                assert turn_off_calls[0][0][2]["entity_id"] == "switch.first"
+                assert turn_off_calls[1][0][2]["entity_id"] == "switch.second"
         finally:
             await coordinator.async_stop()
 

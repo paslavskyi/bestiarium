@@ -17,6 +17,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
     CONF_MODE_OPTIONS_SNAPSHOT,
+    CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_TYPE_EXTENDED,
@@ -55,6 +56,49 @@ async def test_config_flow_aborts_without_bestiarium_mode(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "no_bestiarium_mode"
+
+
+async def test_configure_priorities_form_includes_overload_first_queue(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test that configure_priorities step includes overload_first_queue and stores it."""
+    hass.states.async_set("switch.test", "off")
+    hass.states.async_set(
+        "sensor.test",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_USER},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {"next_step_id": "create_virtual"},
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Overload Test",
+            CONF_SWITCH_ENTITY_ID: "switch.test",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.test",
+        },
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+    # Submit with overload_first_queue True and verify it is stored
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 5000,
+            CONF_OVERLOAD_FIRST_QUEUE: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert len(entries) == 1
+    assert entries[0].data[CONF_OVERLOAD_FIRST_QUEUE] is True
 
 
 async def test_config_flow_create_virtual_device(
@@ -101,6 +145,7 @@ async def test_config_flow_create_virtual_device(
             CONF_DEFAULT_PRIORITY: 5000,
             "priority_Eco": 1000,
             "priority_Boost": 9999,
+            CONF_OVERLOAD_FIRST_QUEUE: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -121,6 +166,7 @@ async def test_config_flow_create_virtual_device(
         "Eco",
         "Boost",
     }
+    assert entries[0].data[CONF_OVERLOAD_FIRST_QUEUE] is True
 
 
 async def test_config_flow_create_device_with_only_default_priority(
@@ -161,6 +207,7 @@ async def test_config_flow_create_device_with_only_default_priority(
         {
             CONF_DEFAULT_PRIORITY: 4000,
             # Eco and Boost are optional and not provided
+            CONF_OVERLOAD_FIRST_QUEUE: False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -172,6 +219,7 @@ async def test_config_flow_create_device_with_only_default_priority(
     # Per-mode priorities omitted by user are left out of config
     assert "Eco" not in entries[0].data[CONF_LOAD_PRIORITIES]
     assert "Boost" not in entries[0].data[CONF_LOAD_PRIORITIES]
+    assert entries[0].data[CONF_OVERLOAD_FIRST_QUEUE] is False
 
 
 async def test_config_flow_create_device_with_partial_priorities(
@@ -211,6 +259,7 @@ async def test_config_flow_create_device_with_partial_priorities(
             CONF_DEFAULT_PRIORITY: 3000,
             "priority_Eco": 1500,
             # Boost is optional and not provided
+            CONF_OVERLOAD_FIRST_QUEUE: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -326,6 +375,7 @@ async def test_config_flow_extend_device(
             CONF_DEFAULT_PRIORITY: 5000,
             "priority_Eco": 2000,
             "priority_Boost": 8000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
@@ -494,6 +544,7 @@ async def test_config_flow_reconfigure_virtual_device(
             CONF_DEFAULT_PRIORITY: 6000,
             "priority_Eco": 2000,
             "priority_Boost": 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
         },
     )
     assert result["type"] == FlowResultType.ABORT
@@ -504,6 +555,7 @@ async def test_config_flow_reconfigure_virtual_device(
     assert updated_entry.data[CONF_DEVICE_NAME] == "Updated Name"
     assert updated_entry.data[CONF_SWITCH_ENTITY_ID] == "switch.new_switch"
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 6000  # noqa: PLR2004
+    assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is False
 
 
 async def test_config_flow_reconfigure_extended_device(
@@ -550,6 +602,7 @@ async def test_config_flow_reconfigure_extended_device(
             CONF_DEFAULT_PRIORITY: 7000,
             "priority_Eco": 3000,
             "priority_Boost": 9500,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
         },
     )
     assert result["type"] == FlowResultType.ABORT
@@ -559,6 +612,58 @@ async def test_config_flow_reconfigure_extended_device(
     assert updated_entry is not None
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 7000  # noqa: PLR2004
     assert updated_entry.data[CONF_LOAD_PRIORITIES]["Boost"] == 9500  # noqa: PLR2004
+    assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is False
+
+
+async def test_reconfigure_preserves_overload_first_queue(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Test that reconfiguring an entry preserves or updates overload_first_queue."""
+    test_entry = MockConfigEntry(domain="test", entry_id="test_entry_overload")
+    test_entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_or_create(
+        config_entry_id=test_entry.entry_id,
+        identifiers={("test", "device_overload")},
+        name="Overload Reconfig Device",
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_EXTENDED,
+            CONF_DEVICE_ID: device.id,
+            CONF_SWITCH_ENTITY_ID: "switch.overload",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.overload",
+            CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000, "Eco": 1000},
+            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY, "Eco"],
+            CONF_OVERLOAD_FIRST_QUEUE: True,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "configure_priorities"
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 5500,
+            "priority_Eco": 1500,
+            "priority_Boost": 8500,
+            CONF_OVERLOAD_FIRST_QUEUE: True,
+        },
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
+    assert updated_entry is not None
+    assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is True
 
 
 async def test_config_flow_extend_device_no_switch(
@@ -690,7 +795,12 @@ async def test_config_flow_extend_device_multiple_switches(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+        {
+            CONF_DEFAULT_PRIORITY: 5000,
+            "priority_Eco": 2000,
+            "priority_Boost": 8000,
+            CONF_OVERLOAD_FIRST_QUEUE: True,
+        },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
@@ -776,7 +886,12 @@ async def test_config_flow_extend_device_multiple_sensors(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+        {
+            CONF_DEFAULT_PRIORITY: 5000,
+            "priority_Eco": 2000,
+            "priority_Boost": 8000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+        },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
@@ -872,7 +987,12 @@ async def test_config_flow_extend_device_multiple_both(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_DEFAULT_PRIORITY: 5000, "priority_Eco": 2000, "priority_Boost": 8000},
+        {
+            CONF_DEFAULT_PRIORITY: 5000,
+            "priority_Eco": 2000,
+            "priority_Boost": 8000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+        },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
@@ -973,7 +1093,12 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {CONF_DEFAULT_PRIORITY: 6000, "priority_Eco": 3000, "priority_Boost": 9000},
+        {
+            CONF_DEFAULT_PRIORITY: 6000,
+            "priority_Eco": 3000,
+            "priority_Boost": 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: True,
+        },
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
@@ -983,3 +1108,4 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
     assert updated_entry.data[CONF_SWITCH_ENTITY_ID] == switch2.entity_id
     assert updated_entry.data[CONF_POWER_SENSOR_ENTITY_ID] == power2.entity_id
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 6000  # noqa: PLR2004
+    assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is True

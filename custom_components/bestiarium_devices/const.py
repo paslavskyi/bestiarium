@@ -15,6 +15,7 @@ CONF_SWITCH_ENTITY_ID = "switch_entity_id"
 CONF_POWER_SENSOR_ENTITY_ID = "power_sensor_entity_id"
 CONF_LOAD_PRIORITIES = "load_priorities"
 CONF_MODE_OPTIONS_SNAPSHOT = "mode_options_snapshot"
+CONF_OVERLOAD_FIRST_QUEUE = "overload_first_queue"
 
 # Device types
 DEVICE_TYPE_VIRTUAL = "virtual"
@@ -49,3 +50,4 @@ BINARY_SENSOR_OVERLOAD = "binary_sensor.power_load_overload"
 # Balancing strategy timing constants (in seconds)
 GREEN_INTERVAL_SECONDS = 60
 RED_INTERVAL_SECONDS = 5
+OVERLOAD_WAIT_SECONDS = 5

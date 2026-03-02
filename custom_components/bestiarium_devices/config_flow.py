@@ -21,6 +21,7 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
     CONF_MODE_OPTIONS_SNAPSHOT,
+    CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_CLASS_POWER,
@@ -143,6 +144,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._switches: list[str] = []
         self._power_sensors: list[str] = []
         self._load_priorities: dict[str, int] = {}
+        self._overload_first_queue: bool = False
 
     async def async_step_user(
         self,
@@ -398,7 +400,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         existing = existing_priorities or {}
         schema_dict: dict[str, Any] = {}
 
-        # Default priority (only field with a default value in the UI)
+        # Default priority (only numeric field with a default value in the UI)
         default_value = existing.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
         schema_dict[vol.Required(CONF_DEFAULT_PRIORITY, default=default_value)] = (
             build_priority_number_selector()
@@ -414,6 +416,14 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             else:
                 schema_dict[vol.Optional(key)] = build_priority_number_selector()
+
+        # Overload first-queue flag (boolean, required with default)
+        schema_dict[
+            vol.Required(
+                CONF_OVERLOAD_FIRST_QUEUE,
+                default=self._overload_first_queue,
+            )
+        ] = selector.BooleanSelector(selector.BooleanSelectorConfig())
 
         return vol.Schema(schema_dict)
 
@@ -431,6 +441,11 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             self._load_priorities = extract_priorities_from_user_input(
                 user_input,
                 mode_names,
+            )
+
+            # Extract overload first-queue flag
+            self._overload_first_queue = bool(
+                user_input.get(CONF_OVERLOAD_FIRST_QUEUE, False),
             )
 
             # Create or update config entry
@@ -468,6 +483,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_POWER_SENSOR_ENTITY_ID: self._power_sensor_entity_id,
             CONF_LOAD_PRIORITIES: self._load_priorities,
             CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
+            CONF_OVERLOAD_FIRST_QUEUE: self._overload_first_queue,
         }
 
         if self._device_type == DEVICE_TYPE_VIRTUAL:
@@ -492,6 +508,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
         self._power_sensor_entity_id = entry.data.get(CONF_POWER_SENSOR_ENTITY_ID)
         self._load_priorities = entry.data.get(CONF_LOAD_PRIORITIES, {}).copy()
+        self._overload_first_queue = bool(
+            entry.data.get(CONF_OVERLOAD_FIRST_QUEUE, False),
+        )
 
         if self._device_type == DEVICE_TYPE_VIRTUAL:
             # Use same form as create
