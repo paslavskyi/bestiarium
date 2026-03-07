@@ -24,7 +24,11 @@ from .const import (
     CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
     DOMAIN,
+    EVENT_CAPACITY_EXHAUSTED,
+    EVENT_DEVICE_ROTATED_IN,
+    EVENT_DEVICE_ROTATED_OUT,
     EVENT_SWITCH_FAILED,
+    EVENT_SWITCH_RECOVERED,
     LOGGER,
     MAX_SWITCH_RETRIES,
 )
@@ -212,6 +216,13 @@ class BalancingCoordinator:
                 t.set_switch_not_responding(False)
                 t.set_recovery_time(None)
                 t.set_switch_state_change_tries(0)
+                self._hass.bus.async_fire(
+                    EVENT_SWITCH_RECOVERED,
+                    {
+                        "thermostat": label,
+                        "switch_entity_id": self._get_switch_entity_id(t),
+                    },
+                )
                 LOGGER.debug("Recovery: cleared for %s (switch is off)", label)
 
     async def _turn_off_idle(self) -> None:
@@ -286,19 +297,51 @@ class BalancingCoordinator:
             for t in working
         ]
         with_coeff.sort(key=lambda x: (x[1], -x[2]))
-        for i, (t, _coeff, _diff) in enumerate(with_coeff):
+        thermostats_on = [self._thermostat_label(t) for t, _, _ in with_coeff[:capacity]]
+        thermostats_waiting = [
+            self._thermostat_label(t) for t, _, _ in with_coeff[capacity:]
+        ]
+        self._hass.bus.async_fire(
+            EVENT_CAPACITY_EXHAUSTED,
+            {
+                "capacity": capacity,
+                "demand": n,
+                "thermostats_on": thermostats_on,
+                "thermostats_waiting": thermostats_waiting,
+            },
+        )
+        for i, (t, coeff, diff) in enumerate(with_coeff):
             label = self._thermostat_label(t)
+            switch_entity_id = self._get_switch_entity_id(t)
             if i < capacity:
                 if not t.expected_switch_state:
                     t.set_expected_switch_state(True)
                     t.set_switch_state_change_tries(0)
+                    self._hass.bus.async_fire(
+                        EVENT_DEVICE_ROTATED_IN,
+                        {
+                            "thermostat": label,
+                            "switch_entity_id": switch_entity_id,
+                            "working_time_coefficient": round(coeff, 2),
+                            "temperature_diff": round(diff, 2),
+                        },
+                    )
                     LOGGER.debug(
-                        "  on: %s (coeff=%.2f diff=%.2f)", label, _coeff, _diff
+                        "  on: %s (coeff=%.2f diff=%.2f)", label, coeff, diff
                     )
             elif t.expected_switch_state:
                 t.set_expected_switch_state(False)
                 t.set_switch_state_change_tries(0)
-                LOGGER.debug("  off: %s (coeff=%.2f diff=%.2f)", label, _coeff, _diff)
+                self._hass.bus.async_fire(
+                    EVENT_DEVICE_ROTATED_OUT,
+                    {
+                        "thermostat": label,
+                        "switch_entity_id": switch_entity_id,
+                        "working_time_coefficient": round(coeff, 2),
+                        "temperature_diff": round(diff, 2),
+                    },
+                )
+                LOGGER.debug("  off: %s (coeff=%.2f diff=%.2f)", label, coeff, diff)
 
     async def _sync_switches(self, now: datetime) -> None:
         """Sync actual switch state with expected, retries, not_responding."""
@@ -323,6 +366,7 @@ class BalancingCoordinator:
                 self._hass.bus.async_fire(
                     EVENT_SWITCH_FAILED, self._event_switch_failed_payload(t)
                 )
+                await self._async_turn_switch(t, turn_on=False)
                 t.set_switch_state_change_tries(0)
                 t.set_switch_not_responding(True)
                 t.set_recovery_time(now + self._recovery_timeout)

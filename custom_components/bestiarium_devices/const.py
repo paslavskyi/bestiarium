@@ -51,3 +51,12 @@ BINARY_SENSOR_OVERLOAD = "binary_sensor.power_load_overload"
 GREEN_INTERVAL_SECONDS = 60
 RED_INTERVAL_SECONDS = 5
 OVERLOAD_WAIT_SECONDS = 5
+
+# Event types for automations
+EVENT_ZONE_CHANGED = "bestiarium_devices_zone_changed"
+EVENT_DEVICE_TURNED_ON = "bestiarium_devices_device_turned_on"
+EVENT_DEVICE_TURNED_OFF = "bestiarium_devices_device_turned_off"
+EVENT_OVERLOAD_FIRST_QUEUE = "bestiarium_devices_overload_first_queue"
+EVENT_OVERLOAD_SECOND_QUEUE = "bestiarium_devices_overload_second_queue"
+EVENT_OVERLOAD_CLEARED = "bestiarium_devices_overload_cleared"
+EVENT_MODE_APPLIED = "bestiarium_devices_mode_applied"

@@ -23,6 +23,13 @@ from .const import (
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_SWITCH_ENTITY_ID,
     DOMAIN,
+    EVENT_DEVICE_TURNED_OFF,
+    EVENT_DEVICE_TURNED_ON,
+    EVENT_MODE_APPLIED,
+    EVENT_OVERLOAD_CLEARED,
+    EVENT_OVERLOAD_FIRST_QUEUE,
+    EVENT_OVERLOAD_SECOND_QUEUE,
+    EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
@@ -303,12 +310,17 @@ class BalancingCoordinator:
         new_zone = self._determine_active_zone()
 
         if new_zone != self._active_zone:
+            previous_zone = self._active_zone
             LOGGER.info(
                 "Active zone changed from %s to %s",
-                self._active_zone,
+                previous_zone,
                 new_zone,
             )
             self._active_zone = new_zone
+            self._hass.bus.async_fire(
+                EVENT_ZONE_CHANGED,
+                {"previous_zone": previous_zone.value, "zone": new_zone.value},
+            )
             # Handle zone change (stop/start periodic jobs, execute overload)
             self._hass.async_create_task(self._handle_zone_change(new_zone))
 
@@ -329,6 +341,8 @@ class BalancingCoordinator:
     async def _apply_mode_priorities(self) -> None:
         """Apply mode-specific priorities (turn off/on devices based on priority)."""
         entries = self._hass.config_entries.async_entries(DOMAIN)
+        devices_turned_off: list[str] = []
+        devices_turned_on: list[str] = []
 
         for entry in entries:
             device_id = get_device_id_from_entry(entry)
@@ -357,6 +371,7 @@ class BalancingCoordinator:
                         "turn_off",
                         {"entity_id": switch_entity_id},
                     )
+                    devices_turned_off.append(device_id)
                 except Exception as err:  # noqa: BLE001
                     LOGGER.warning(
                         "Failed to turn off device %s (%s): %s",
@@ -376,6 +391,7 @@ class BalancingCoordinator:
                         "turn_on",
                         {"entity_id": switch_entity_id},
                     )
+                    devices_turned_on.append(device_id)
                 except Exception as err:  # noqa: BLE001
                     LOGGER.warning(
                         "Failed to turn on device %s (%s): %s",
@@ -383,6 +399,18 @@ class BalancingCoordinator:
                         device_id,
                         err,
                     )
+
+        if devices_turned_off or devices_turned_on:
+            mode_state = self._hass.states.get(BESTIARIUM_MODE_SELECT_ENTITY_ID)
+            mode = mode_state.state if mode_state else ""
+            self._hass.bus.async_fire(
+                EVENT_MODE_APPLIED,
+                {
+                    "mode": mode,
+                    "devices_turned_off": devices_turned_off,
+                    "devices_turned_on": devices_turned_on,
+                },
+            )
 
     async def _execute_green_strategy(self) -> None:
         """Execute green strategy: turn on highest priority device that is OFF."""
@@ -432,6 +460,16 @@ class BalancingCoordinator:
                 "switch",
                 "turn_on",
                 {"entity_id": switch_entity_id},
+            )
+            self._hass.bus.async_fire(
+                EVENT_DEVICE_TURNED_ON,
+                {
+                    "strategy": "green",
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "switch_entity_id": switch_entity_id,
+                    "priority": priority,
+                },
             )
         except Exception as err:  # noqa: BLE001
             LOGGER.warning(
@@ -490,6 +528,16 @@ class BalancingCoordinator:
                 "switch",
                 "turn_off",
                 {"entity_id": switch_entity_id},
+            )
+            self._hass.bus.async_fire(
+                EVENT_DEVICE_TURNED_OFF,
+                {
+                    "strategy": "red",
+                    "device_id": device_id,
+                    "device_name": device_name,
+                    "switch_entity_id": switch_entity_id,
+                    "priority": priority,
+                },
             )
         except Exception as err:  # noqa: BLE001
             LOGGER.warning(
@@ -560,9 +608,27 @@ class BalancingCoordinator:
         n1 = await self._turn_off_devices(first_queue)
         LOGGER.warning("OVERLOAD: First queue shutdown complete - %d devices off", n1)
 
-        if not self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
+        overload_cleared = not self._is_sensor_on(BINARY_SENSOR_OVERLOAD)
+        first_device_ids = [get_device_id_from_entry(e) for e in first_queue]
+        first_device_names = [get_device_name_from_entry(e) for e in first_queue]
+
+        self._hass.bus.async_fire(
+            EVENT_OVERLOAD_FIRST_QUEUE,
+            {
+                "devices_turned_off": n1,
+                "device_ids": first_device_ids,
+                "device_names": first_device_names,
+                "overload_cleared": overload_cleared,
+            },
+        )
+
+        if overload_cleared:
             LOGGER.info(
                 "OVERLOAD: Overload cleared after first queue; skipping second queue"
+            )
+            self._hass.bus.async_fire(
+                EVENT_OVERLOAD_CLEARED,
+                {"cleared_after": "first_queue", "first_queue_count": n1},
             )
             return
 
@@ -572,6 +638,10 @@ class BalancingCoordinator:
             LOGGER.info(
                 "OVERLOAD: Overload cleared during wait; skipping second queue"
             )
+            self._hass.bus.async_fire(
+                EVENT_OVERLOAD_CLEARED,
+                {"cleared_after": "wait_period", "first_queue_count": n1},
+            )
             return
 
         n2 = await self._turn_off_devices(second_queue)
@@ -579,6 +649,18 @@ class BalancingCoordinator:
             "OVERLOAD: Two-step shutdown complete - first=%d second=%d",
             n1,
             n2,
+        )
+
+        second_device_ids = [get_device_id_from_entry(e) for e in second_queue]
+        second_device_names = [get_device_name_from_entry(e) for e in second_queue]
+        self._hass.bus.async_fire(
+            EVENT_OVERLOAD_SECOND_QUEUE,
+            {
+                "first_queue_count": n1,
+                "second_queue_count": n2,
+                "device_ids": second_device_ids,
+                "device_names": second_device_names,
+            },
         )
 
 

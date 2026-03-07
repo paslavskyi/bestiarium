@@ -1,46 +1,72 @@
-# Notice
+# Bestiarium
 
-The component and platforms in this repository are not meant to be used by a
-user, but as a "blueprint" that custom component developers can build
-upon, to make more awesome stuff.
+A set of [Home Assistant](https://www.home-assistant.io/) custom integrations for **smart power balancing** of heating and cooling devices. Bestiarium monitors grid load, rotates devices within a capacity budget, and handles non-responding switches — all without cloud dependencies.
 
-HAVE FUN! 😎
+## Integrations
 
-## Why?
+The project ships four custom components that work together:
 
-This is simple, by having custom_components look (README + structure) the same
-it is easier for developers to help each other and for users to start using them.
+### bestiarium_mode
 
-If you are a developer and you want to add things to this "blueprint" that you think more
-developers will have use for, please open a PR to add it :)
+Defines operating **modes** (user-created profiles) and monitors **AC power load zones** (green / yellow / red / overload) derived from a power sensor and configurable thresholds.
 
-## What?
+- `select` entity — active mode selector
+- `binary_sensor` entities — one per load zone (green, yellow, red, overload)
 
-This repository contains multiple files, here is a overview:
+### bestiarium_devices
 
-File | Purpose | Documentation
--- | -- | --
-`.devcontainer.json` | Used for development/testing with Visual Studio Code. | [Documentation](https://code.visualstudio.com/docs/remote/containers)
-`.github/ISSUE_TEMPLATE/*.yml` | Templates for the issue tracker | [Documentation](https://help.github.com/en/github/building-a-strong-community/configuring-issue-templates-for-your-repository)
-`custom_components/integration_blueprint/*` | Integration files, this is where everything happens. | [Documentation](https://developers.home-assistant.io/docs/creating_component_index)
-`CONTRIBUTING.md` | Guidelines on how to contribute. | [Documentation](https://help.github.com/en/github/building-a-strong-community/setting-guidelines-for-repository-contributors)
-`LICENSE` | The license file for the project. | [Documentation](https://help.github.com/en/github/creating-cloning-and-archiving-repositories/licensing-a-repository)
-`README.md` | The file you are reading now, should contain info about the integration, installation and configuration instructions. | [Documentation](https://help.github.com/en/github/writing-on-github/basic-writing-and-formatting-syntax)
-`requirements.txt` | Python packages used for development/lint/testing this integration. | [Documentation](https://pip.pypa.io/en/stable/user_guide/#requirements-files)
+Registers physical and virtual devices with **per-mode load priorities** and runs a `BalancingCoordinator` that applies green / red / overload strategies to shed or restore load. Depends on `bestiarium_mode`.
 
-## How?
+### bestiarium_climate
 
-1. Create a new repository in GitHub, using this repository as a template by clicking the "Use this template" button in the GitHub UI.
-1. Open your new repository in Visual Studio Code devcontainer (Preferably with the "`Dev Containers: Clone Repository in Named Container Volume...`" option).
-1. Rename all instances of the `integration_blueprint` to `custom_components/<your_integration_domain>` (e.g. `custom_components/awesome_integration`).
-1. Rename all instances of the `Integration Blueprint` to `<Your Integration Name>` (e.g. `Awesome Integration`).
-1. Run the `scripts/develop` to start HA and test out your new integration.
+Provides **capacity-limited rotation** of heating/cooling devices through virtual thermostats and virtual switches.
 
-## Next steps
+- Virtual thermostats compute temperature demand (hysteresis) and expose an `expected_switch_state` flag.
+- A `BalancingCoordinator` allocates a limited number of simultaneous device slots, rotating fairly by working time.
+- Handles switch retry, non-responding switch recovery, and fires `bestiarium_climate_switch_failed` events.
+- Uses HA subentries — switches and thermostats are added under a single config entry.
 
-These are some next steps you may want to look into:
-- Add tests to your integration, [`pytest-homeassistant-custom-component`](https://github.com/MatthewFlamm/pytest-homeassistant-custom-component) can help you get started.
-- Add brand images (logo/icon) to https://github.com/home-assistant/brands.
-- Create your first release.
-- Share your integration on the [Home Assistant Forum](https://community.home-assistant.io/).
-- Submit your integration to [HACS](https://hacs.xyz/docs/publish/start).
+Depends on `bestiarium_mode`.
+
+### bestiarium_mock
+
+Standalone test harness that simulates **13 smart-socket devices**, **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required.
+
+## Installation
+
+Copy the desired integration folders from `custom_components/` into your Home Assistant `custom_components/` directory and restart.
+
+```
+custom_components/
+├── bestiarium_mode/
+├── bestiarium_devices/
+├── bestiarium_climate/
+└── bestiarium_mock/
+```
+
+Each integration is added through the Home Assistant UI via **Settings → Devices & Services → Add Integration**.
+
+## Development
+
+The project uses a devcontainer for development. Open in VS Code or Cursor with the Dev Containers extension.
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run tests
+pytest tests/
+```
+
+### Knowledge base
+
+Detailed per-integration documentation (file structure, config schemas, entity specs, coordinator logic, design notes) lives in `docs/`:
+
+- [`docs/bestiarium_mode.md`](docs/bestiarium_mode.md)
+- [`docs/bestiarium_devices.md`](docs/bestiarium_devices.md)
+- [`docs/bestiarium_climate.md`](docs/bestiarium_climate.md)
+- [`docs/bestiarium_mock.md`](docs/bestiarium_mock.md)
+
+## License
+
+[MIT](LICENSE)

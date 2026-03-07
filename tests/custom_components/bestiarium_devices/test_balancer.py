@@ -33,6 +33,13 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
+    EVENT_DEVICE_TURNED_OFF,
+    EVENT_DEVICE_TURNED_ON,
+    EVENT_MODE_APPLIED,
+    EVENT_OVERLOAD_CLEARED,
+    EVENT_OVERLOAD_FIRST_QUEUE,
+    EVENT_OVERLOAD_SECOND_QUEUE,
+    EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
@@ -1143,5 +1150,321 @@ class TestZoneTransitions:
                 ]
                 assert len(turn_off_calls) == 1
                 assert turn_off_calls[0][0][2]["entity_id"] == "switch.device"
+        finally:
+            await coordinator.async_stop()
+
+
+class TestEventFiring:
+    """Tests for automation event firing."""
+
+    async def test_zone_changed_event(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Zone change fires bestiarium_devices_zone_changed with previous_zone and zone."""
+        hass.states.async_set(BINARY_SENSOR_GREEN, STATE_ON)
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
+            hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
+            await hass.async_block_till_done()
+
+            assert len(events) == 1
+            assert events[0]["event_type"] == EVENT_ZONE_CHANGED
+            assert events[0]["data"]["previous_zone"] == "green"
+            assert events[0]["data"]["zone"] == "red"
+        finally:
+            await coordinator.async_stop()
+
+    async def test_device_turned_on_event(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Green strategy fires device_turned_on with strategy, device_id, device_name, switch_entity_id, priority."""
+        hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Test Device",
+                CONF_SWITCH_ENTITY_ID: "switch.test",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 6000},
+            },
+        )
+        entry.add_to_hass(hass)
+        hass.states.async_set("switch.test", STATE_OFF)
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_DEVICE_TURNED_ON, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with patch(
+                "homeassistant.core.ServiceRegistry.async_call",
+                new_callable=AsyncMock,
+            ):
+                await coordinator._execute_green_strategy()  # noqa: SLF001
+            await hass.async_block_till_done()
+
+            assert len(events) == 1
+            assert events[0]["event_type"] == EVENT_DEVICE_TURNED_ON
+            assert events[0]["data"]["strategy"] == "green"
+            assert events[0]["data"]["device_name"] == "Test Device"
+            assert events[0]["data"]["switch_entity_id"] == "switch.test"
+            assert events[0]["data"]["priority"] == 6000
+        finally:
+            await coordinator.async_stop()
+
+    async def test_device_turned_off_event(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Red strategy fires device_turned_off with strategy, device_id, device_name, switch_entity_id, priority."""
+        hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
+        entry = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Low Priority",
+                CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 2000},
+            },
+        )
+        entry.add_to_hass(hass)
+        hass.states.async_set("switch.low", STATE_ON)
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_DEVICE_TURNED_OFF, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with patch(
+                "homeassistant.core.ServiceRegistry.async_call",
+                new_callable=AsyncMock,
+            ):
+                await coordinator._execute_red_strategy()  # noqa: SLF001
+            await hass.async_block_till_done()
+
+            assert len(events) == 1
+            assert events[0]["event_type"] == EVENT_DEVICE_TURNED_OFF
+            assert events[0]["data"]["strategy"] == "red"
+            assert events[0]["data"]["device_name"] == "Low Priority"
+            assert events[0]["data"]["switch_entity_id"] == "switch.low"
+            assert events[0]["data"]["priority"] == 2000
+        finally:
+            await coordinator.async_stop()
+
+    async def test_overload_first_queue_and_cleared_events(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Overload first queue fires overload_first_queue; when cleared, fires overload_cleared."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_OVERLOAD_FIRST_QUEUE, record)
+        hass.bus.async_listen(EVENT_OVERLOAD_CLEARED, record)
+
+        async def clear_overload_on_first_turn_off(*args: object) -> None:
+            if len(args) >= MIN_SERVICE_CALL_ARGS and args[1] == "turn_off":
+                data = args[2]
+                entity_id = data.get("entity_id") if isinstance(data, dict) else None
+                if entity_id == "switch.first":
+                    hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
+                    await hass.async_block_till_done()
+
+        coordinator = BalancingCoordinator(hass)
+        with patch(
+            "homeassistant.core.ServiceRegistry.async_call",
+            AsyncMock(side_effect=clear_overload_on_first_turn_off),
+        ):
+            await coordinator._execute_overload_strategy()  # noqa: SLF001
+        await hass.async_block_till_done()
+
+        first_queue_events = [e for e in events if e["event_type"] == EVENT_OVERLOAD_FIRST_QUEUE]
+        cleared_events = [e for e in events if e["event_type"] == EVENT_OVERLOAD_CLEARED]
+
+        assert len(first_queue_events) == 1
+        assert first_queue_events[0]["data"]["devices_turned_off"] == 1
+        assert first_queue_events[0]["data"]["overload_cleared"] is True
+        assert "First" in first_queue_events[0]["data"]["device_names"]
+
+        assert len(cleared_events) == 1
+        assert cleared_events[0]["data"]["cleared_after"] == "first_queue"
+        assert cleared_events[0]["data"]["first_queue_count"] == 1
+
+    async def test_overload_second_queue_event(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Overload second queue fires overload_second_queue with counts and device lists."""
+        hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
+        entry_first = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "First",
+                CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: True,
+            },
+        )
+        entry_first.add_to_hass(hass)
+        entry_second = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Second",
+                CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
+                CONF_OVERLOAD_FIRST_QUEUE: False,
+            },
+        )
+        entry_second.add_to_hass(hass)
+        hass.states.async_set("switch.first", STATE_ON)
+        hass.states.async_set("switch.second", STATE_ON)
+
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_OVERLOAD_SECOND_QUEUE, record)
+
+        coordinator = BalancingCoordinator(hass)
+        with (
+            patch(
+                "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "homeassistant.core.ServiceRegistry.async_call",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await coordinator._execute_overload_strategy()  # noqa: SLF001
+        await hass.async_block_till_done()
+
+        second_queue_events = [
+            e for e in events if e["event_type"] == EVENT_OVERLOAD_SECOND_QUEUE
+        ]
+        assert len(second_queue_events) == 1
+        assert second_queue_events[0]["data"]["first_queue_count"] == 1
+        assert second_queue_events[0]["data"]["second_queue_count"] == 1
+        assert "Second" in second_queue_events[0]["data"]["device_names"]
+
+    async def test_mode_applied_event(
+        self,
+        hass: HomeAssistant,
+        zone_binary_sensors: None,  # noqa: ARG002
+        mode_select_entry: MockConfigEntry,  # noqa: ARG002
+    ) -> None:
+        """Mode priorities applied fires mode_applied with mode, devices_turned_off, devices_turned_on."""
+        hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
+        entry_off = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Off Device",
+                CONF_SWITCH_ENTITY_ID: "switch.off",
+                CONF_LOAD_PRIORITIES: {
+                    CONF_DEFAULT_PRIORITY: 5000,
+                    "Eco": LOAD_PRIORITY_OFF,
+                },
+            },
+        )
+        entry_off.add_to_hass(hass)
+        entry_always = MockConfigEntry(
+            domain=DOMAIN,
+            data={
+                CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+                CONF_DEVICE_NAME: "Always Device",
+                CONF_SWITCH_ENTITY_ID: "switch.always",
+                CONF_LOAD_PRIORITIES: {
+                    CONF_DEFAULT_PRIORITY: 5000,
+                    "Eco": LOAD_PRIORITY_ALWAYS_ON,
+                },
+            },
+        )
+        entry_always.add_to_hass(hass)
+        hass.states.async_set("switch.off", STATE_ON)
+        hass.states.async_set("switch.always", STATE_OFF)
+
+        events: list = []
+
+        def record(event):
+            events.append({"event_type": event.event_type, "data": dict(event.data)})
+
+        hass.bus.async_listen(EVENT_MODE_APPLIED, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            with patch(
+                "homeassistant.core.ServiceRegistry.async_call",
+                new_callable=AsyncMock,
+            ):
+                await coordinator._apply_mode_priorities()  # noqa: SLF001
+            await hass.async_block_till_done()
+
+            assert len(events) == 1
+            assert events[0]["event_type"] == EVENT_MODE_APPLIED
+            assert events[0]["data"]["mode"] == "Eco"
+            assert len(events[0]["data"]["devices_turned_off"]) == 1
+            assert len(events[0]["data"]["devices_turned_on"]) == 1
         finally:
             await coordinator.async_stop()

@@ -51,6 +51,10 @@ CAPACITY_STEP = 1
 BALANCING_INTERVAL_SECONDS = 60
 MAX_SWITCH_RETRIES = 5
 EVENT_SWITCH_FAILED = "bestiarium_climate_switch_failed"
+EVENT_DEVICE_ROTATED_IN = "bestiarium_climate_device_rotated_in"
+EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
+EVENT_SWITCH_RECOVERED = "bestiarium_climate_switch_recovered"
+EVENT_CAPACITY_EXHAUSTED = "bestiarium_climate_capacity_exhausted"
 
 # Presets (same keys as generic_thermostat)
 PRESET_KEYS = ("away", "comfort", "eco", "home", "sleep", "activity")

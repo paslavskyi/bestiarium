@@ -1,0 +1,382 @@
+# bestiarium_devices — Home Assistant Custom Integration
+
+## Overview
+
+`bestiarium_devices` is a Home Assistant custom integration (domain: `bestiarium_devices`, version 0.1.0) that manages switchable devices with **mode-aware load priorities** and **automatic power balancing**. It depends on `bestiarium_mode` for mode selection and power load zone signals.
+
+Core capabilities:
+
+1. **Device registration** — Two device types: *virtual* (combines any switch + power sensor into a new device) and *extended* (attaches priority management to an existing HA device).
+2. **Load priority system** — Each device has a default priority (0–9999) and optional per-mode overrides. Special values: `0` = always off, `9999` = always on.
+3. **Balancing coordinator** — A singleton `BalancingCoordinator` reacts to power load zone changes and mode switches, executing zone-specific strategies to turn devices on/off based on their priorities.
+
+Multiple config entries are allowed (one per device). The integration has a declared dependency on `bestiarium_mode`.
+
+**Automation events**: The balancer fires HA bus events at zone changes, device turn-on/off, overload shutdowns, and mode application. See [Automation Events](events.md) for event types, payloads, and automation examples.
+
+---
+
+## File Structure
+
+```
+custom_components/bestiarium_devices/
+├── __init__.py          # Entry setup/unload, coordinator lifecycle, device registry
+├── manifest.json        # Integration metadata (depends on bestiarium_mode)
+├── const.py             # Constants, config keys, entity IDs, timing
+├── data.py              # Type alias for ConfigEntry
+├── config_flow.py       # Multi-step config flow (virtual + extended device creation)
+├── helpers.py           # Priority resolution, validation, utility functions
+├── balancer.py          # BalancingCoordinator — zone strategies and periodic jobs
+└── translations/
+    ├── en.json           # English translations
+    └── uk.json           # Ukrainian translations
+
+tests/custom_components/bestiarium_devices/
+├── __init__.py
+├── test_config_flow.py
+├── test_helpers.py
+└── test_balancer.py
+```
+
+---
+
+## Platforms
+
+```python
+PLATFORMS: list[Platform] = []
+```
+
+No entity platforms are registered. Devices are managed via the device registry and service calls to existing switch entities.
+
+---
+
+## Config Entry Data Schema
+
+Each device gets its own config entry. The data shape depends on device type:
+
+### Virtual Device
+
+```python
+{
+    "device_type": "virtual",
+    "device_name": str,                   # User-provided name
+    "switch_entity_id": str,              # Entity ID of the switch to control
+    "power_sensor_entity_id": str,        # Entity ID of the power sensor (W)
+    "load_priorities": {
+        "default": int,                   # Default priority (0–9999)
+        "Eco": int,                       # Optional per-mode override
+        "Boost": int,                     # Optional per-mode override
+        # ... one key per mode name
+    },
+    "mode_options_snapshot": list[str],   # Snapshot of priority keys at save time
+    "overload_first_queue": bool,         # Turn off in first wave during overload
+}
+```
+
+### Extended Device
+
+```python
+{
+    "device_type": "extended",
+    "device_id": str,                     # HA device registry ID
+    "device_name": str,                   # From device registry (name_by_user or name)
+    "switch_entity_id": str,              # Selected switch entity
+    "power_sensor_entity_id": str,        # Selected power sensor entity
+    "load_priorities": { ... },           # Same structure as virtual
+    "mode_options_snapshot": list[str],
+    "overload_first_queue": bool,
+}
+```
+
+### Config Key Constants (`const.py`)
+
+| Constant | Value |
+|---|---|
+| `DOMAIN` | `"bestiarium_devices"` |
+| `DOMAIN_BESTIARIUM_MODE` | `"bestiarium_mode"` |
+| `CONF_DEVICE_TYPE` | `"device_type"` |
+| `CONF_DEVICE_NAME` | `"device_name"` |
+| `CONF_DEVICE_ID` | `"device_id"` |
+| `CONF_SWITCH_ENTITY_ID` | `"switch_entity_id"` |
+| `CONF_POWER_SENSOR_ENTITY_ID` | `"power_sensor_entity_id"` |
+| `CONF_LOAD_PRIORITIES` | `"load_priorities"` |
+| `CONF_MODE_OPTIONS_SNAPSHOT` | `"mode_options_snapshot"` |
+| `CONF_OVERLOAD_FIRST_QUEUE` | `"overload_first_queue"` |
+| `CONF_DEFAULT_PRIORITY` | `"default"` |
+| `DEVICE_TYPE_VIRTUAL` | `"virtual"` |
+| `DEVICE_TYPE_EXTENDED` | `"extended"` |
+
+### Priority Constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `LOAD_PRIORITY_MIN` | `0` | Device should be OFF in this mode |
+| `LOAD_PRIORITY_MAX` | `9999` | Device should always be ON in this mode |
+| `LOAD_PRIORITY_DEFAULT` | `5000` | Fallback when no priority is configured |
+| `LOAD_PRIORITY_OFF` | `0` | Alias for min — device OFF |
+| `LOAD_PRIORITY_ALWAYS_ON` | `9999` | Alias for max — always ON |
+
+### Cross-Integration Entity IDs
+
+| Constant | Value |
+|---|---|
+| `BESTIARIUM_MODE_SELECT_ENTITY_ID` | `"select.bestiarium_mode"` |
+| `BINARY_SENSOR_GREEN` | `"binary_sensor.power_load_green"` |
+| `BINARY_SENSOR_YELLOW` | `"binary_sensor.power_load_yellow"` |
+| `BINARY_SENSOR_RED` | `"binary_sensor.power_load_red"` |
+| `BINARY_SENSOR_OVERLOAD` | `"binary_sensor.power_load_overload"` |
+
+### Timing Constants
+
+| Constant | Value | Usage |
+|---|---|---|
+| `GREEN_INTERVAL_SECONDS` | `60` | Green strategy periodic interval |
+| `RED_INTERVAL_SECONDS` | `5` | Red strategy periodic interval |
+| `OVERLOAD_WAIT_SECONDS` | `5` | Pause between first and second overload queue |
+
+---
+
+## Integration Lifecycle (`__init__.py`)
+
+### Setup (`async_setup_entry`)
+
+1. Initializes `hass.data[DOMAIN]` dict if needed
+2. Creates and starts a shared `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) — one coordinator for all device entries
+3. For virtual devices: creates a device registry entry with `identifiers={(DOMAIN, entry.entry_id)}`
+4. Forwards platform setups (currently none)
+5. Registers reload listener
+
+### Unload (`async_unload_entry`)
+
+1. Unloads platforms
+2. If this is the **last** entry being unloaded, stops the `BalancingCoordinator` and cleans up `hass.data[DOMAIN]`
+
+### Device Removal (`async_remove_config_entry_device`)
+
+Always returns `True` — HA handles entity cleanup automatically.
+
+---
+
+## Config Flow (`config_flow.py`)
+
+Class: `BestiariumDevicesFlowHandler` (VERSION = 1)
+
+### Prerequisites
+
+The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry exists.
+
+### Steps
+
+| Step | Purpose |
+|---|---|
+| `user` | Entry point — menu: "Create virtual device" or "Extend existing device" |
+| `create_virtual` | Form: device name, switch entity, power sensor entity |
+| `extend_device` | Form: device selector. Validates device has switch + power sensor |
+| `select_entities` | Shown only when device has multiple switches or sensors. Selects which to use |
+| `configure_priorities` | Form: default priority, optional per-mode priorities, overload_first_queue flag |
+| `reconfigure` | Loads existing data, routes to appropriate form based on device type |
+
+### Flow Logic for `extend_device`
+
+1. Validates selected device is not a virtual device (aborts with `"already_configured"`)
+2. Finds all enabled switches and power sensors on the device
+3. If exactly one switch AND one sensor → skip to `configure_priorities`
+4. If multiple of either → route through `select_entities`
+5. If no switch → error `"no_switch"`; no power sensor → error `"no_power_sensor"`
+
+### Reconfigure Flow
+
+- **Virtual devices**: routes to `create_virtual` form (can change name, switch, sensor)
+- **Extended devices with single entities**: routes directly to `configure_priorities`
+- **Extended devices with multiple entities**: routes through `select_entities`
+
+### Helper Functions (in `config_flow.py`)
+
+| Function | Purpose |
+|---|---|
+| `get_bestiarium_modes(hass)` | Returns mode options list from the bestiarium_mode config entry |
+| `get_mode_names(hass)` | Returns just the mode name strings |
+| `find_power_sensors_for_device(hass, device_id)` | Finds validated power sensors on a device |
+| `find_devices_with_switch(hass)` | Returns device IDs that have switch entities |
+| `find_switches_for_device(hass, device_id)` | Returns enabled switch entity IDs for a device |
+| `is_virtual_device(hass, device_id)` | Checks if device was created by this integration |
+| `find_config_entry_for_device(hass, device_id)` | Finds config entry for a virtual device |
+
+---
+
+## Helpers (`helpers.py`)
+
+### Priority Resolution
+
+`get_current_priority(hass, device_id)` — The core priority lookup:
+
+1. Reads `select.bestiarium_mode` state for current mode
+2. Falls back to `LOAD_PRIORITY_DEFAULT` (5000) if mode entity is missing/unknown/unavailable
+3. Finds the config entry matching `device_id` (virtual devices use `entry.entry_id` as device_id)
+4. Returns mode-specific priority if configured, otherwise the `"default"` priority from the entry
+5. Final fallback: `LOAD_PRIORITY_DEFAULT`
+
+### Power Sensor Validation
+
+`validate_power_sensor(hass, entity_id)` — Checks that entity exists, has `device_class=power`, and `unit_of_measurement=W`. Returns error string or `None`.
+
+### Form Key Helpers
+
+- `build_priority_form_key(mode_name)` → `f"priority_{mode_name}"`
+- `extract_priorities_from_user_input(user_input, mode_names)` — Extracts and converts priority values from the config flow form. Default is always stored; per-mode values only stored when user provides them.
+
+### Device ID Resolution
+
+- `get_device_id_from_entry(entry)` — Virtual: `entry.entry_id`; Extended: `entry.data["device_id"]`
+- `get_device_name_from_entry(entry)` — Returns `device_name` or falls back to device_id
+
+---
+
+## Balancing Coordinator (`balancer.py`)
+
+Class: `BalancingCoordinator`
+
+### Lifecycle
+
+- **One coordinator** per HA instance, shared across all device config entries
+- Created on first device entry setup, stored in `hass.data[DOMAIN]["balancing_coordinator"]`
+- Stopped when last device entry is unloaded
+
+### Active Zone Detection
+
+```python
+class ActiveZone(StrEnum):
+    NONE = "none"
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+    OVERLOAD = "overload"
+```
+
+`_determine_active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN > NONE.
+
+### Startup Behavior
+
+1. Checks if power load binary sensors exist (at least one of the four)
+2. If missing: logs warning, sends persistent notification, stays running but inactive
+3. Subscribes to 4 zone binary sensors + mode select entity
+4. Determines initial active zone
+5. If initial zone is OVERLOAD → executes overload strategy immediately
+6. Otherwise → starts periodic job (waits for first interval before executing)
+
+### State Change Handling
+
+**Zone changes** (`_on_zone_changed`):
+- Recalculates active zone via `_determine_active_zone()`
+- If zone changed: cancels old periodic job, handles new zone
+
+**Mode changes** (`_on_mode_changed`):
+- Calls `_apply_mode_priorities()` which iterates all device entries:
+  - Priority `0` (OFF) → turns off the switch
+  - Priority `9999` (ALWAYS_ON) → turns on the switch
+  - Other priorities → no immediate action (handled by zone strategies)
+
+### Zone Strategies
+
+#### Green Strategy (`_execute_green_strategy`)
+
+- **Trigger**: Periodic, every 60 seconds
+- **Action**: Turn ON the **highest-priority OFF device** (one device per cycle)
+- **Skips**: Devices already ON, devices with priority `0` (OFF)
+- **Sorting**: Candidates sorted by priority descending
+
+#### Red Strategy (`_execute_red_strategy`)
+
+- **Trigger**: Periodic, every 5 seconds. Also runs once immediately on entering red zone.
+- **Action**: Turn OFF the **lowest-priority ON device** (one device per cycle)
+- **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON)
+- **Sorting**: Candidates sorted by priority ascending
+
+#### Yellow Strategy
+
+- **No action** — yellow is a waiting/warning state. No periodic job runs.
+
+#### Overload Strategy (`_execute_overload_strategy`)
+
+- **Trigger**: Immediately when overload zone activates (no periodic job)
+- **Action**: **Two-step emergency shutdown**:
+  1. Turn off all devices with `overload_first_queue=True` (first queue)
+  2. Check if overload sensor is still ON
+  3. If still overloaded: wait `OVERLOAD_WAIT_SECONDS` (5s), check again
+  4. If still overloaded: turn off all remaining devices (second queue)
+- **Backward compat**: If no devices have `overload_first_queue=True`, turns off ALL devices immediately (no two-step, no wait)
+- **Ignores** priority — all devices are turned off including ALWAYS_ON
+
+### Zone Change Behavior
+
+| Transition | Behavior |
+|---|---|
+| Any → GREEN | Start 60s periodic job (waits for first interval) |
+| Any → YELLOW | Stop periodic job, wait |
+| Any → RED | Start 5s periodic job + execute red strategy once immediately |
+| Any → OVERLOAD | Stop periodic job, execute overload immediately |
+| Zone unchanged | Timer resets (restarts from zero) on every zone binary sensor change |
+
+---
+
+## Translations
+
+Two locales: `en` (English) and `uk` (Ukrainian).
+
+Translation keys cover:
+- Config flow steps, menus, field labels, field descriptions
+- Validation errors: `no_bestiarium_mode`, `no_switch`, `no_power_sensor`, `invalid_switch`, `invalid_power_sensor`, `name_required`, `required`
+- Abort reasons: `not_implemented`, `already_configured`, `no_bestiarium_mode`, `no_devices_with_switch`, `reconfigure_successful`
+- Entity names: `Default Load Priority`, `{mode_name} Load Priority`
+
+---
+
+## Test Coverage
+
+### `test_config_flow.py`
+- Abort without bestiarium_mode
+- Create virtual device: full flow with all priorities, only default priority, partial priorities
+- Virtual device validation: empty name, invalid power sensor
+- Extend existing device: full flow with auto-detected switch/sensor
+- Extend device errors: no power sensor, no switch (disabled switch), already-configured virtual device redirect
+- Multiple switches/sensors: combined selection step for multiple switches, multiple sensors, both multiple
+- Reconfigure: virtual device (change name/switch/sensor), extended device (change priorities), preserves overload_first_queue
+- Reconfigure extended device with multiple entities routes through select_entities
+
+### `test_helpers.py`
+- `build_priority_form_key`: basic and with spaces
+- `extract_priorities_from_user_input`: all provided, none provided (only default), partial, missing default fallback
+- `get_current_priority`: mode-specific priority, fallback to default, no entry for device, missing/unknown/unavailable mode select, empty priorities dict, virtual device uses entry_id
+
+### `test_balancer.py`
+- **Init/Cleanup**: start/stop, initial zone detection, double start warning, stop when not running, missing sensors still running
+- **Mode changes**: OFF priority turns off switch, ALWAYS_ON priority turns on switch
+- **Green strategy**: highest priority device turns on, already-on skipped, OFF priority skipped, ALWAYS_ON turns on
+- **Red strategy**: lowest priority turns off, already-off skipped, ALWAYS_ON skipped
+- **Overload strategy**: all devices off including ALWAYS_ON, contrast with red (ALWAYS_ON)
+- **Two-step overload**: first then second after wait, cleared after first queue skips second, cleared during wait skips second, all in first queue, no first queue devices turns off all immediately, mixed queues with persistent overload
+- **Zone transitions**: green 60s periodic job, red 5s periodic job, zone change stops old/starts new job, overload executes immediately
+
+---
+
+## Design Notes & Gotchas
+
+1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload.
+
+2. **No platform entities**: Despite having switch and sensor references, this integration does not create any entities. It operates entirely through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
+
+3. **Device ID semantics**: Virtual devices use `entry.entry_id` as their device ID (since they have no pre-existing HA device). Extended devices use the actual HA `device_id`. This distinction matters for priority lookups.
+
+4. **Priority resolution chain**: Mode-specific → default from entry → `LOAD_PRIORITY_DEFAULT` (5000). The mode select entity must be in a valid state for mode-specific priorities to apply.
+
+5. **One device per cycle**: Green and red strategies each affect only ONE device per execution cycle. This gradual approach prevents power oscillation.
+
+6. **ALWAYS_ON immunity**: Red strategy skips `9999` priority devices. Only overload can force them off.
+
+7. **Overload two-step design**: The `overload_first_queue` flag allows designating less-critical devices for immediate shutdown while giving more-critical devices a 5-second grace period. If the first queue resolves the overload, the second queue stays on.
+
+8. **Mode options snapshot**: `mode_options_snapshot` stores the list of priority keys at config save time. This tracks which modes existed when priorities were configured.
+
+9. **Power sensor validation**: Must have `device_class=power` and `unit_of_measurement=W`. The validation runs at config flow time, not continuously.
+
+10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive. A persistent notification informs the user.

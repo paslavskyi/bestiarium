@@ -96,6 +96,48 @@ def thermostat_subentry() -> SimpleNamespace:
 
 
 @pytest.fixture
+def thermostat_subentry_2() -> SimpleNamespace:
+    """Second thermostat subentry (target_switch=switch.room2)."""
+    return _make_subentry(
+        subentry_id="thermo_02",
+        subentry_type=SUBENTRY_TYPE_THERMOSTAT,
+        title="Room 2 Thermostat",
+        data={
+            "name": "Room 2 Thermostat",
+            "temperature_sensor": "sensor.temp2",
+            "target_switch": "switch.room2",
+            "thermostat_mode": ClimateMode.HEATING,
+            "cold_tolerance": 0.3,
+            "hot_tolerance": 0.3,
+        },
+    )
+
+
+@pytest.fixture
+async def climate_entry_with_two_thermostats(
+    hass: HomeAssistant,
+    thermostat_subentry: SimpleNamespace,
+    thermostat_subentry_2: SimpleNamespace,
+) -> MockConfigEntry:
+    """Entry with two thermostat subentries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_CAPACITY: 1,
+            CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
+            CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
+        },
+    )
+    entry.subentries = {
+        thermostat_subentry.subentry_id: thermostat_subentry,
+        thermostat_subentry_2.subentry_id: thermostat_subentry_2,
+    }
+    entry.add_to_hass(hass)
+    yield entry
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.fixture
 async def climate_entry_with_switch(
     hass: HomeAssistant, switch_subentry: SimpleNamespace
 ) -> MockConfigEntry:
@@ -131,3 +173,13 @@ async def climate_entry_with_thermostat(
     entry.add_to_hass(hass)
     yield entry
     await hass.config_entries.async_unload(entry.entry_id)
+
+
+@pytest.fixture
+async def coordinator_entry_two_thermostats(
+    hass: HomeAssistant, climate_entry_with_two_thermostats: MockConfigEntry
+) -> MockConfigEntry:
+    """Entry with two thermostats; integration set up so coordinator and entities exist."""
+    await hass.config_entries.async_setup(climate_entry_with_two_thermostats.entry_id)
+    await hass.async_block_till_done()
+    return climate_entry_with_two_thermostats
