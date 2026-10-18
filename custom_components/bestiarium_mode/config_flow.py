@@ -148,7 +148,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # If this is a reconfigure flow, update the existing entry
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
-            return self.async_update_reload_and_abort(
+            return self.async_update_and_abort(
                 entry,
                 data_updates={
                     CONF_OPTIONS: self._options,

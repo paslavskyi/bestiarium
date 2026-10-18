@@ -451,7 +451,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             # Create or update config entry
             if self.source == SOURCE_RECONFIGURE:
                 entry = self._get_reconfigure_entry()
-                return self.async_update_reload_and_abort(
+                return self.async_update_and_abort(
                     entry,
                     data_updates=self._build_config_entry_data(),
                 )
