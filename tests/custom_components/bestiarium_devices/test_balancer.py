@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -1175,8 +1175,8 @@ class TestEventFiring:
         coordinator = BalancingCoordinator(hass)
         await coordinator.async_start()
         try:
-            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
             hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
+            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
             await hass.async_block_till_done()
 
             assert len(events) == 1
@@ -1470,5 +1470,61 @@ class TestEventFiring:
             assert events[0]["data"]["mode"] == "Eco"
             assert len(events[0]["data"]["devices_turned_off"]) == 1
             assert len(events[0]["data"]["devices_turned_on"]) == 1
+        finally:
+            await coordinator.async_stop()
+
+    @pytest.mark.parametrize(
+        ("power_readings", "expected_zone_changes"),
+        [
+            (["4000"], [("green", "yellow")]),
+            (["4600"], [("green", "red")]),
+            (["4000", "4600"], [("green", "yellow"), ("yellow", "red")]),
+            (["4600", "4000"], [("green", "red"), ("red", "yellow")]),
+        ],
+    )
+    async def test_zone_changed_events_from_power_sensor(
+        self,
+        hass: HomeAssistant,
+        power_readings: list[str],
+        expected_zone_changes: list[tuple[str, str]],
+    ) -> None:
+        """Power crossing thresholds fires one zone_changed per real transition."""
+        hass.states.async_set("sensor.power_meter", "1000")
+        mode_entry = MockConfigEntry(
+            domain=DOMAIN_BESTIARIUM_MODE,
+            unique_id="bestiarium_mode",
+            data={
+                "options": [{"name": "Eco", "icon": "mdi:leaf"}],
+                "ac_load_limits": {
+                    "ac_power_sensor": "sensor.power_meter",
+                    "ac_load_limit_w": 5000,
+                    "ac_yellow_zone_percent": 75,
+                    "ac_red_zone_percent": 90,
+                    "ac_overload_recovery_seconds": 10,
+                },
+            },
+        )
+        mode_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(mode_entry.entry_id)
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
+        await hass.async_block_till_done()
+        assert hass.states.get(BINARY_SENSOR_GREEN).state == STATE_ON
+
+        zone_changes: list[tuple[str, str]] = []
+
+        @callback
+        def record(event: Event) -> None:
+            zone_changes.append((event.data["previous_zone"], event.data["zone"]))
+
+        hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            for power in power_readings:
+                hass.states.async_set("sensor.power_meter", power)
+                await hass.async_block_till_done()
+
+            assert zone_changes == expected_zone_changes
         finally:
             await coordinator.async_stop()

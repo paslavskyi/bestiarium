@@ -3,7 +3,11 @@
 # ruff: noqa: S101
 
 import pytest
-from homeassistant.config_entries import SOURCE_RECONFIGURE, SOURCE_USER
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+    ConfigEntryState,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -137,6 +141,8 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
         },
     )
     entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
 
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
@@ -188,6 +194,8 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
