@@ -55,7 +55,7 @@
         },
         "data_description": {
           "ac_power_sensor": "Sensor that measures AC power (W)",
-          "ac_load_limit_w": "Maximum AC load before limiting (W)",
+          "ac_load_limit_w": "Current maximum AC load (W). It can also be changed at runtime with the Power Load Limit entity, e.g. from an automation.",
           "ac_yellow_zone_percent": "Yellow warning threshold percentage",
           "ac_red_zone_percent": "Red critical threshold percentage",
           "ac_overload_recovery_seconds": "Wait time after load decreases below threshold before allowing device turn-on"
@@ -260,6 +260,11 @@
       },
       "power_load_overload": {
         "name": "Overload"
+      }
+    },
+    "number": {
+      "power_load_limit": {
+        "name": "Power Load Limit"
       }
     },
     "select": {
