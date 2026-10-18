@@ -31,4 +31,3 @@ if pycares is not None:
     for _alias in _MISSING_ALIASES:
         if not hasattr(pycares, _alias):  # pragma: no cover
             setattr(pycares, _alias, object)
-

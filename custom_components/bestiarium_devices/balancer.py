@@ -586,14 +586,10 @@ class BalancingCoordinator:
         entries = self._hass.config_entries.async_entries(DOMAIN)
 
         first_queue = [
-            e
-            for e in entries
-            if e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
+            e for e in entries if e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
         ]
         second_queue = [
-            e
-            for e in entries
-            if not e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
+            e for e in entries if not e.data.get(CONF_OVERLOAD_FIRST_QUEUE, False)
         ]
 
         if not first_queue:
@@ -635,9 +631,7 @@ class BalancingCoordinator:
         await asyncio.sleep(OVERLOAD_WAIT_SECONDS)
 
         if not self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
-            LOGGER.info(
-                "OVERLOAD: Overload cleared during wait; skipping second queue"
-            )
+            LOGGER.info("OVERLOAD: Overload cleared during wait; skipping second queue")
             self._hass.bus.async_fire(
                 EVENT_OVERLOAD_CLEARED,
                 {"cleared_after": "wait_period", "first_queue_count": n1},
