@@ -6,6 +6,7 @@
 
 1. **Mode selector** — A `select` entity that lets the user define and choose between named operational modes (e.g. "Eco", "Boost", "Night"). Each mode carries metadata: name (required), description (optional), and icon (optional, default `mdi:home`).
 2. **Power load zone binary sensors** — Four `binary_sensor` entities that implement a traffic-light model over an AC power sensor, indicating the current load zone: Green, Yellow, Red, Overload.
+3. **Power load limit** — A `number` entity holding the current AC load limit (W). It can be changed at runtime (UI or automation); the zones recalculate immediately.
 
 The integration is singleton — only one config entry is allowed (unique_id: `"bestiarium_mode"`).
 
@@ -18,10 +19,11 @@ custom_components/bestiarium_mode/
 ├── __init__.py          # Entry setup/unload/reload
 ├── manifest.json        # Integration metadata
 ├── const.py             # Constants, config keys, defaults
-├── data.py              # Type alias for ConfigEntry
+├── data.py              # ConfigEntry type alias, power_load_monitoring_configured()
 ├── config_flow.py       # Multi-step config flow (user + reconfigure)
 ├── select.py            # BestiariumModeSelect entity
 ├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones)
+├── number.py            # PowerLoadLimitNumber entity (runtime load limit)
 └── translations/
     ├── en.json           # English translations
     └── uk.json           # Ukrainian translations
@@ -30,6 +32,7 @@ tests/custom_components/bestiarium_mode/
 ├── __init__.py
 ├── test_config_flow.py
 ├── test_binary_sensor.py
+├── test_number.py
 └── test_select.py
 ```
 
@@ -40,8 +43,10 @@ tests/custom_components/bestiarium_mode/
 Registered in `__init__.py`:
 
 ```python
-PLATFORMS = [Platform.BINARY_SENSOR, Platform.SELECT]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SELECT]
 ```
+
+There is **no config entry update listener**: the load limit entity updates the entry at runtime and must not reload it. The reconfigure flow reloads explicitly with `async_update_reload_and_abort()`. Any future flow that changes the entry must reload explicitly too.
 
 ---
 
@@ -123,7 +128,7 @@ There are 10 hard-coded `async_step_edit_N` methods (N = 0..9), each delegating 
 
 ### Reconfigure Flow
 
-Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_and_abort()` to update the entry; the entry update listener reloads it.
+Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_reload_and_abort()` to update and reload the entry. The load limit field defaults to the current limit, including changes made through the limit entity.
 
 ---
 
@@ -185,7 +190,7 @@ red_threshold    = limit_w * red_zone_percent / 100
 | `zone` | All zones | Zone name string ("green", "yellow", "red", "overload") |
 | `yellow_threshold` | All zones | Calculated yellow threshold in watts |
 | `red_threshold` | All zones | Calculated red threshold in watts |
-| `limit_w` | All zones | Configured watt limit |
+| `limit_w` | All zones | Current watt limit (follows the limit entity) |
 | `recovery_pending` | Green only | Boolean — whether green zone is waiting for recovery timeout |
 
 ### Unique IDs and Translation Keys
@@ -199,8 +204,11 @@ Binary sensors are **only created** if `ac_load_limits` is present in the config
 ### State Tracking
 
 - Subscribes to state changes of the configured power sensor via `async_track_state_change_event`
+- Listens to `bestiarium_mode_load_limit_changed`: rebuilds the thresholds from the entry data and recalculates the zone for the current power value (no power change needed)
 - Reads initial state on `async_added_to_hass`
 - Unsubscribes on `async_will_remove_from_hass`
+
+All four sensors recalculate inside the dispatch of a single bus event (a power sensor state change or the limit change event). HA queues the state changes they write until that dispatch ends, so consumers such as `bestiarium_devices` see only the final zone combination, never an intermediate one (for example "no zone" while one sensor has turned off and the next has not yet turned on).
 
 ### Availability
 
@@ -218,6 +226,34 @@ The Green zone has special **delayed ON** behavior to prevent rapid toggling:
 6. Unavailable/unknown sensor states also cancel recovery
 
 The OFF transition for Green is **immediate** (no delay).
+
+A limit change goes through the same logic: if raising the limit puts the current power below the yellow threshold, Green turns ON only after the recovery delay.
+
+---
+
+## Number Entity (`number.py`)
+
+Class: `PowerLoadLimitNumber(NumberEntity)`
+
+| Property | Value |
+|---|---|
+| `unique_id` | `power_load_limit` |
+| `entity_id` | `number.power_load_limit` (from the English name "Power Load Limit") |
+| `translation_key` | `power_load_limit` (en "Power Load Limit", uk "Ліміт навантаження") |
+| `entity_category` | `config` |
+| `device_class` | `power`, unit `W` |
+| Range | `LOAD_LIMIT_MIN_W`–`LOAD_LIMIT_MAX_W` (1–100000), step 1, box mode — same range as the config flow |
+
+Created only when power load monitoring is configured (same rule as the binary sensors, `power_load_monitoring_configured()`).
+
+**Single source of truth**: the value is `entry.data["ac_load_limits"]["ac_load_limit_w"]`. Setting a new value:
+
+1. If it equals the current limit, does nothing.
+2. Writes it to the config entry (`async_update_entry`, no reload) — so it survives HA restarts and the reconfigure form shows it.
+3. Writes the entity state.
+4. Fires `bestiarium_mode_load_limit_changed` (`limit_w`, `previous_limit_w`); the zone sensors recalculate in its dispatch.
+
+There is no `RestoreEntity`: restoring asynchronously would let the zone sensors compute their first state with a stale limit at startup (e.g. a spurious overload and emergency shutdown in `bestiarium_devices`).
 
 ---
 
@@ -251,7 +287,7 @@ Translation keys cover:
 - Config flow steps, menus, field labels, field descriptions
 - Validation errors: `name_required`, `yellow_zone_min`, `red_zone_must_exceed_yellow`, `no_options`
 - Abort reasons: `already_configured`, `reconfigure_successful`
-- Entity names: `Power Load - Green/Yellow/Red`, `Overload`, `Mode`
+- Entity names: `Power Load - Green/Yellow/Red`, `Overload`, `Power Load Limit`, `Mode`
 
 ---
 
@@ -271,6 +307,12 @@ Translation keys cover:
 - Extra state attributes
 - Green zone recovery: delayed ON, immediate OFF, cancellation on power rise, restart after cancellation, default recovery seconds, unavailable cancels recovery
 - `recovery_pending` attribute only on Green zone
+
+### `test_number.py`
+- Limit entity created from the existing entry value (owner's config), `entity_id` `number.power_load_limit`, config category, range
+- Zones at the configured limit; recalculated on limit change without a power change; attributes follow the limit
+- No reload on limit change; same value is not written and fires no event; event payload
+- Limit survives a reload; any value in range accepted; out-of-range rejected
 
 ### `test_select.py`
 - Entity creation, initial state (first option), options list
@@ -292,7 +334,7 @@ Translation keys cover:
 
 6. **Config flow menu pattern**: The flow uses `async_show_menu` for the main options list, which is a less common HA pattern. Menu options are dynamically generated from current state.
 
-7. **ac_load_limits is optional**: If not configured, the binary sensor platform skips entity creation entirely. The select entity is always created.
+7. **ac_load_limits is optional**: If not configured, the binary sensor and number platforms skip entity creation entirely. The select entity is always created.
 
 8. **Type alias**: `BestiariumModeConfigEntry = ConfigEntry[dict]` — a simple type alias for clarity, no runtime behavior.
 
