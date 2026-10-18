@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Adds config flow for Bestiarium Mode."""
 
 from __future__ import annotations
