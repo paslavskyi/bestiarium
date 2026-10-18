@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -1163,11 +1163,11 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Zone change fires bestiarium_devices_zone_changed with previous_zone and zone."""
+        """Zone change fires zone_changed with previous_zone and zone."""
         hass.states.async_set(BINARY_SENSOR_GREEN, STATE_ON)
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
@@ -1175,8 +1175,8 @@ class TestEventFiring:
         coordinator = BalancingCoordinator(hass)
         await coordinator.async_start()
         try:
-            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
             hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
+            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
             await hass.async_block_till_done()
 
             assert len(events) == 1
@@ -1192,7 +1192,7 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Green strategy fires device_turned_on with strategy, device_id, device_name, switch_entity_id, priority."""
+        """Green strategy fires device_turned_on with device details."""
         hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -1207,7 +1207,7 @@ class TestEventFiring:
         hass.states.async_set("switch.test", STATE_OFF)
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_ON, record)
@@ -1227,7 +1227,7 @@ class TestEventFiring:
             assert events[0]["data"]["strategy"] == "green"
             assert events[0]["data"]["device_name"] == "Test Device"
             assert events[0]["data"]["switch_entity_id"] == "switch.test"
-            assert events[0]["data"]["priority"] == 6000
+            assert events[0]["data"]["priority"] == 6000  # noqa: PLR2004
         finally:
             await coordinator.async_stop()
 
@@ -1237,7 +1237,7 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Red strategy fires device_turned_off with strategy, device_id, device_name, switch_entity_id, priority."""
+        """Red strategy fires device_turned_off with device details."""
         hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -1252,7 +1252,7 @@ class TestEventFiring:
         hass.states.async_set("switch.low", STATE_ON)
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_OFF, record)
@@ -1272,7 +1272,7 @@ class TestEventFiring:
             assert events[0]["data"]["strategy"] == "red"
             assert events[0]["data"]["device_name"] == "Low Priority"
             assert events[0]["data"]["switch_entity_id"] == "switch.low"
-            assert events[0]["data"]["priority"] == 2000
+            assert events[0]["data"]["priority"] == 2000  # noqa: PLR2004
         finally:
             await coordinator.async_stop()
 
@@ -1282,7 +1282,7 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Overload first queue fires overload_first_queue; when cleared, fires overload_cleared."""
+        """Overload first queue fires overload_first_queue, then overload_cleared."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -1311,7 +1311,7 @@ class TestEventFiring:
 
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_OVERLOAD_FIRST_QUEUE, record)
@@ -1333,8 +1333,12 @@ class TestEventFiring:
             await coordinator._execute_overload_strategy()  # noqa: SLF001
         await hass.async_block_till_done()
 
-        first_queue_events = [e for e in events if e["event_type"] == EVENT_OVERLOAD_FIRST_QUEUE]
-        cleared_events = [e for e in events if e["event_type"] == EVENT_OVERLOAD_CLEARED]
+        first_queue_events = [
+            e for e in events if e["event_type"] == EVENT_OVERLOAD_FIRST_QUEUE
+        ]
+        cleared_events = [
+            e for e in events if e["event_type"] == EVENT_OVERLOAD_CLEARED
+        ]
 
         assert len(first_queue_events) == 1
         assert first_queue_events[0]["data"]["devices_turned_off"] == 1
@@ -1351,7 +1355,7 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Overload second queue fires overload_second_queue with counts and device lists."""
+        """Overload second queue fires overload_second_queue with counts."""
         hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_ON)
         entry_first = MockConfigEntry(
             domain=DOMAIN,
@@ -1380,7 +1384,7 @@ class TestEventFiring:
 
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_OVERLOAD_SECOND_QUEUE, record)
@@ -1413,7 +1417,7 @@ class TestEventFiring:
         zone_binary_sensors: None,  # noqa: ARG002
         mode_select_entry: MockConfigEntry,  # noqa: ARG002
     ) -> None:
-        """Mode priorities applied fires mode_applied with mode, devices_turned_off, devices_turned_on."""
+        """Applying mode priorities fires mode_applied with device counts."""
         hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Eco")
         entry_off = MockConfigEntry(
             domain=DOMAIN,
@@ -1446,7 +1450,7 @@ class TestEventFiring:
 
         events: list = []
 
-        def record(event):
+        def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
         hass.bus.async_listen(EVENT_MODE_APPLIED, record)
@@ -1466,5 +1470,61 @@ class TestEventFiring:
             assert events[0]["data"]["mode"] == "Eco"
             assert len(events[0]["data"]["devices_turned_off"]) == 1
             assert len(events[0]["data"]["devices_turned_on"]) == 1
+        finally:
+            await coordinator.async_stop()
+
+    @pytest.mark.parametrize(
+        ("power_readings", "expected_zone_changes"),
+        [
+            (["4000"], [("green", "yellow")]),
+            (["4600"], [("green", "red")]),
+            (["4000", "4600"], [("green", "yellow"), ("yellow", "red")]),
+            (["4600", "4000"], [("green", "red"), ("red", "yellow")]),
+        ],
+    )
+    async def test_zone_changed_events_from_power_sensor(
+        self,
+        hass: HomeAssistant,
+        power_readings: list[str],
+        expected_zone_changes: list[tuple[str, str]],
+    ) -> None:
+        """Power crossing thresholds fires one zone_changed per real transition."""
+        hass.states.async_set("sensor.power_meter", "1000")
+        mode_entry = MockConfigEntry(
+            domain=DOMAIN_BESTIARIUM_MODE,
+            unique_id="bestiarium_mode",
+            data={
+                "options": [{"name": "Eco", "icon": "mdi:leaf"}],
+                "ac_load_limits": {
+                    "ac_power_sensor": "sensor.power_meter",
+                    "ac_load_limit_w": 5000,
+                    "ac_yellow_zone_percent": 75,
+                    "ac_red_zone_percent": 90,
+                    "ac_overload_recovery_seconds": 10,
+                },
+            },
+        )
+        mode_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(mode_entry.entry_id)
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
+        await hass.async_block_till_done()
+        assert hass.states.get(BINARY_SENSOR_GREEN).state == STATE_ON
+
+        zone_changes: list[tuple[str, str]] = []
+
+        @callback
+        def record(event: Event) -> None:
+            zone_changes.append((event.data["previous_zone"], event.data["zone"]))
+
+        hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
+
+        coordinator = BalancingCoordinator(hass)
+        await coordinator.async_start()
+        try:
+            for power in power_readings:
+                hass.states.async_set("sensor.power_meter", power)
+                await hass.async_block_till_done()
+
+            assert zone_changes == expected_zone_changes
         finally:
             await coordinator.async_stop()

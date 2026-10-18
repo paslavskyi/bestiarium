@@ -123,7 +123,7 @@ There are 10 hard-coded `async_step_edit_N` methods (N = 0..9), each delegating 
 
 ### Reconfigure Flow
 
-Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_reload_and_abort()` to update and reload the entry.
+Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_and_abort()` to update the entry; the entry update listener reloads it.
 
 ---
 

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from homeassistant.components.climate import HVACAction
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 
 from custom_components.bestiarium_climate.balancer import BalancingCoordinator
 from custom_components.bestiarium_climate.const import (
@@ -16,6 +16,7 @@ from custom_components.bestiarium_climate.const import (
     EVENT_CAPACITY_EXHAUSTED,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
+    EVENT_SWITCH_FAILED,
     EVENT_SWITCH_RECOVERED,
 )
 
@@ -282,3 +283,87 @@ async def test_capacity_deficit_fires_events(
     assert len(rotated_out) == 1
     assert "thermostat" in rotated_out[0]["data"]
     assert "switch_entity_id" in rotated_out[0]["data"]
+
+
+SWITCH_RETRIES_BEFORE_FAILURE = 7
+
+
+def _single_thermostat(hass: HomeAssistant):
+    """Return the only VirtualThermostat entity."""
+    from homeassistant.components.climate import (
+        DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
+    )
+    from custom_components.bestiarium_climate.climate import VirtualThermostat
+
+    comp = hass.data.get(CLIMATE_DATA_COMPONENT)
+    (thermostat,) = [e for e in comp.entities if isinstance(e, VirtualThermostat)]
+    return thermostat
+
+
+def _record_switch_failed(hass: HomeAssistant) -> list[Event]:
+    events: list[Event] = []
+
+    @callback
+    def record(event: Event) -> None:
+        events.append(event)
+
+    hass.bus.async_listen(EVENT_SWITCH_FAILED, record)
+    return events
+
+
+async def test_sync_reports_switch_failed_after_seven_tries(
+    hass: HomeAssistant,
+    coordinator_entry,
+) -> None:
+    """A switch that never turns on is reported failed only after 7 tries."""
+    hass.states.async_set("sensor.temp", "20", {"device_class": "temperature"})
+    hass.states.async_set("switch.room", STATE_OFF)
+    await hass.async_block_till_done()
+    t = _single_thermostat(hass)
+    t.set_expected_switch_state(True)
+    t.set_switch_state_change_tries(0)
+    events = _record_switch_failed(hass)
+    coordinator = hass.data[DOMAIN][coordinator_entry.entry_id]
+
+    with patch.object(
+        coordinator, "_async_turn_switch", new_callable=AsyncMock
+    ) as mock_turn:
+        for _ in range(SWITCH_RETRIES_BEFORE_FAILURE):
+            await coordinator._sync_switches(datetime.now(UTC))
+        await hass.async_block_till_done()
+        assert mock_turn.call_count == SWITCH_RETRIES_BEFORE_FAILURE
+        assert events == []
+        assert t.switch_not_responding is False
+
+        await coordinator._sync_switches(datetime.now(UTC))
+        await hass.async_block_till_done()
+
+    assert len(events) == 1
+    assert t.switch_not_responding is True
+
+
+async def test_recovery_reports_switch_failed_after_seven_tries(
+    hass: HomeAssistant,
+    coordinator_entry,
+) -> None:
+    """During recovery, a switch stuck on is reported failed only after 7 tries."""
+    hass.states.async_set("sensor.temp", "20", {"device_class": "temperature"})
+    hass.states.async_set("switch.room", STATE_ON)
+    await hass.async_block_till_done()
+    t = _single_thermostat(hass)
+    t.set_switch_not_responding(True)
+    t.set_recovery_time(datetime.now(UTC) - timedelta(minutes=1))
+    t.set_switch_state_change_tries(0)
+    events = _record_switch_failed(hass)
+    coordinator = hass.data[DOMAIN][coordinator_entry.entry_id]
+
+    with patch.object(coordinator, "_async_turn_switch", new_callable=AsyncMock):
+        for _ in range(SWITCH_RETRIES_BEFORE_FAILURE):
+            await coordinator._handle_recovery(datetime.now(UTC))
+        await hass.async_block_till_done()
+        assert events == []
+
+        await coordinator._handle_recovery(datetime.now(UTC))
+        await hass.async_block_till_done()
+
+    assert len(events) == 1

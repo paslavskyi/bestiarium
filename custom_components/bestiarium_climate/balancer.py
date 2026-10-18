@@ -297,7 +297,9 @@ class BalancingCoordinator:
             for t in working
         ]
         with_coeff.sort(key=lambda x: (x[1], -x[2]))
-        thermostats_on = [self._thermostat_label(t) for t, _, _ in with_coeff[:capacity]]
+        thermostats_on = [
+            self._thermostat_label(t) for t, _, _ in with_coeff[:capacity]
+        ]
         thermostats_waiting = [
             self._thermostat_label(t) for t, _, _ in with_coeff[capacity:]
         ]
@@ -326,9 +328,7 @@ class BalancingCoordinator:
                             "temperature_diff": round(diff, 2),
                         },
                     )
-                    LOGGER.debug(
-                        "  on: %s (coeff=%.2f diff=%.2f)", label, coeff, diff
-                    )
+                    LOGGER.debug("  on: %s (coeff=%.2f diff=%.2f)", label, coeff, diff)
             elif t.expected_switch_state:
                 t.set_expected_switch_state(False)
                 t.set_switch_state_change_tries(0)

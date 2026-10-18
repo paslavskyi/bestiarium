@@ -125,7 +125,7 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SWITCH]
 | `DEFAULT_TOLERANCE` | `0.3` |
 | `CAPACITY_MIN` / `CAPACITY_MAX` | `0` / `100` |
 | `BALANCING_INTERVAL_SECONDS` | `60` |
-| `MAX_SWITCH_RETRIES` | `5` |
+| `MAX_SWITCH_RETRIES` | `7` |
 | `EVENT_SWITCH_FAILED` | `"bestiarium_climate_switch_failed"` |
 | `PRESET_KEYS` | `("away", "comfort", "eco", "home", "sleep", "activity")` |
 
@@ -300,7 +300,7 @@ Each cycle runs four phases in order:
 #### Phase 1: Recovery (`_handle_recovery`)
 
 For each thermostat with `recovery_time` in the past:
-- If target switch is still ON: send turn_off, increment tries. If tries >= `MAX_SWITCH_RETRIES` (5), fire `EVENT_SWITCH_FAILED`.
+- If target switch is still ON: send turn_off, increment tries. If tries >= `MAX_SWITCH_RETRIES` (7), fire `EVENT_SWITCH_FAILED`.
 - If target switch is OFF: clear `switch_not_responding`, `recovery_time`, and tries (recovery complete).
 
 #### Phase 2: Turn Off Idle (`_turn_off_idle`)
@@ -331,7 +331,7 @@ Three strategies based on capacity vs. demand:
 For each thermostat (skipping `switch_not_responding`):
 - If actual switch state matches expected: reset tries to 0
 - If mismatch: send turn_on/turn_off, increment tries
-- If tries >= `MAX_SWITCH_RETRIES` (5): fire `EVENT_SWITCH_FAILED`, force turn off, mark `switch_not_responding = True`, set `recovery_time = now + recovery_timeout`, clear expected state
+- If tries >= `MAX_SWITCH_RETRIES` (7): fire `EVENT_SWITCH_FAILED`, force turn off, mark `switch_not_responding = True`, set `recovery_time = now + recovery_timeout`, clear expected state
 
 ### Capacity Reading (`_get_capacity`)
 

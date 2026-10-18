@@ -49,7 +49,7 @@ CAPACITY_STEP = 1
 
 # Balancing
 BALANCING_INTERVAL_SECONDS = 60
-MAX_SWITCH_RETRIES = 5
+MAX_SWITCH_RETRIES = 7
 EVENT_SWITCH_FAILED = "bestiarium_climate_switch_failed"
 EVENT_DEVICE_ROTATED_IN = "bestiarium_climate_device_rotated_in"
 EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
