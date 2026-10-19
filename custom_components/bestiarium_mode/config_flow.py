@@ -18,6 +18,8 @@ from .const import (
     CONF_AC_YELLOW_ZONE_PERCENT,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DOMAIN,
+    LOAD_LIMIT_MAX_W,
+    LOAD_LIMIT_MIN_W,
 )
 
 CONF_OPTIONS = "options"
@@ -147,7 +149,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # If this is a reconfigure flow, update the existing entry
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
-            return self.async_update_and_abort(
+            return self.async_update_reload_and_abort(
                 entry,
                 data_updates={
                     CONF_OPTIONS: self._options,
@@ -222,8 +224,8 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 limit_key: selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=1,
-                        max=100000,
+                        min=LOAD_LIMIT_MIN_W,
+                        max=LOAD_LIMIT_MAX_W,
                         step=1,
                         unit_of_measurement="W",
                         mode=selector.NumberSelectorMode.BOX,

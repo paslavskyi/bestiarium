@@ -19,8 +19,10 @@ from .const import (
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
+    EVENT_LOAD_LIMIT_CHANGED,
     LOGGER,
 )
+from .data import power_load_monitoring_configured
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,6 +52,24 @@ class PowerLoadConfig:
     limit_w: float
     recovery_seconds: float
 
+    @classmethod
+    def from_ac_load_limits(cls, ac_load_limits: dict[str, Any]) -> PowerLoadConfig:
+        """Build the zone thresholds from the configured AC load limits."""
+        limit_w = ac_load_limits[CONF_AC_LOAD_LIMIT_W]
+        return cls(
+            power_sensor_id=ac_load_limits[CONF_AC_POWER_SENSOR],
+            yellow_threshold=limit_w
+            * ac_load_limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
+            / 100,
+            red_threshold=limit_w
+            * ac_load_limits.get(CONF_AC_RED_ZONE_PERCENT, 90)
+            / 100,
+            limit_w=limit_w,
+            recovery_seconds=ac_load_limits.get(
+                CONF_AC_OVERLOAD_RECOVERY_SECONDS, DEFAULT_OVERLOAD_RECOVERY_SECONDS
+            ),
+        )
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -60,44 +80,15 @@ async def async_setup_entry(
     Set up the binary sensor platform.
 
     Creates 4 binary sensors for power load zones (traffic light style).
-    Skips entity creation if ac_load_limits config is not present.
+    Skips entity creation if power load monitoring is not configured.
     """
-    ac_load_limits = entry.data.get(CONF_AC_LOAD_LIMITS)
-
-    # Skip entity creation if AC load limits not configured
-    if not ac_load_limits:
+    if not power_load_monitoring_configured(entry):
         LOGGER.debug("AC load limits not configured, skipping binary sensor creation")
         return
 
-    power_sensor = ac_load_limits.get(CONF_AC_POWER_SENSOR)
-    limit_w = ac_load_limits.get(CONF_AC_LOAD_LIMIT_W)
-    yellow_percent = ac_load_limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
-    red_percent = ac_load_limits.get(CONF_AC_RED_ZONE_PERCENT, 90)
-    recovery_seconds = ac_load_limits.get(
-        CONF_AC_OVERLOAD_RECOVERY_SECONDS, DEFAULT_OVERLOAD_RECOVERY_SECONDS
+    async_add_entities(
+        PowerLoadBinarySensor(hass, entry, zone) for zone in PowerLoadZone
     )
-
-    if not power_sensor or not limit_w:
-        LOGGER.debug("Missing power sensor or limit, skipping binary sensor creation")
-        return
-
-    # Calculate thresholds and create config
-    config = PowerLoadConfig(
-        power_sensor_id=power_sensor,
-        yellow_threshold=limit_w * yellow_percent / 100,
-        red_threshold=limit_w * red_percent / 100,
-        limit_w=limit_w,
-        recovery_seconds=recovery_seconds,
-    )
-
-    entities = [
-        PowerLoadBinarySensor(hass, PowerLoadZone.GREEN, config),
-        PowerLoadBinarySensor(hass, PowerLoadZone.YELLOW, config),
-        PowerLoadBinarySensor(hass, PowerLoadZone.RED, config),
-        PowerLoadBinarySensor(hass, PowerLoadZone.OVERLOAD, config),
-    ]
-
-    async_add_entities(entities)
 
 
 class PowerLoadBinarySensor(BinarySensorEntity):
@@ -108,14 +99,17 @@ class PowerLoadBinarySensor(BinarySensorEntity):
     def __init__(
         self,
         hass: HomeAssistant,
+        entry: BestiariumModeConfigEntry,
         zone: PowerLoadZone,
-        config: PowerLoadConfig,
     ) -> None:
         """Initialize the power load binary sensor."""
         super().__init__()
         self.hass = hass
+        self._entry = entry
         self._zone = zone
-        self._config = config
+        self._config = PowerLoadConfig.from_ac_load_limits(
+            self._entry.data[CONF_AC_LOAD_LIMITS]
+        )
 
         # Entity attributes
         self._attr_unique_id = f"power_load_{zone.value}"
@@ -178,6 +172,11 @@ class PowerLoadBinarySensor(BinarySensorEntity):
             [self._config.power_sensor_id],
             self._async_power_sensor_changed,
         )
+        self.async_on_remove(
+            self.hass.bus.async_listen(
+                EVENT_LOAD_LIMIT_CHANGED, self._async_load_limit_changed
+            )
+        )
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from power sensor state changes when removed."""
@@ -199,6 +198,15 @@ class PowerLoadBinarySensor(BinarySensorEntity):
         else:
             self._calculate_zone_state(new_state.state)
 
+        self.async_write_ha_state()
+
+    @callback
+    def _async_load_limit_changed(self, _event: Event) -> None:
+        """Recalculate the zone for the current power with the new limit."""
+        self._config = PowerLoadConfig.from_ac_load_limits(
+            self._entry.data[CONF_AC_LOAD_LIMITS]
+        )
+        self._update_from_power_sensor()
         self.async_write_ha_state()
 
     def _update_from_power_sensor(self) -> None:

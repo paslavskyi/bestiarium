@@ -12,6 +12,7 @@ Defines operating **modes** (user-created profiles) and monitors **AC power load
 
 - `select` entity — active mode selector
 - `binary_sensor` entities — one per load zone (green, yellow, red, overload)
+- `number` entity — current load limit (W), changeable at runtime, e.g. by an automation when the power source changes
 
 ### bestiarium_devices
 

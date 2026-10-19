@@ -1,8 +1,50 @@
 # Bestiarium Automation Events
 
-This document describes all Home Assistant bus events fired by `bestiarium_devices` and `bestiarium_climate`. Use these events to build automations that react to zone changes, device shedding/restoring, capacity rotation, overload shutdowns, and recovery.
+This document describes all Home Assistant bus events fired by `bestiarium_mode`, `bestiarium_devices` and `bestiarium_climate`. Use these events to build automations that react to load limit changes, zone changes, device shedding/restoring, capacity rotation, overload shutdowns, and recovery.
 
 **Event naming convention**: `{domain}_{what_happened}` (snake_case).
+
+---
+
+## bestiarium_mode Events
+
+Fired from `custom_components/bestiarium_mode/number.py`.
+
+### `bestiarium_mode_load_limit_changed`
+
+**When**: The current AC load limit changes (via the `number.power_load_limit` entity, from the UI or an automation). Not fired when the same value is set again. The zone binary sensors recalculate while this event is dispatched.
+
+| Field              | Type | Description                 |
+|--------------------|------|-----------------------------|
+| `limit_w`          | int  | New load limit in watts     |
+| `previous_limit_w` | int  | Previous load limit in watts |
+
+**Example automations** — Set the limit when the power source changes, and log the change:
+
+```yaml
+- alias: Load limit follows the power source
+  trigger:
+    - platform: state
+      entity_id: switch.grid_bypass_relay
+  action:
+    - service: number.set_value
+      target:
+        entity_id: number.power_load_limit
+      data:
+        value: "{{ 8800 if trigger.to_state.state == 'on' else 5000 }}"
+
+- alias: Log load limit changes
+  trigger:
+    - platform: event
+      event_type: bestiarium_mode_load_limit_changed
+  action:
+    - service: logbook.log
+      data:
+        name: Bestiarium
+        message: "Load limit {{ trigger.event.data.previous_limit_w }} W → {{ trigger.event.data.limit_w }} W"
+```
+
+The values and the relay entity above are examples of a user's automation; Bestiarium itself only accepts the current limit.
 
 ---
 
@@ -320,6 +362,8 @@ action:
 ---
 
 ## See Also
+
+- [bestiarium_mode](bestiarium_mode.md) — Modes, load zones and the load limit
 
 - [bestiarium_devices](bestiarium_devices.md) — Power-load balancing integration
 - [bestiarium_climate](bestiarium_climate.md) — Capacity-limited rotation integration

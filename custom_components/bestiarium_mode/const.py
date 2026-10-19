@@ -15,3 +15,9 @@ CONF_AC_OVERLOAD_RECOVERY_SECONDS = "ac_overload_recovery_seconds"
 
 # Default values
 DEFAULT_OVERLOAD_RECOVERY_SECONDS = 30
+
+# AC load limit range (W), shared by the config flow and the limit entity
+LOAD_LIMIT_MIN_W = 1
+LOAD_LIMIT_MAX_W = 100000
+
+EVENT_LOAD_LIMIT_CHANGED = f"{DOMAIN}_load_limit_changed"
