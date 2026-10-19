@@ -38,14 +38,10 @@ DOMAIN_NUMBER = "number"
 DEVICE_CLASS_POWER = "power"
 UNIT_WATT = "W"
 
-# Cross-integration entity IDs
-BESTIARIUM_MODE_SELECT_ENTITY_ID = "select.bestiarium_mode"
-
-# Binary sensor entity IDs for power load zones (from bestiarium_mode)
-BINARY_SENSOR_GREEN = "binary_sensor.power_load_green"
-BINARY_SENSOR_YELLOW = "binary_sensor.power_load_yellow"
-BINARY_SENSOR_RED = "binary_sensor.power_load_red"
-BINARY_SENSOR_OVERLOAD = "binary_sensor.power_load_overload"
+# bestiarium_mode entities are found by unique_id: their entity_ids depend on
+# naming and can be renamed by the user.
+MODE_SELECT_UNIQUE_ID = "select"
+ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
 
 # Balancing strategy timing constants (in seconds)
 GREEN_INTERVAL_SECONDS = 60

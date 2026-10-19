@@ -10,16 +10,12 @@ from typing import TYPE_CHECKING
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, callback
 from homeassistant.helpers.event import (
+    async_track_entity_registry_updated_event,
     async_track_state_change_event,
     async_track_time_interval,
 )
 
 from .const import (
-    BESTIARIUM_MODE_SELECT_ENTITY_ID,
-    BINARY_SENSOR_GREEN,
-    BINARY_SENSOR_OVERLOAD,
-    BINARY_SENSOR_RED,
-    BINARY_SENSOR_YELLOW,
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_SWITCH_ENTITY_ID,
     DOMAIN,
@@ -34,20 +30,25 @@ from .const import (
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
     LOGGER,
+    MODE_SELECT_UNIQUE_ID,
     OVERLOAD_WAIT_SECONDS,
     RED_INTERVAL_SECONDS,
+    ZONE_SENSOR_UNIQUE_ID,
 )
 from .helpers import (
     get_current_priority,
     get_device_id_from_entry,
     get_device_name_from_entry,
+    get_mode_state,
+    mode_entity_id,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, State
+    from homeassistant.helpers.entity_registry import EventEntityRegistryUpdatedData
 
 # Notification ID for missing sensors warning
 NOTIFICATION_ID_MISSING_SENSORS = "bestiarium_devices_missing_sensors"
@@ -63,6 +64,9 @@ class ActiveZone(StrEnum):
     OVERLOAD = "overload"
 
 
+ZONES = (ActiveZone.GREEN, ActiveZone.YELLOW, ActiveZone.RED, ActiveZone.OVERLOAD)
+
+
 class BalancingCoordinator:
     """Coordinator for device consumption balancing based on power load zones."""
 
@@ -76,7 +80,7 @@ class BalancingCoordinator:
         # Reference to cancel periodic job callback
         self._job_cancel: Callable[[], None] | None = None
 
-        # List of unsubscribe callbacks for state change listeners
+        # Unsubscribe callbacks for bestiarium_mode entity listeners
         self._subscriptions: list[Callable[[], None]] = []
 
         # Flag to track if coordinator is running
@@ -112,27 +116,7 @@ class BalancingCoordinator:
             # Keep running but without subscriptions - will just be inactive
             return
 
-        # Subscribe to zone binary sensor state changes
-        zone_sensors = [
-            BINARY_SENSOR_GREEN,
-            BINARY_SENSOR_YELLOW,
-            BINARY_SENSOR_RED,
-            BINARY_SENSOR_OVERLOAD,
-        ]
-        unsubscribe = async_track_state_change_event(
-            self._hass,
-            zone_sensors,
-            self._on_zone_changed,
-        )
-        self._subscriptions.append(unsubscribe)
-
-        # Subscribe to mode select state changes
-        mode_unsubscribe = async_track_state_change_event(
-            self._hass,
-            [BESTIARIUM_MODE_SELECT_ENTITY_ID],
-            self._on_mode_changed,
-        )
-        self._subscriptions.append(mode_unsubscribe)
+        self._subscribe()
 
         # Determine initial active zone (but don't execute strategy per Q7)
         self._active_zone = self._determine_active_zone()
@@ -160,28 +144,72 @@ class BalancingCoordinator:
             self._job_cancel()
             self._job_cancel = None
 
-        # Unsubscribe from all state change listeners
-        for unsubscribe in self._subscriptions:
-            unsubscribe()
-        self._subscriptions.clear()
+        self._unsubscribe()
 
         self._active_zone = ActiveZone.NONE
         self._running = False
 
+    def _zone_entity_id(self, zone: ActiveZone) -> str | None:
+        """Return the current entity_id of a zone binary sensor."""
+        return mode_entity_id(
+            self._hass, "binary_sensor", ZONE_SENSOR_UNIQUE_ID.format(zone=zone)
+        )
+
+    def _zone_state(self, zone: ActiveZone) -> State | None:
+        """Return the state of a zone binary sensor, if it has one."""
+        entity_id = self._zone_entity_id(zone)
+        return self._hass.states.get(entity_id) if entity_id else None
+
+    def _subscribe(self) -> None:
+        """
+        Listen to the bestiarium_mode zone sensors and mode select.
+
+        The entities are tracked by their current entity_ids, so the listeners
+        are re-created whenever one of them is renamed.
+        """
+        zone_entity_ids = [
+            entity_id for zone in ZONES if (entity_id := self._zone_entity_id(zone))
+        ]
+        select_entity_id = mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID)
+        mode_entity_ids = [select_entity_id] if select_entity_id else []
+        self._subscriptions = [
+            async_track_state_change_event(
+                self._hass, zone_entity_ids, self._on_zone_changed
+            ),
+            async_track_state_change_event(
+                self._hass, mode_entity_ids, self._on_mode_changed
+            ),
+            async_track_entity_registry_updated_event(
+                self._hass,
+                zone_entity_ids + mode_entity_ids,
+                self._on_mode_entity_registry_updated,
+            ),
+        ]
+
+    def _unsubscribe(self) -> None:
+        """Remove all bestiarium_mode entity listeners."""
+        for unsubscribe in self._subscriptions:
+            unsubscribe()
+        self._subscriptions.clear()
+
+    @callback
+    def _on_mode_entity_registry_updated(
+        self, event: Event[EventEntityRegistryUpdatedData]
+    ) -> None:
+        """Follow a renamed bestiarium_mode entity to its new entity_id."""
+        if "old_entity_id" not in event.data:
+            return
+        LOGGER.debug(
+            "bestiarium_mode entity renamed from %s to %s",
+            event.data["old_entity_id"],
+            event.data["entity_id"],
+        )
+        self._unsubscribe()
+        self._subscribe()
+
     def _check_binary_sensors_exist(self) -> bool:
-        """Check if the power load binary sensors exist."""
-        # Check if at least one of the zone sensors exists
-        # If bestiarium_mode is configured with AC load limits, all 4 should exist
-        for sensor_id in [
-            BINARY_SENSOR_GREEN,
-            BINARY_SENSOR_YELLOW,
-            BINARY_SENSOR_RED,
-            BINARY_SENSOR_OVERLOAD,
-        ]:
-            state = self._hass.states.get(sensor_id)
-            if state is not None:
-                return True
-        return False
+        """Check if any power load zone binary sensor exists."""
+        return any(self._zone_state(zone) is not None for zone in ZONES)
 
     async def _send_missing_sensors_notification(self) -> None:
         """Send a persistent notification about missing binary sensors."""
@@ -207,20 +235,25 @@ class BalancingCoordinator:
     def _determine_active_zone(self) -> ActiveZone:
         """Determine which zone is currently active based on binary sensor states."""
         # Check sensors in priority order (overload is highest priority)
-        if self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
-            return ActiveZone.OVERLOAD
-        if self._is_sensor_on(BINARY_SENSOR_RED):
-            return ActiveZone.RED
-        if self._is_sensor_on(BINARY_SENSOR_YELLOW):
-            return ActiveZone.YELLOW
-        if self._is_sensor_on(BINARY_SENSOR_GREEN):
-            return ActiveZone.GREEN
+        for zone in reversed(ZONES):
+            if self._is_sensor_on(zone):
+                return zone
         return ActiveZone.NONE
 
-    def _is_sensor_on(self, entity_id: str) -> bool:
-        """Check if a binary sensor is ON."""
-        state = self._hass.states.get(entity_id)
+    def _is_sensor_on(self, zone: ActiveZone) -> bool:
+        """Check if a zone binary sensor is ON."""
+        state = self._zone_state(zone)
         return state is not None and state.state == STATE_ON
+
+    def _overload_cleared(self) -> bool:
+        """
+        Return True only if the overload sensor reports OFF.
+
+        Fail-safe for the emergency shutdown: a missing, unknown or
+        unavailable sensor means the overload may still be going on.
+        """
+        state = self._zone_state(ActiveZone.OVERLOAD)
+        return state is not None and state.state == STATE_OFF
 
     def _stop_periodic_job(self) -> None:
         """Stop the current periodic job if running."""
@@ -401,7 +434,7 @@ class BalancingCoordinator:
                     )
 
         if devices_turned_off or devices_turned_on:
-            mode_state = self._hass.states.get(BESTIARIUM_MODE_SELECT_ENTITY_ID)
+            mode_state = get_mode_state(self._hass)
             mode = mode_state.state if mode_state else ""
             self._hass.bus.async_fire(
                 EVENT_MODE_APPLIED,
@@ -604,7 +637,7 @@ class BalancingCoordinator:
         n1 = await self._turn_off_devices(first_queue)
         LOGGER.warning("OVERLOAD: First queue shutdown complete - %d devices off", n1)
 
-        overload_cleared = not self._is_sensor_on(BINARY_SENSOR_OVERLOAD)
+        overload_cleared = self._overload_cleared()
         first_device_ids = [get_device_id_from_entry(e) for e in first_queue]
         first_device_names = [get_device_name_from_entry(e) for e in first_queue]
 
@@ -630,7 +663,7 @@ class BalancingCoordinator:
 
         await asyncio.sleep(OVERLOAD_WAIT_SECONDS)
 
-        if not self._is_sensor_on(BINARY_SENSOR_OVERLOAD):
+        if self._overload_cleared():
             LOGGER.info("OVERLOAD: Overload cleared during wait; skipping second queue")
             self._hass.bus.async_fire(
                 EVENT_OVERLOAD_CLEARED,
@@ -660,10 +693,6 @@ class BalancingCoordinator:
 
 # Export constants for use in tests
 __all__ = [
-    "BINARY_SENSOR_GREEN",
-    "BINARY_SENSOR_OVERLOAD",
-    "BINARY_SENSOR_RED",
-    "BINARY_SENSOR_YELLOW",
     "GREEN_INTERVAL_SECONDS",
     "RED_INTERVAL_SECONDS",
     "ActiveZone",

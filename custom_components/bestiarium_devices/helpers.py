@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
-    BESTIARIUM_MODE_SELECT_ENTITY_ID,
     CONF_DEFAULT_PRIORITY,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
@@ -16,15 +17,30 @@ from .const import (
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
+    DOMAIN_BESTIARIUM_MODE,
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
     LOAD_PRIORITY_MIN,
+    MODE_SELECT_UNIQUE_ID,
     UNIT_WATT,
 )
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, State
+
+
+def mode_entity_id(hass: HomeAssistant, domain: str, unique_id: str) -> str | None:
+    """Return the current entity_id of a bestiarium_mode entity."""
+    return er.async_get(hass).async_get_entity_id(
+        domain, DOMAIN_BESTIARIUM_MODE, unique_id
+    )
+
+
+def get_mode_state(hass: HomeAssistant) -> State | None:
+    """Return the state of the bestiarium_mode select entity."""
+    entity_id = mode_entity_id(hass, "select", MODE_SELECT_UNIQUE_ID)
+    return hass.states.get(entity_id) if entity_id else None
 
 
 def validate_power_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
@@ -103,9 +119,8 @@ def get_current_priority(
     device_id: str,
 ) -> int:
     """Get the current effective priority for a device based on selected mode."""
-    # Get current mode from bestiarium_mode select entity
-    mode_state = hass.states.get(BESTIARIUM_MODE_SELECT_ENTITY_ID)
-    if not mode_state or mode_state.state in ("unknown", "unavailable"):
+    mode_state = get_mode_state(hass)
+    if not mode_state or mode_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
         return LOAD_PRIORITY_DEFAULT
 
     current_mode = mode_state.state
