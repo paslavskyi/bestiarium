@@ -116,15 +116,16 @@ Each device gets its own config entry. The data shape depends on device type:
 | `LOAD_PRIORITY_OFF` | `0` | Alias for min — device OFF |
 | `LOAD_PRIORITY_ALWAYS_ON` | `9999` | Alias for max — always ON |
 
-### Cross-Integration Entity IDs
+### Cross-Integration Unique IDs
+
+`bestiarium_mode` entities are found in the entity registry by platform `bestiarium_mode` + `unique_id`, never by `entity_id`: entity_ids come from entity names (a fresh install names the overload sensor `binary_sensor.overload`) and users can rename them.
 
 | Constant | Value |
 |---|---|
-| `BESTIARIUM_MODE_SELECT_ENTITY_ID` | `"select.bestiarium_mode"` |
-| `BINARY_SENSOR_GREEN` | `"binary_sensor.power_load_green"` |
-| `BINARY_SENSOR_YELLOW` | `"binary_sensor.power_load_yellow"` |
-| `BINARY_SENSOR_RED` | `"binary_sensor.power_load_red"` |
-| `BINARY_SENSOR_OVERLOAD` | `"binary_sensor.power_load_overload"` |
+| `MODE_SELECT_UNIQUE_ID` | `"select"` |
+| `ZONE_SENSOR_UNIQUE_ID` | `"power_load_{zone}"` (`green`, `yellow`, `red`, `overload`) |
+
+These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run against the real `bestiarium_mode` entities.
 
 ### Timing Constants
 
@@ -210,11 +211,16 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 
 `get_current_priority(hass, device_id)` — The core priority lookup:
 
-1. Reads `select.bestiarium_mode` state for current mode
+1. Reads the bestiarium_mode select state for current mode (`get_mode_state`)
 2. Falls back to `LOAD_PRIORITY_DEFAULT` (5000) if mode entity is missing/unknown/unavailable
 3. Finds the config entry matching `device_id` (virtual devices use `entry.entry_id` as device_id)
 4. Returns mode-specific priority if configured, otherwise the `"default"` priority from the entry
 5. Final fallback: `LOAD_PRIORITY_DEFAULT`
+
+### bestiarium_mode Entity Lookup
+
+- `mode_entity_id(hass, domain, unique_id)` — current entity_id of a `bestiarium_mode` entity from the entity registry (O(1) index lookup), or `None`
+- `get_mode_state(hass)` — state of the mode select entity, or `None`
 
 ### Power Sensor Validation
 
@@ -255,11 +261,19 @@ class ActiveZone(StrEnum):
 
 `_determine_active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN > NONE.
 
+Each read resolves the sensor's entity_id from the registry by unique_id at that moment (no cached entity_ids).
+
+### Following Renamed Entities
+
+State listeners need entity_ids, so `_subscribe()` tracks the zone sensors and the mode select by their current entity_ids and also tracks their entity registry updates (`async_track_entity_registry_updated_event`, which matches renames by `old_entity_id`). When one is renamed, the coordinator drops and re-creates the listeners with the new entity_ids. It does not re-evaluate the zone on a rename: the entity's state is unchanged, and the re-added entity's new state goes through the normal `_on_zone_changed` path (same zone → no `zone_changed` event).
+
+This relies only on the registry update event, so it works both with the HA 2026.10 rename model (entity removed and re-added) and with in-place renames.
+
 ### Startup Behavior
 
-1. Checks if power load binary sensors exist (at least one of the four)
+1. Checks if power load binary sensors exist (at least one of the four has a state, looked up by unique_id)
 2. If missing: logs warning, sends persistent notification, stays running but inactive
-3. Subscribes to 4 zone binary sensors + mode select entity
+3. Subscribes to 4 zone binary sensors + mode select entity, and to their registry updates (renames)
 4. Determines initial active zone
 5. If initial zone is OVERLOAD → executes overload strategy immediately
 6. Otherwise → starts periodic job (waits for first interval before executing)
@@ -301,9 +315,10 @@ class ActiveZone(StrEnum):
 - **Trigger**: Immediately when overload zone activates (no periodic job)
 - **Action**: **Two-step emergency shutdown**:
   1. Turn off all devices with `overload_first_queue=True` (first queue)
-  2. Check if overload sensor is still ON
-  3. If still overloaded: wait `OVERLOAD_WAIT_SECONDS` (5s), check again
-  4. If still overloaded: turn off all remaining devices (second queue)
+  2. Check if the overload has cleared
+  3. If not cleared: wait `OVERLOAD_WAIT_SECONDS` (5s), check again
+  4. If still not cleared: turn off all remaining devices (second queue)
+- **Fail-safe**: inside this sequence the overload counts as cleared **only if the overload sensor reports `off`** (`_overload_cleared`). A missing, `unknown` or `unavailable` sensor state means the overload may still be going on, so the second queue is shut down too — turning off more is safer than overloading the supply. Active zone detection outside the sequence is unchanged.
 - **Backward compat**: If no devices have `overload_first_queue=True`, turns off ALL devices immediately (no two-step, no wait)
 - **Ignores** priority — all devices are turned off including ALWAYS_ON
 
@@ -355,6 +370,8 @@ Translation keys cover:
 - **Red strategy**: lowest priority turns off, already-off skipped, ALWAYS_ON skipped
 - **Overload strategy**: all devices off including ALWAYS_ON, contrast with red (ALWAYS_ON)
 - **Two-step overload**: first then second after wait, cleared after first queue skips second, cleared during wait skips second, all in first queue, no first queue devices turns off all immediately, mixed queues with persistent overload
+- **Overload fail-safe**: overload sensor missing / `unknown` / `unavailable` after the first queue or during the wait → second queue still runs
+- **bestiarium_mode entities by unique_id** (real `bestiarium_mode`): fresh install (`binary_sensor.overload`) runs the emergency shutdown, renamed red sensor still runs the red strategy, renaming the active zone sensor keeps the zone, renamed mode select drives priorities, no AC load limits → inactive + notification
 - **Zone transitions**: green 60s periodic job, red 5s periodic job, zone change stops old/starts new job, overload executes immediately
 
 ---
@@ -379,4 +396,4 @@ Translation keys cover:
 
 9. **Power sensor validation**: Must have `device_class=power` and `unit_of_measurement=W`. The validation runs at config flow time, not continuously.
 
-10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive. A persistent notification informs the user.
+10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive. A persistent notification informs the user. Sensors that appear later (limits configured on a running system) are picked up after the devices integration reloads or HA restarts.
