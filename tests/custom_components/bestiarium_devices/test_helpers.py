@@ -100,6 +100,7 @@ class TestExtractPrioritiesFromUserInput:
         assert result["Eco"] == 1000  # noqa: PLR2004
 
 
+@pytest.mark.usefixtures("mode_entities")
 class TestGetCurrentPriority:
     """Tests for get_current_priority function (reads from config entry data)."""
 

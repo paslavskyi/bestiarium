@@ -263,19 +263,16 @@ There is no `RestoreEntity`: restoring asynchronously would let the zone sensors
 
 The `bestiarium_devices` integration reads from `bestiarium_mode`:
 
-- **Mode selection**: Reads `select.bestiarium_mode` entity to get the current operational mode. The devices integration config flow uses `get_bestiarium_modes()` to fetch available mode options and aborts with `"no_bestiarium_mode"` if the mode integration isn't configured.
+- **Mode selection**: Reads the mode select entity (found by unique_id `select`) to get the current operational mode. The devices integration config flow uses `get_bestiarium_modes()` to fetch available mode options and aborts with `"no_bestiarium_mode"` if the mode integration isn't configured.
 - **Power load zones**: Reads the 4 binary sensor entities to determine load zone status for device balancing decisions.
 
 ### Consumed by `bestiarium_climate`
 
 The `bestiarium_climate` integration references `DOMAIN_BESTIARIUM_MODE = "bestiarium_mode"` in its constants, indicating it also depends on mode state for climate control decisions.
 
-### Entity IDs Used by Consumers
+### How Consumers Find These Entities
 
-```python
-BESTIARIUM_MODE_SELECT_ENTITY_ID = "select.bestiarium_mode"
-# Binary sensors: binary_sensor.power_load_green, binary_sensor.power_load_yellow, etc.
-```
+`bestiarium_devices` looks the entities up in the entity registry by platform `bestiarium_mode` + `unique_id` (`select`, `power_load_{green,yellow,red,overload}`), not by entity_id, and follows renames at runtime. **Do not change these unique_ids** — they are the contract with consumers and keep the registry (and user customizations) intact.
 
 ---
 
