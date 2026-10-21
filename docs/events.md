@@ -79,11 +79,11 @@ action:
 
 ### `bestiarium_devices_device_turned_on`
 
-**When**: Green strategy turns on a device (restores power after load improved).
+**When**: Green strategy turns on a device (restores power after load improved), or the device's "Allowed" switch is turned back on in the green zone.
 
 | Field              | Type   | Description                    |
 |--------------------|--------|--------------------------------|
-| `strategy`         | string | Always `"green"`               |
+| `strategy`         | string | `"green"`, or `"allowed"` when the "Allowed" switch is turned back on in the green zone |
 | `device_id`        | string | Device registry ID             |
 | `device_name`      | string | Human-readable device name     |
 | `switch_entity_id` | string | Entity ID of the switch        |
@@ -105,11 +105,11 @@ action:
 
 ### `bestiarium_devices_device_turned_off`
 
-**When**: Red strategy turns off a device (sheds load when zone is red).
+**When**: Red strategy turns off a device (sheds load when zone is red), or the device's "Allowed" switch is turned off.
 
 | Field              | Type   | Description                    |
 |--------------------|--------|--------------------------------|
-| `strategy`         | string | Always `"red"`                 |
+| `strategy`         | string | `"red"`, or `"allowed"` when the "Allowed" switch is turned off |
 | `device_id`        | string | Device registry ID             |
 | `device_name`      | string | Human-readable device name     |
 | `switch_entity_id` | string | Entity ID of the switch        |

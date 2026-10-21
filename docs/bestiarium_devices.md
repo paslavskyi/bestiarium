@@ -9,6 +9,8 @@ Core capabilities:
 1. **Device registration** — Two device types: *virtual* (combines any switch + power sensor into a new device) and *extended* (attaches priority management to an existing HA device).
 2. **Load priority system** — Each device has a default priority (0–9999) and optional per-mode overrides. Special values: `0` = always off, `9999` = always on.
 3. **Balancing coordinator** — A singleton `BalancingCoordinator` reacts to power load zone changes and mode switches, executing zone-specific strategies to turn devices on/off based on their priorities.
+4. **"Allowed" switch** — One switch per device lets the family exclude it from balancing: off turns the relay off and the balancer never turns it on.
+5. **Thermostat-driven devices** — A device option for relays that their own thermostat turns on: the balancer only turns them off.
 
 Multiple config entries are allowed (one per device). The integration has a declared dependency on `bestiarium_mode`.
 
@@ -27,6 +29,7 @@ custom_components/bestiarium_devices/
 ├── config_flow.py       # Multi-step config flow (virtual + extended device creation)
 ├── helpers.py           # Priority resolution, validation, utility functions
 ├── balancer.py          # BalancingCoordinator — zone strategies and periodic jobs
+├── switch.py            # AllowedSwitch — per-device "Allowed" switch
 └── translations/
     ├── en.json           # English translations
     └── uk.json           # Ukrainian translations
@@ -35,7 +38,9 @@ tests/custom_components/bestiarium_devices/
 ├── __init__.py
 ├── test_config_flow.py
 ├── test_helpers.py
-└── test_balancer.py
+├── test_balancer.py
+├── test_switch.py
+└── test_switch_split_device.py
 ```
 
 ---
@@ -43,10 +48,10 @@ tests/custom_components/bestiarium_devices/
 ## Platforms
 
 ```python
-PLATFORMS: list[Platform] = []
+PLATFORMS: list[Platform] = [Platform.SWITCH]
 ```
 
-No entity platforms are registered. Devices are managed via the device registry and service calls to existing switch entities.
+The only entity is the per-device "Allowed" switch. Relays are controlled via service calls to existing switch entities.
 
 ---
 
@@ -70,6 +75,7 @@ Each device gets its own config entry. The data shape depends on device type:
     },
     "mode_options_snapshot": list[str],   # Snapshot of priority keys at save time
     "overload_first_queue": bool,         # Turn off in first wave during overload
+    "thermostat_driven": bool,            # Only turned off by the balancer (missing = False)
 }
 ```
 
@@ -85,8 +91,19 @@ Each device gets its own config entry. The data shape depends on device type:
     "load_priorities": { ... },           # Same structure as virtual
     "mode_options_snapshot": list[str],
     "overload_first_queue": bool,
+    "thermostat_driven": bool,
 }
 ```
+
+### Config Entry Options
+
+```python
+{
+    "allowed": bool,   # State of the "Allowed" switch (missing = True)
+}
+```
+
+Options hold runtime state set by the family, not configuration. No migration was needed for `thermostat_driven` or `allowed`: both are read with defaults (`False` / `True`), like `overload_first_queue` before them.
 
 ### Config Key Constants (`const.py`)
 
@@ -102,6 +119,8 @@ Each device gets its own config entry. The data shape depends on device type:
 | `CONF_LOAD_PRIORITIES` | `"load_priorities"` |
 | `CONF_MODE_OPTIONS_SNAPSHOT` | `"mode_options_snapshot"` |
 | `CONF_OVERLOAD_FIRST_QUEUE` | `"overload_first_queue"` |
+| `CONF_THERMOSTAT_DRIVEN` | `"thermostat_driven"` |
+| `CONF_ALLOWED` (options) | `"allowed"` |
 | `CONF_DEFAULT_PRIORITY` | `"default"` |
 | `DEVICE_TYPE_VIRTUAL` | `"virtual"` |
 | `DEVICE_TYPE_EXTENDED` | `"extended"` |
@@ -143,9 +162,9 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 
 1. Initializes `hass.data[DOMAIN]` dict if needed
 2. Creates and starts a shared `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) — one coordinator for all device entries
-3. For virtual devices: creates a device registry entry with `identifiers={(DOMAIN, entry.entry_id)}`
-4. Forwards platform setups (currently none)
-5. Registers reload listener
+3. Forwards the `switch` platform (the "Allowed" switch; for virtual devices its device info creates the `identifiers={(DOMAIN, entry.entry_id)}` device)
+
+There is **no update listener**: the "Allowed" switch updates the entry options at runtime without a reload; the reconfigure flow reloads explicitly with `async_update_reload_and_abort()`. Any future flow that changes the entry must reload explicitly too.
 
 ### Unload (`async_unload_entry`)
 
@@ -174,7 +193,7 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 | `create_virtual` | Form: device name, switch entity, power sensor entity |
 | `extend_device` | Form: device selector. Validates device has switch + power sensor |
 | `select_entities` | Shown only when device has multiple switches or sensors. Selects which to use |
-| `configure_priorities` | Form: default priority, optional per-mode priorities, overload_first_queue flag |
+| `configure_priorities` | Form: default priority, optional per-mode priorities, overload_first_queue and thermostat_driven flags |
 | `reconfigure` | Loads existing data, routes to appropriate form based on device type |
 
 ### Flow Logic for `extend_device`
@@ -306,6 +325,27 @@ This relies only on the registry update event, so it works both with the HA 2026
 - **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON)
 - **Sorting**: Candidates sorted by priority ascending
 
+#### Turning Devices On: `balancer_may_turn_on(entry)`
+
+The balancer turns a relay on in exactly three places, all gated by `helpers.balancer_may_turn_on(entry)` — "Allowed" is on **and** the device is not `thermostat_driven`:
+
+| Place | Rule |
+|---|---|
+| Green strategy | not a candidate otherwise (so it never blocks lower-priority devices) |
+| Mode priority `9999` (ALWAYS_ON) in `_apply_mode_priorities` | skipped otherwise ("Allowed" off beats "always on") |
+| "Allowed" turned back on (`async_allowed_changed`) | see below |
+
+Turning off is unchanged: red strategy, overload (both queues) and mode priority `0` turn off any ON device, including disallowed ones switched on by hand and thermostat-driven ones.
+
+#### "Allowed" Switch Changes (`async_allowed_changed`)
+
+| Change | Green zone | Other zones / inactive balancer |
+|---|---|---|
+| Allowed → off | relay off now (if not off) | relay off now (if not off) |
+| Allowed → on | relay on now if it is off, its current mode priority is not `0` and it is not thermostat-driven | nothing; it waits for its turn in green |
+
+Both fire `bestiarium_devices_device_turned_off` / `_turned_on` with `strategy: "allowed"`. A relay without a state is left alone.
+
 #### Yellow Strategy
 
 - **No action** — yellow is a waiting/warning state. No periodic job runs.
@@ -334,6 +374,25 @@ This relies only on the registry update event, so it works both with the HA 2026
 
 ---
 
+## "Allowed" Switch (`switch.py`)
+
+Class: `AllowedSwitch(SwitchEntity)` — one per config entry.
+
+| Property | Value |
+|---|---|
+| `unique_id` | `{entry_id}_allowed` |
+| Name | `has_entity_name`, translation `allowed` — "Allowed" / "Дозволено" (shown as "<device> Allowed") |
+| State | `entry.options["allowed"]` (default `True`); written with `async_update_entry`, no reload |
+| Category | none — meant for dashboards |
+
+**Device placement:**
+
+- **Virtual device** — its own Bestiarium device (`identifiers={(DOMAIN, entry_id)}`, model "Virtual Device").
+- **Extended device** — the device of the relay (`switch_entity_id`), linked via `entity.device_entry = async_entity_id_to_device(...)`, as core helper integrations do. Since HA 2026.8 a device belongs to a single config entry, so the switch is linked to, not owned by, that device: no extra device is created, the switch shows on the real device page and follows its area. The relay's device is used rather than `data.device_id` because that id can be a pre-2026.8 composite id (the 2026.8 migration moved the relay to the right split).
+- **Relay without a device / not in the registry** — no device; translation `allowed_standalone`, "{device_name} Allowed".
+
+The entity_id is generated by HA from the area, device and entity name (e.g. `switch.bathroom_heating_floor_allowed`). If the relay is moved to another device, the switch follows after a reload.
+
 ## Translations
 
 Two locales: `en` (English) and `uk` (Ukrainian).
@@ -342,7 +401,8 @@ Translation keys cover:
 - Config flow steps, menus, field labels, field descriptions
 - Validation errors: `no_bestiarium_mode`, `no_switch`, `no_power_sensor`, `invalid_switch`, `invalid_power_sensor`, `name_required`, `required`
 - Abort reasons: `not_implemented`, `already_configured`, `no_bestiarium_mode`, `no_devices_with_switch`, `reconfigure_successful`
-- Entity names: `Default Load Priority`, `{mode_name} Load Priority`
+- Config flow field `thermostat_driven` (label + description)
+- Entity names: `Allowed`, `{device_name} Allowed`, `Default Load Priority`, `{mode_name} Load Priority`
 
 ---
 
@@ -380,7 +440,7 @@ Translation keys cover:
 
 1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload.
 
-2. **No platform entities**: Despite having switch and sensor references, this integration does not create any entities. It operates entirely through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
+2. **One entity per device**: The only entity is the "Allowed" switch. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
 
 3. **Device ID semantics**: Virtual devices use `entry.entry_id` as their device ID (since they have no pre-existing HA device). Extended devices use the actual HA `device_id`. This distinction matters for priority lookups.
 

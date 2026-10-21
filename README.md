@@ -18,6 +18,9 @@ Defines operating **modes** (user-created profiles) and monitors **AC power load
 
 Registers physical and virtual devices with **per-mode load priorities** and runs a `BalancingCoordinator` that applies green / red / overload strategies to shed or restore load. Depends on `bestiarium_mode`.
 
+- `switch` entity per device — "Allowed": off keeps the device off and out of balancing
+- Device option "switched on by its own thermostat" — the balancer only turns such devices off
+
 ### bestiarium_climate
 
 Provides **capacity-limited rotation** of heating/cooling devices through virtual thermostats and virtual switches.
