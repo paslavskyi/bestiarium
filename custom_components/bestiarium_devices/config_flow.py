@@ -24,6 +24,7 @@ from .const import (
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
+    CONF_THERMOSTAT_DRIVEN,
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_EXTENDED,
     DEVICE_TYPE_VIRTUAL,
@@ -145,6 +146,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._power_sensors: list[str] = []
         self._load_priorities: dict[str, int] = {}
         self._overload_first_queue: bool = False
+        self._thermostat_driven: bool = False
 
     async def async_step_user(
         self,
@@ -425,6 +427,10 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             )
         ] = selector.BooleanSelector(selector.BooleanSelectorConfig())
 
+        schema_dict[
+            vol.Required(CONF_THERMOSTAT_DRIVEN, default=self._thermostat_driven)
+        ] = selector.BooleanSelector(selector.BooleanSelectorConfig())
+
         return vol.Schema(schema_dict)
 
     async def async_step_configure_priorities(
@@ -447,11 +453,14 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             self._overload_first_queue = bool(
                 user_input.get(CONF_OVERLOAD_FIRST_QUEUE, False),
             )
+            self._thermostat_driven = bool(
+                user_input.get(CONF_THERMOSTAT_DRIVEN, False),
+            )
 
             # Create or update config entry
             if self.source == SOURCE_RECONFIGURE:
                 entry = self._get_reconfigure_entry()
-                return self.async_update_and_abort(
+                return self.async_update_reload_and_abort(
                     entry,
                     data_updates=self._build_config_entry_data(),
                 )
@@ -484,6 +493,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_LOAD_PRIORITIES: self._load_priorities,
             CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
             CONF_OVERLOAD_FIRST_QUEUE: self._overload_first_queue,
+            CONF_THERMOSTAT_DRIVEN: self._thermostat_driven,
         }
 
         if self._device_type == DEVICE_TYPE_VIRTUAL:
@@ -510,6 +520,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         self._load_priorities = entry.data.get(CONF_LOAD_PRIORITIES, {}).copy()
         self._overload_first_queue = bool(
             entry.data.get(CONF_OVERLOAD_FIRST_QUEUE, False),
+        )
+        self._thermostat_driven = bool(
+            entry.data.get(CONF_THERMOSTAT_DRIVEN, False),
         )
 
         if self._device_type == DEVICE_TYPE_VIRTUAL:

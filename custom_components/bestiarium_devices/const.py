@@ -16,6 +16,13 @@ CONF_POWER_SENSOR_ENTITY_ID = "power_sensor_entity_id"
 CONF_LOAD_PRIORITIES = "load_priorities"
 CONF_MODE_OPTIONS_SNAPSHOT = "mode_options_snapshot"
 CONF_OVERLOAD_FIRST_QUEUE = "overload_first_queue"
+CONF_THERMOSTAT_DRIVEN = "thermostat_driven"
+
+# Config entry options
+CONF_ALLOWED = "allowed"
+
+# Key for storing the balancing coordinator in hass.data[DOMAIN]
+DATA_COORDINATOR = "balancing_coordinator"
 
 # Device types
 DEVICE_TYPE_VIRTUAL = "virtual"
