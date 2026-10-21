@@ -124,7 +124,7 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == 2000  # noqa: PLR2004
 
@@ -147,21 +147,9 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == 4000  # noqa: PLR2004
-
-    async def test_falls_back_to_constant_when_no_entry_for_device(
-        self,
-        hass: HomeAssistant,
-    ) -> None:
-        """Test falls back to LOAD_PRIORITY_DEFAULT when no config entry for device."""
-        hass.states.async_set("select.bestiarium_mode", "Eco")
-        # No config entry for test_device
-
-        result = get_current_priority(hass, "test_device")
-
-        assert result == LOAD_PRIORITY_DEFAULT
 
     async def test_falls_back_to_constant_when_mode_select_missing(
         self,
@@ -178,7 +166,7 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == LOAD_PRIORITY_DEFAULT
 
@@ -198,7 +186,7 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == LOAD_PRIORITY_DEFAULT
 
@@ -218,7 +206,7 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == LOAD_PRIORITY_DEFAULT
 
@@ -238,15 +226,15 @@ class TestGetCurrentPriority:
         )
         entry.add_to_hass(hass)
 
-        result = get_current_priority(hass, "test_device")
+        result = get_current_priority(hass, entry)
 
         assert result == LOAD_PRIORITY_DEFAULT
 
-    async def test_virtual_device_uses_entry_id_as_device_id(
+    async def test_virtual_device(
         self,
         hass: HomeAssistant,
     ) -> None:
-        """Test get_current_priority finds virtual device by entry_id."""
+        """Test get_current_priority reads a virtual device's entry."""
         hass.states.async_set("select.bestiarium_mode", "Eco")
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -260,9 +248,32 @@ class TestGetCurrentPriority:
             },
         )
         entry.add_to_hass(hass)
-        # For virtual devices, device_id is entry.entry_id
-        device_id = entry.entry_id
 
-        result = get_current_priority(hass, device_id)
+        result = get_current_priority(hass, entry)
 
         assert result == 1500  # noqa: PLR2004
+
+    async def test_two_entries_on_one_device_keep_their_own_priorities(
+        self,
+        hass: HomeAssistant,
+    ) -> None:
+        """A two-relay device extended twice: each entry keeps its own priority."""
+        hass.states.async_set("select.bestiarium_mode", "Eco")
+        entries = [
+            MockConfigEntry(
+                domain=DOMAIN,
+                data={
+                    CONF_DEVICE_TYPE: DEVICE_TYPE_EXTENDED,
+                    CONF_DEVICE_ID: "shelly_2pm",
+                    CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: priority},
+                },
+            )
+            for priority in (1000, 8000)
+        ]
+        for entry in entries:
+            entry.add_to_hass(hass)
+
+        assert [get_current_priority(hass, entry) for entry in entries] == [
+            1000,
+            8000,
+        ]

@@ -18,7 +18,6 @@ from .const import (
     CONF_THERMOSTAT_DRIVEN,
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
-    DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
@@ -130,24 +129,13 @@ def build_priority_form_key(mode_name: str) -> str:
     return f"priority_{mode_name}"
 
 
-def get_current_priority(
-    hass: HomeAssistant,
-    device_id: str,
-) -> int:
-    """Get the current effective priority for a device based on selected mode."""
+def get_current_priority(hass: HomeAssistant, entry: ConfigEntry) -> int:
+    """Get the device's effective priority for the selected mode."""
     mode_state = get_mode_state(hass)
     if not mode_state or mode_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
         return LOAD_PRIORITY_DEFAULT
 
-    current_mode = mode_state.state
-
-    # Find config entry for this device and read priority from entry data
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        entry_device_id = get_device_id_from_entry(entry)
-        if entry_device_id == device_id:
-            priorities = entry.data.get(CONF_LOAD_PRIORITIES, {})
-            if current_mode in priorities:
-                return priorities[current_mode]
-            return priorities.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
-
-    return LOAD_PRIORITY_DEFAULT
+    priorities = entry.data.get(CONF_LOAD_PRIORITIES, {})
+    if mode_state.state in priorities:
+        return priorities[mode_state.state]
+    return priorities.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)

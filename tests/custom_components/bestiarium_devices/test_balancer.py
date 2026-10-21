@@ -1831,7 +1831,7 @@ class TestModeEntitiesByUniqueId:
         finally:
             await coordinator.async_stop()
 
-        assert get_current_priority(hass, heater.entry_id) == LOAD_PRIORITY_OFF
+        assert get_current_priority(hass, heater) == LOAD_PRIORITY_OFF
         assert [event.data["mode"] for event in mode_applied] == ["Grid off"]
         assert [call.data["entity_id"] for call in turn_off] == ["switch.heater"]
 

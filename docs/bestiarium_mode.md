@@ -128,7 +128,7 @@ There are 10 hard-coded `async_step_edit_N` methods (N = 0..9), each delegating 
 
 ### Reconfigure Flow
 
-Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_reload_and_abort()` to update and reload the entry. The load limit field defaults to the current limit, including changes made through the limit entity.
+Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_reload_and_abort(..., reason="reconfigure_successful")` to update and reload the entry. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet. The load limit field defaults to the current limit, including changes made through the limit entity.
 
 ---
 

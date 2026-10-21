@@ -177,9 +177,15 @@ Always returns `True` — HA handles entity cleanup automatically.
 
 ---
 
+### Migration (`async_migrate_entry`)
+
+| Version | Change |
+|---|---|
+| 1.1 → 1.2 | An extended device whose `device_id` names no device any more — a pre-2026.8 composite id (HA split shared devices per config entry) or a deleted device — gets the device of its relay (`switch_entity_id`). Detected with `async_get(device_id, include_composite_devices=False)`. Only `device_id` changes; everything else in `data` and `options` stays. Left unchanged: virtual devices, live device ids, entries whose relay is not in the registry, and entries whose relay device is already used by another entry (logged as a warning naming both). |
+
 ## Config Flow (`config_flow.py`)
 
-Class: `BestiariumDevicesFlowHandler` (VERSION = 1)
+Class: `BestiariumDevicesFlowHandler` (VERSION = 1, MINOR_VERSION = 2)
 
 ### Prerequisites
 
@@ -204,7 +210,7 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 4. If multiple of either → route through `select_entities`
 5. If no switch → error `"no_switch"`; no power sensor → error `"no_power_sensor"`
 
-Entities of this integration (the "Allowed" switches, which sit on the relay's device) are never relay or power-sensor candidates: the device lookups skip platform `bestiarium_devices`, `select_entities` offers only the device's own relays and sensors (`include_entities`), and the virtual-device relay selector excludes them (`exclude_entities`).
+Entities of this integration (the "Allowed" switches, which sit on the relay's device) are never relay or power-sensor candidates: the device lookups (`find_switches_for_device`, `find_power_sensors_for_device`, `find_devices_with_switch`) all go through one predicate, `_candidate_entities(hass, domain)`, which skips platform `bestiarium_devices`; `select_entities` offers only the device's own relays and sensors (`include_entities`), and the virtual-device relay selector excludes them (`exclude_entities`).
 
 ### Reconfigure Flow
 
@@ -231,13 +237,14 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 
 ### Priority Resolution
 
-`get_current_priority(hass, device_id)` — The core priority lookup:
+`get_current_priority(hass, entry)` — The core priority lookup, read from the device's own config entry:
 
 1. Reads the bestiarium_mode select state for current mode (`get_mode_state`)
 2. Falls back to `LOAD_PRIORITY_DEFAULT` (5000) if mode entity is missing/unknown/unavailable
-3. Finds the config entry matching `device_id` (virtual devices use `entry.entry_id` as device_id)
-4. Returns mode-specific priority if configured, otherwise the `"default"` priority from the entry
-5. Final fallback: `LOAD_PRIORITY_DEFAULT`
+3. Returns the entry's mode-specific priority if configured, otherwise its `"default"` priority
+4. Final fallback: `LOAD_PRIORITY_DEFAULT`
+
+It takes the entry, not a `device_id`: two entries can share a device (a two-relay device extended twice), and each must keep its own priority.
 
 ### bestiarium_mode Entity Lookup
 
@@ -424,7 +431,10 @@ Translation keys cover:
 ### `test_helpers.py`
 - `build_priority_form_key`: basic and with spaces
 - `extract_priorities_from_user_input`: all provided, none provided (only default), partial, missing default fallback
-- `get_current_priority`: mode-specific priority, fallback to default, no entry for device, missing/unknown/unavailable mode select, empty priorities dict, virtual device uses entry_id
+- `get_current_priority`: mode-specific priority, fallback to default, missing/unknown/unavailable mode select, empty priorities dict, virtual device, two entries on one device keep their own priorities
+
+### `test_migration.py`
+- Registries in HA 2026.2 format (a Shelly + MikroTik shared device), split on load: composite `device_id` moves to the relay's split with all other data and options intact; reconfigure then offers the device's relays; live, virtual, relay-less and already-taken cases are left alone
 
 ### `test_balancer.py`
 - **Init/Cleanup**: start/stop, initial zone detection, double start warning, stop when not running, missing sensors still running

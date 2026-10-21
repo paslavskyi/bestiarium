@@ -10,17 +10,77 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 
 from .balancer import BalancingCoordinator
-from .const import DATA_COORDINATOR, DOMAIN, LOGGER
+from .const import (
+    CONF_DEVICE_ID,
+    CONF_DEVICE_NAME,
+    CONF_DEVICE_TYPE,
+    CONF_SWITCH_ENTITY_ID,
+    DATA_COORDINATOR,
+    DEVICE_TYPE_EXTENDED,
+    DOMAIN,
+    LOGGER,
+)
+from .helpers import get_device_id_from_entry
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from homeassistant.helpers import device_registry as dr
 
     from .data import BestiariumDevicesConfigEntry
 
 PLATFORMS: list[Platform] = [Platform.SWITCH]
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant,
+    entry: BestiariumDevicesConfigEntry,
+) -> bool:
+    """
+    Migrate a device entry to version 1.2.
+
+    1.2: an extended device whose device_id names no device any more (a
+    pre-2026.8 composite id, or a deleted device) points to its relay's device.
+    """
+    if entry.minor_version < 2:  # noqa: PLR2004
+        data = dict(entry.data)
+        if relay_device_id := _relay_device_to_migrate_to(hass, entry):
+            data[CONF_DEVICE_ID] = relay_device_id
+        hass.config_entries.async_update_entry(entry, data=data, minor_version=2)
+    return True
+
+
+def _relay_device_to_migrate_to(
+    hass: HomeAssistant, entry: BestiariumDevicesConfigEntry
+) -> str | None:
+    """Return the relay's device for a stale device_id, if it can take its place."""
+    if entry.data.get(CONF_DEVICE_TYPE) != DEVICE_TYPE_EXTENDED:
+        return None
+    device_id = entry.data.get(CONF_DEVICE_ID)
+    if dr.async_get(hass).async_get(device_id, include_composite_devices=False):
+        return None
+    relay = er.async_get(hass).async_get(entry.data[CONF_SWITCH_ENTITY_ID])
+    if relay is None or relay.device_id is None:
+        return None
+    if taken_by := next(
+        (
+            other.title
+            for other in hass.config_entries.async_entries(DOMAIN)
+            if other.entry_id != entry.entry_id
+            and get_device_id_from_entry(other) == relay.device_id
+        ),
+        None,
+    ):
+        LOGGER.warning(
+            "Device %s keeps its stale device id: the device of its relay is "
+            "already used by %s; reconfigure it to pick the device again",
+            entry.data.get(CONF_DEVICE_NAME, entry.title),
+            taken_by,
+        )
+        return None
+    return relay.device_id
 
 
 async def async_setup_entry(

@@ -285,3 +285,125 @@ async def test_thermostat_subentry_flow_two_steps(
     assert sub.subentry_type == SUBENTRY_TYPE_THERMOSTAT
     assert sub.data.get("temperature_sensor") == "sensor.temp_room"
     assert sub.data.get("target_switch") == "switch.room_heat"
+
+
+SWITCH_INPUT = {
+    "name": "Heating Switch",
+    "mode": ClimateMode.HEATING,
+    "power_entity": "sensor.power_test",
+    "min_power": 40.0,
+    "heating_action": {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.heat"},
+    },
+    "off_action": {
+        "action": "switch.turn_off",
+        "target": {"entity_id": "switch.heat"},
+    },
+}
+THERMOSTAT_INPUT = {
+    "name": "Room Thermostat",
+    "temperature_sensor": "sensor.temp_room",
+    "target_switch": "switch.room_heat",
+    "thermostat_mode": ClimateMode.HEATING,
+    "cold_tolerance": 0.3,
+    "hot_tolerance": 0.3,
+}
+
+
+async def _run_subentry_flow(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    subentry_type: str,
+    context: dict,
+    steps: list[dict],
+) -> dict:
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, subentry_type), context=context
+    )
+    for user_input in steps:
+        result = await hass.config_entries.subentries.async_configure(
+            result["flow_id"], user_input
+        )
+    return result
+
+
+async def _create_and_reconfigure_subentry(
+    hass: HomeAssistant, entry: MockConfigEntry, subentry_type: str, steps: list[dict]
+) -> dict:
+    """Create a subentry, then reconfigure it with the same input."""
+    await _run_subentry_flow(hass, entry, subentry_type, {"source": SOURCE_USER}, steps)
+    context = {
+        "source": SOURCE_RECONFIGURE,
+        "subentry_id": next(iter(entry.subentries)),
+    }
+    return await _run_subentry_flow(hass, entry, subentry_type, context, steps)
+
+
+async def test_reconfigure_entry_message_from_integration_translations(
+    hass: HomeAssistant,
+) -> None:
+    """Reconfigure success text comes from this integration (it has uk text)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_CAPACITY: 1,
+            CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
+            CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_CAPACITY: 2,
+            CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
+            CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
+        },
+    )
+
+    assert result["reason"] == "reconfigure_successful"
+    assert result.get("translation_domain") is None
+
+
+async def test_reconfigure_switch_subentry_message_from_integration_translations(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """Switch subentry reconfigure: success text from this integration."""
+    hass.states.async_set(
+        "sensor.power_test",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+
+    result = await _create_and_reconfigure_subentry(
+        hass, climate_entry, SUBENTRY_TYPE_SWITCH, [SWITCH_INPUT]
+    )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert result.get("translation_domain") is None
+
+
+async def test_reconfigure_thermostat_subentry_message_from_integration_translations(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """Thermostat subentry reconfigure: success text from this integration."""
+    hass.states.async_set(
+        "sensor.temp_room",
+        "20",
+        {"device_class": "temperature", "unit_of_measurement": "°C"},
+    )
+    hass.states.async_set("switch.room_heat", "off")
+
+    result = await _create_and_reconfigure_subentry(
+        hass, climate_entry, SUBENTRY_TYPE_THERMOSTAT, [THERMOSTAT_INPUT, {}]
+    )
+
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert result.get("translation_domain") is None

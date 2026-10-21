@@ -190,7 +190,9 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
             data[CONF_RECOVERY_TIMEOUT] = _dict_to_timedelta(
                 user_input.get(CONF_RECOVERY_TIMEOUT) or {},
             )
-            return self.async_update_and_abort(entry, data_updates=data)
+            return self.async_update_and_abort(
+                entry, data_updates=data, reason="reconfigure_successful"
+            )
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -306,6 +308,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     subentry,
                     data=data,
                     title=name,
+                    reason="reconfigure_successful",
                 )
 
         subentry = self._get_reconfigure_subentry() if self.source != "user" else None
@@ -598,6 +601,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 subentry,
                 data=self._options,
                 title=self._options.get(CONF_THERMOSTAT_NAME, subentry.title),
+                reason="reconfigure_successful",
             )
 
         preset_sel = selector.NumberSelector(
