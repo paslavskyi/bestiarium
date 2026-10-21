@@ -2,7 +2,7 @@
 Custom integration to simulate mock devices for Bestiarium testing.
 
 For more details about this integration, please refer to
-https://github.com/paslavsky/bestiarium
+https://github.com/paslavskyi/bestiarium
 """
 
 from __future__ import annotations
