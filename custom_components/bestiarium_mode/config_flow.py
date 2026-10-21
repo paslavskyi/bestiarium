@@ -155,6 +155,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_OPTIONS: self._options,
                     CONF_AC_LOAD_LIMITS: self._ac_load_limits,
                 },
+                reason="reconfigure_successful",
             )
 
         # Otherwise, create a new entry
