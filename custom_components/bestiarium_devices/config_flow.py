@@ -12,6 +12,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from homeassistant.core import HomeAssistant
 
 from .const import (
@@ -64,57 +66,42 @@ def own_entity_ids(hass: HomeAssistant) -> list[str]:
     ]
 
 
-def find_power_sensors_for_device(
-    hass: HomeAssistant,
-    device_id: str,
-) -> list[str]:
-    """Find power sensors for a device."""
-    entity_registry = er.async_get(hass)
-    power_sensors: list[str] = []
+def _candidate_entities(hass: HomeAssistant, domain: str) -> Iterator[er.RegistryEntry]:
+    """Yield registry entries of `domain` that may be a device's relay or sensor."""
+    return (
+        entity
+        for entity in er.async_get(hass).entities.values()
+        if entity.domain == domain and entity.platform != DOMAIN
+    )
 
-    for entity in entity_registry.entities.values():
-        if (
-            entity.domain == DOMAIN_SENSOR
-            and entity.device_id == device_id
-            and entity.platform != DOMAIN
-        ):
-            error = validate_power_sensor(hass, entity.entity_id)
-            if error is None:
-                power_sensors.append(entity.entity_id)
 
-    return power_sensors
+def find_power_sensors_for_device(hass: HomeAssistant, device_id: str) -> list[str]:
+    """Find valid power sensors of a device."""
+    return [
+        entity.entity_id
+        for entity in _candidate_entities(hass, DOMAIN_SENSOR)
+        if entity.device_id == device_id
+        and validate_power_sensor(hass, entity.entity_id) is None
+    ]
 
 
 def find_devices_with_switch(hass: HomeAssistant) -> list[str]:
     """Find device IDs that have switch entities."""
-    entity_registry = er.async_get(hass)
-    devices_with_switch: set[str] = set()
-
-    for entity in entity_registry.entities.values():
-        if (
-            entity.domain == DOMAIN_SWITCH
-            and entity.device_id
-            and entity.platform != DOMAIN
-        ):
-            devices_with_switch.add(entity.device_id)
-
-    # Convert to list of device IDs
-    return list(devices_with_switch)
+    return list(
+        {
+            entity.device_id
+            for entity in _candidate_entities(hass, DOMAIN_SWITCH)
+            if entity.device_id
+        }
+    )
 
 
-def find_switches_for_device(
-    hass: HomeAssistant,
-    device_id: str,
-) -> list[str]:
-    """Find switch entities for a device, filtering out disabled switches."""
-    entity_registry = er.async_get(hass)
+def find_switches_for_device(hass: HomeAssistant, device_id: str) -> list[str]:
+    """Find enabled switch entities of a device."""
     return [
         entity.entity_id
-        for entity in entity_registry.entities.values()
-        if entity.domain == DOMAIN_SWITCH
-        and entity.device_id == device_id
-        and entity.disabled_by is None
-        and entity.platform != DOMAIN
+        for entity in _candidate_entities(hass, DOMAIN_SWITCH)
+        if entity.device_id == device_id and entity.disabled_by is None
     ]
 
 
@@ -151,6 +138,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Bestiarium Devices."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
