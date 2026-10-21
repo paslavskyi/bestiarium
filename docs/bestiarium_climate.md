@@ -366,7 +366,7 @@ Coverage:
 - Switch subentry flow: user and reconfigure steps
 - Thermostat subentry flow: basic and presets steps
 - Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`
-- Abort reasons: `reconfigure_successful`
+- Abort reasons: `reconfigure_successful` — passed explicitly to `async_update_and_abort` in the entry and both subentry reconfigure flows. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet.
 - Entity names: `Capacity` (number entity)
 
 ---
