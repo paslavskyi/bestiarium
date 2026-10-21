@@ -46,11 +46,14 @@ from custom_components.bestiarium_devices.const import (
 from custom_components.bestiarium_devices.helpers import get_current_priority
 
 from .mode_entities import (
+    AC_LOAD_LIMITS,
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
     BINARY_SENSOR_GREEN,
     BINARY_SENSOR_OVERLOAD,
     BINARY_SENSOR_RED,
     BINARY_SENSOR_YELLOW,
+    GRID_POWER_SENSOR,
+    RED_SENSOR_ATTRIBUTES,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -64,7 +67,7 @@ def zone_binary_sensors(hass: HomeAssistant, mode_entities: None) -> None:  # no
     """Register zone binary sensors so coordinator can start (one must exist)."""
     hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
     hass.states.async_set(BINARY_SENSOR_YELLOW, STATE_OFF)
-    hass.states.async_set(BINARY_SENSOR_RED, STATE_OFF)
+    hass.states.async_set(BINARY_SENSOR_RED, STATE_OFF, RED_SENSOR_ATTRIBUTES)
     hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
 
@@ -76,7 +79,8 @@ def zone_green_on(hass: HomeAssistant, zone_binary_sensors: None) -> None:  # no
 
 @pytest.fixture
 def mode_select_entry(hass: HomeAssistant, mode_entities: None) -> MockConfigEntry:  # noqa: ARG001
-    """Create Bestiarium Mode config entry and set select entity state."""
+    """Create a Bestiarium Mode config entry; the grid draws nothing yet."""
+    hass.states.async_set(GRID_POWER_SENSOR, "0")
     entry = MockConfigEntry(
         domain=DOMAIN_BESTIARIUM_MODE,
         unique_id="bestiarium_mode",
@@ -85,6 +89,7 @@ def mode_select_entry(hass: HomeAssistant, mode_entities: None) -> MockConfigEnt
                 {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
                 {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
             ],
+            "ac_load_limits": AC_LOAD_LIMITS,
         },
     )
     entry.add_to_hass(hass)

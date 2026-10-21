@@ -42,8 +42,10 @@ from .helpers import (
     get_device_name_from_entry,
     get_mode_state,
     is_allowed,
+    load_and_red_threshold,
     mode_entity_id,
 )
+from .power_memory import PowerMemory, async_get_power_memory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -88,6 +90,8 @@ class BalancingCoordinator:
         # Flag to track if coordinator is running
         self._running: bool = False
 
+        self._power_memory: PowerMemory  # loaded by async_start
+
     @property
     def active_zone(self) -> ActiveZone:
         """Return the current active zone."""
@@ -106,6 +110,7 @@ class BalancingCoordinator:
 
         LOGGER.debug("Starting BalancingCoordinator")
         self._running = True
+        self._power_memory = await async_get_power_memory(self._hass)
 
         # Check if binary sensors exist before subscribing
         if not self._check_binary_sensors_exist():
@@ -447,13 +452,37 @@ class BalancingCoordinator:
                 },
             )
 
+    def _fits(self, entry: ConfigEntry) -> bool:
+        """
+        Return whether turning the device on keeps the load below the red zone.
+
+        Unknown load or threshold: it does not fit.
+        """
+        expected, source = self._power_memory.expected_power(entry)
+        name = get_device_name_from_entry(entry)
+        if (load_and_threshold := load_and_red_threshold(self._hass)) is None:
+            LOGGER.debug("%s does not fit: grid load or red threshold unknown", name)
+            return False
+        load, threshold = load_and_threshold
+        if load + expected > threshold:
+            LOGGER.debug(
+                "%s does not fit: %s W + %s W (%s) > %s W",
+                name,
+                load,
+                expected,
+                source,
+                threshold,
+            )
+            return False
+        return True
+
     async def async_allowed_changed(self, entry: ConfigEntry) -> None:
         """
         Apply a change of a device's 'Allowed' switch to its relay.
 
         Disallowed: turn the relay off in any zone. Allowed again: in the green
-        zone turn it on at once if the green strategy could; in other zones it
-        just waits for its turn.
+        zone turn it on at once if the green strategy could and it fits; else
+        it just waits for its turn.
         """
         switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
         state = self._hass.states.get(switch_entity_id)
@@ -471,6 +500,7 @@ class BalancingCoordinator:
             and state.state == STATE_OFF
             and priority != LOAD_PRIORITY_OFF
             and balancer_may_turn_on(entry)
+            and self._fits(entry)
         ):
             service, event = "turn_on", EVENT_DEVICE_TURNED_ON
         else:
@@ -491,15 +521,12 @@ class BalancingCoordinator:
         )
 
     async def _execute_green_strategy(self) -> None:
-        """Execute green strategy: turn on highest priority device that is OFF."""
+        """Execute green strategy: turn on the most important OFF device that fits."""
         entries = self._hass.config_entries.async_entries(DOMAIN)
 
-        # Build list of (priority, switch_entity_id, device_id, device_name)
-        candidates: list[tuple[int, str, str, str]] = []
+        candidates: list[tuple[int, ConfigEntry]] = []
 
         for entry in entries:
-            device_id = get_device_id_from_entry(entry)
-            device_name = get_device_name_from_entry(entry)
             switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
 
             if not switch_entity_id:
@@ -516,17 +543,25 @@ class BalancingCoordinator:
             if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
                 continue
 
-            candidates.append((priority, switch_entity_id, device_id, device_name))
+            candidates.append((priority, entry))
 
-        if not candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        fitting = next(
+            (
+                (priority, entry)
+                for priority, entry in candidates
+                if priority == LOAD_PRIORITY_ALWAYS_ON or self._fits(entry)
+            ),
+            None,
+        )
+        if fitting is None:
             LOGGER.debug("Green strategy: No devices to turn on")
             return
 
-        # Sort by priority descending (highest priority first)
-        candidates.sort(key=lambda x: x[0], reverse=True)
-
-        # Turn on the highest priority device
-        priority, switch_entity_id, device_id, device_name = candidates[0]
+        priority, entry = fitting
+        switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
+        device_id = get_device_id_from_entry(entry)
+        device_name = get_device_name_from_entry(entry)
         LOGGER.info(
             "Green strategy: Turning on device %s (%s) (priority %d)",
             device_name,

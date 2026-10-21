@@ -22,8 +22,12 @@ from .const import (
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
     LOAD_PRIORITY_MIN,
+    MODE_AC_LOAD_LIMITS,
+    MODE_AC_POWER_SENSOR,
+    MODE_RED_THRESHOLD,
     MODE_SELECT_UNIQUE_ID,
     UNIT_WATT,
+    ZONE_SENSOR_UNIQUE_ID,
 )
 
 if TYPE_CHECKING:
@@ -56,6 +60,37 @@ def get_mode_state(hass: HomeAssistant) -> State | None:
     """Return the state of the bestiarium_mode select entity."""
     entity_id = mode_entity_id(hass, "select", MODE_SELECT_UNIQUE_ID)
     return hass.states.get(entity_id) if entity_id else None
+
+
+def load_and_red_threshold(hass: HomeAssistant) -> tuple[float, float] | None:
+    """
+    Return the grid load and the red zone threshold, in W.
+
+    The load is the power sensor bestiarium_mode watches; the threshold is the
+    one its red zone sensor publishes. None if either cannot be read.
+    """
+    mode_entry = next(
+        iter(hass.config_entries.async_entries(DOMAIN_BESTIARIUM_MODE)), None
+    )
+    power_sensor = (
+        (mode_entry.data.get(MODE_AC_LOAD_LIMITS) or {}).get(MODE_AC_POWER_SENSOR)
+        if mode_entry
+        else None
+    )
+    red_sensor = mode_entity_id(
+        hass, "binary_sensor", ZONE_SENSOR_UNIQUE_ID.format(zone="red")
+    )
+    power_state = hass.states.get(power_sensor) if power_sensor else None
+    red_state = hass.states.get(red_sensor) if red_sensor else None
+    if power_state is None or red_state is None:
+        return None
+    try:
+        return (
+            float(power_state.state),
+            float(red_state.attributes[MODE_RED_THRESHOLD]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def validate_power_sensor(hass: HomeAssistant, entity_id: str) -> str | None:
