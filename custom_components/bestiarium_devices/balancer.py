@@ -392,7 +392,7 @@ class BalancingCoordinator:
                 )
                 continue
 
-            priority = get_current_priority(self._hass, device_id)
+            priority = get_current_priority(self._hass, entry)
 
             if priority == LOAD_PRIORITY_OFF:
                 LOGGER.debug(
@@ -460,7 +460,7 @@ class BalancingCoordinator:
         if state is None:
             return
         device_id = get_device_id_from_entry(entry)
-        priority = get_current_priority(self._hass, device_id)
+        priority = get_current_priority(self._hass, entry)
 
         if not is_allowed(entry):
             if state.state == STATE_OFF:
@@ -511,7 +511,7 @@ class BalancingCoordinator:
                 continue
 
             # Get current priority
-            priority = get_current_priority(self._hass, device_id)
+            priority = get_current_priority(self._hass, entry)
 
             if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
                 continue
@@ -578,7 +578,7 @@ class BalancingCoordinator:
                 continue
 
             # Get current priority
-            priority = get_current_priority(self._hass, device_id)
+            priority = get_current_priority(self._hass, entry)
 
             # ALWAYS_ON devices should NOT be turned off by red strategy
             if priority == LOAD_PRIORITY_ALWAYS_ON:
