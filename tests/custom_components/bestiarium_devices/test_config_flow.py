@@ -24,6 +24,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
+    CONF_THERMOSTAT_DRIVEN,
     DEVICE_TYPE_EXTENDED,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
@@ -1117,3 +1118,96 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
     assert updated_entry.data[CONF_POWER_SENSOR_ENTITY_ID] == power2.entity_id
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 6000  # noqa: PLR2004
     assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is True
+
+
+async def test_configure_priorities_stores_thermostat_driven(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Configure_priorities offers thermostat_driven (off by default) and stores it."""
+    hass.states.async_set("switch.floor", "off")
+    hass.states.async_set(
+        "sensor.floor", "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+        },
+    )
+    assert result["step_id"] == "configure_priorities"
+    field = next(
+        key for key in result["data_schema"].schema if key == CONF_THERMOSTAT_DRIVEN
+    )
+    assert field.default() is False
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+            CONF_THERMOSTAT_DRIVEN: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert hass.config_entries.async_entries(DOMAIN)[0].data[CONF_THERMOSTAT_DRIVEN]
+
+
+async def test_reconfigure_shows_and_updates_thermostat_driven(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Reconfigure defaults to the stored flag (off when missing) and saves it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+            CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 9000},
+            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY],
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set("switch.floor", "off")
+    hass.states.async_set(
+        "sensor.floor", "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+        },
+    )
+    assert result["step_id"] == "configure_priorities"
+    field = next(
+        key for key in result["data_schema"].schema if key == CONF_THERMOSTAT_DRIVEN
+    )
+    assert field.default() is False
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+            CONF_THERMOSTAT_DRIVEN: True,
+        },
+    )
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_THERMOSTAT_DRIVEN] is True
