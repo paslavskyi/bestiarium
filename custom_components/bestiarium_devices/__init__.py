@@ -9,27 +9,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from homeassistant.const import Platform  # noqa: TC002
-from homeassistant.helpers import device_registry as dr
+from homeassistant.const import Platform
 
 from .balancer import BalancingCoordinator
-from .const import (
-    CONF_DEVICE_NAME,
-    CONF_DEVICE_TYPE,
-    DEVICE_TYPE_VIRTUAL,
-    DOMAIN,
-    LOGGER,
-)
+from .const import DATA_COORDINATOR, DOMAIN, LOGGER
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers import device_registry as dr
 
     from .data import BestiariumDevicesConfigEntry
 
-PLATFORMS: list[Platform] = []
-
-# Key for storing the balancing coordinator in hass.data[DOMAIN]
-DATA_COORDINATOR = "balancing_coordinator"
+PLATFORMS: list[Platform] = [Platform.SWITCH]
 
 
 async def async_setup_entry(
@@ -50,19 +41,9 @@ async def async_setup_entry(
         await coordinator.async_start()
         hass.data[DOMAIN][DATA_COORDINATOR] = coordinator
 
-    # Virtual devices: ensure device registry entry exists (no platform entities)
-    if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_VIRTUAL:
-        device_registry = dr.async_get(hass)
-        device_registry.async_get_or_create(
-            config_entry_id=entry.entry_id,
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.data.get(CONF_DEVICE_NAME, "Bestiarium Device"),
-            manufacturer="Bestiarium",
-            model="Virtual Device",
-        )
-
+    # No update listener: the 'Allowed' switch updates the entry options at
+    # runtime without a reload; the reconfigure flow reloads explicitly.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
 
@@ -96,14 +77,6 @@ async def async_unload_entry(
             del hass.data[DOMAIN]
 
     return unload_ok
-
-
-async def async_reload_entry(
-    hass: HomeAssistant,
-    entry: BestiariumDevicesConfigEntry,
-) -> None:
-    """Reload config entry."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_config_entry_device(

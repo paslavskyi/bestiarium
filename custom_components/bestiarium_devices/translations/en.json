@@ -50,11 +50,13 @@
         "description": "Set load priorities for each mode. Per-mode priorities are optional and will use the default priority if not specified. 0 = always off, 9999 = always on.",
         "data": {
           "default_priority": "Default priority",
-          "overload_first_queue": "Turn off in first queue during overload"
+          "overload_first_queue": "Turn off in first queue during overload",
+          "thermostat_driven": "Switched on by its own thermostat"
         },
         "data_description": {
           "default_priority": "Default load priority (0-9999)",
-          "overload_first_queue": "When enabled, this device is turned off in the first wave when overload protection is activated; otherwise it is turned off only if overload persists after 5 seconds."
+          "overload_first_queue": "When enabled, this device is turned off in the first wave when overload protection is activated; otherwise it is turned off only if overload persists after 5 seconds.",
+          "thermostat_driven": "When enabled, the balancer never turns this device on; it only turns it off by priority (red zone, overload, a mode with priority 0). Its own thermostat turns it back on."
         }
       },
       "reconfigure": {
@@ -86,6 +88,14 @@
       },
       "mode_priority": {
         "name": "{mode_name} Load Priority"
+      }
+    },
+    "switch": {
+      "allowed": {
+        "name": "Allowed"
+      },
+      "allowed_standalone": {
+        "name": "{device_name} Allowed"
       }
     }
   }

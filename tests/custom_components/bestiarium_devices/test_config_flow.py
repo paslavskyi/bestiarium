@@ -24,6 +24,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
+    CONF_THERMOSTAT_DRIVEN,
     DEVICE_TYPE_EXTENDED,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
@@ -1117,3 +1118,235 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
     assert updated_entry.data[CONF_POWER_SENSOR_ENTITY_ID] == power2.entity_id
     assert updated_entry.data[CONF_LOAD_PRIORITIES][CONF_DEFAULT_PRIORITY] == 6000  # noqa: PLR2004
     assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is True
+
+
+async def test_configure_priorities_stores_thermostat_driven(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Configure_priorities offers thermostat_driven (off by default) and stores it."""
+    hass.states.async_set("switch.floor", "off")
+    hass.states.async_set(
+        "sensor.floor", "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+        },
+    )
+    assert result["step_id"] == "configure_priorities"
+    field = next(
+        key for key in result["data_schema"].schema if key == CONF_THERMOSTAT_DRIVEN
+    )
+    assert field.default() is False
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+            CONF_THERMOSTAT_DRIVEN: True,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert hass.config_entries.async_entries(DOMAIN)[0].data[CONF_THERMOSTAT_DRIVEN]
+
+
+async def test_reconfigure_shows_and_updates_thermostat_driven(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Reconfigure defaults to the stored flag (off when missing) and saves it."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+            CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 9000},
+            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY],
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set("switch.floor", "off")
+    hass.states.async_set(
+        "sensor.floor", "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Floor",
+            CONF_SWITCH_ENTITY_ID: "switch.floor",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.floor",
+        },
+    )
+    assert result["step_id"] == "configure_priorities"
+    field = next(
+        key for key in result["data_schema"].schema if key == CONF_THERMOSTAT_DRIVEN
+    )
+    assert field.default() is False
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 9000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+            CONF_THERMOSTAT_DRIVEN: True,
+        },
+    )
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.data[CONF_THERMOSTAT_DRIVEN] is True
+
+
+def _relay_device_with_allowed_entry(
+    hass: HomeAssistant,
+) -> tuple[str, MockConfigEntry]:
+    """Register a foreign device with one relay and power sensor, and its entry."""
+    shelly = MockConfigEntry(domain="shelly")
+    shelly.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=shelly.entry_id,
+        identifiers={("shelly", "floor")},
+        name="Heating floor",
+    )
+    entity_registry = er.async_get(hass)
+    relay = entity_registry.async_get_or_create(
+        "switch", "shelly", "floor_relay", config_entry=shelly, device_id=device.id
+    )
+    power = entity_registry.async_get_or_create(
+        "sensor", "shelly", "floor_power", config_entry=shelly, device_id=device.id
+    )
+    hass.states.async_set(relay.entity_id, "off")
+    hass.states.async_set(
+        power.entity_id, "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_EXTENDED,
+            CONF_DEVICE_ID: device.id,
+            CONF_DEVICE_NAME: "Heating floor",
+            CONF_SWITCH_ENTITY_ID: relay.entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: power.entity_id,
+            CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 9000},
+            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY],
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    return device.id, entry
+
+
+async def test_allowed_switch_is_not_a_relay_candidate_on_reconfigure(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """With 'Allowed' on the relay's device, reconfigure still goes to priorities."""
+    _, entry = _relay_device_with_allowed_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry.entry_id}_allowed"
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+
+    assert result["step_id"] == "configure_priorities"
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_allowed_switch_is_not_offered_when_extending_its_device(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """Extending a device that carries an 'Allowed' switch picks the relay only."""
+    device_id, entry = _relay_device_with_allowed_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    relay = entry.data[CONF_SWITCH_ENTITY_ID]
+    allowed = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry.entry_id}_allowed"
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "extend_device"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_DEVICE_ID: device_id}
+    )
+
+    assert result["step_id"] == "configure_priorities"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 5000, CONF_OVERLOAD_FIRST_QUEUE: False},
+    )
+    created = hass.config_entries.async_get_entry(result["result"].entry_id)
+    assert created.data[CONF_SWITCH_ENTITY_ID] == relay
+    assert created.data[CONF_SWITCH_ENTITY_ID] != allowed
+    await hass.config_entries.async_unload(created.entry_id)
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_virtual_device_relay_selector_excludes_allowed_switches(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """The relay selector of a virtual device hides 'Allowed' switches."""
+    _, entry = _relay_device_with_allowed_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    allowed = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry.entry_id}_allowed"
+    )
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+
+    relay_selector = result["data_schema"].schema[CONF_SWITCH_ENTITY_ID]
+    assert allowed in relay_selector.config["exclude_entities"]
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_reconfigure_abort_uses_integration_translation(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """The success message comes from this integration (it has uk text)."""
+    _, entry = _relay_device_with_allowed_entry(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 9000, CONF_OVERLOAD_FIRST_QUEUE: False},
+    )
+    await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert result.get("translation_domain") is None
+    await hass.config_entries.async_unload(entry.entry_id)

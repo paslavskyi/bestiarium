@@ -9,11 +9,13 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ALLOWED,
     CONF_DEFAULT_PRIORITY,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
+    CONF_THERMOSTAT_DRIVEN,
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
@@ -35,6 +37,20 @@ def mode_entity_id(hass: HomeAssistant, domain: str, unique_id: str) -> str | No
     return er.async_get(hass).async_get_entity_id(
         domain, DOMAIN_BESTIARIUM_MODE, unique_id
     )
+
+
+def is_allowed(entry: ConfigEntry) -> bool:
+    """Return the state of the device's 'Allowed' switch."""
+    return entry.options.get(CONF_ALLOWED, True)
+
+
+def balancer_may_turn_on(entry: ConfigEntry) -> bool:
+    """
+    Return whether the balancer may turn the device on.
+
+    Not when the family disallowed it, nor when its own thermostat turns it on.
+    """
+    return is_allowed(entry) and not entry.data.get(CONF_THERMOSTAT_DRIVEN, False)
 
 
 def get_mode_state(hass: HomeAssistant) -> State | None:

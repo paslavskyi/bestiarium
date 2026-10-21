@@ -36,10 +36,12 @@ from .const import (
     ZONE_SENSOR_UNIQUE_ID,
 )
 from .helpers import (
+    balancer_may_turn_on,
     get_current_priority,
     get_device_id_from_entry,
     get_device_name_from_entry,
     get_mode_state,
+    is_allowed,
     mode_entity_id,
 )
 
@@ -412,7 +414,7 @@ class BalancingCoordinator:
                         device_id,
                         err,
                     )
-            elif priority == LOAD_PRIORITY_ALWAYS_ON:
+            elif priority == LOAD_PRIORITY_ALWAYS_ON and balancer_may_turn_on(entry):
                 LOGGER.debug(
                     "Device %s (%s) has LOAD_PRIORITY_ALWAYS_ON, turning on",
                     device_name,
@@ -445,6 +447,49 @@ class BalancingCoordinator:
                 },
             )
 
+    async def async_allowed_changed(self, entry: ConfigEntry) -> None:
+        """
+        Apply a change of a device's 'Allowed' switch to its relay.
+
+        Disallowed: turn the relay off in any zone. Allowed again: in the green
+        zone turn it on at once if the green strategy could; in other zones it
+        just waits for its turn.
+        """
+        switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
+        state = self._hass.states.get(switch_entity_id)
+        if state is None:
+            return
+        device_id = get_device_id_from_entry(entry)
+        priority = get_current_priority(self._hass, device_id)
+
+        if not is_allowed(entry):
+            if state.state == STATE_OFF:
+                return
+            service, event = "turn_off", EVENT_DEVICE_TURNED_OFF
+        elif (
+            self._active_zone == ActiveZone.GREEN
+            and state.state == STATE_OFF
+            and priority != LOAD_PRIORITY_OFF
+            and balancer_may_turn_on(entry)
+        ):
+            service, event = "turn_on", EVENT_DEVICE_TURNED_ON
+        else:
+            return
+
+        await self._hass.services.async_call(
+            "switch", service, {"entity_id": switch_entity_id}
+        )
+        self._hass.bus.async_fire(
+            event,
+            {
+                "strategy": "allowed",
+                "device_id": device_id,
+                "device_name": get_device_name_from_entry(entry),
+                "switch_entity_id": switch_entity_id,
+                "priority": priority,
+            },
+        )
+
     async def _execute_green_strategy(self) -> None:
         """Execute green strategy: turn on highest priority device that is OFF."""
         entries = self._hass.config_entries.async_entries(DOMAIN)
@@ -468,7 +513,7 @@ class BalancingCoordinator:
             # Get current priority
             priority = get_current_priority(self._hass, device_id)
 
-            if priority == LOAD_PRIORITY_OFF:
+            if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
                 continue
 
             candidates.append((priority, switch_entity_id, device_id, device_name))
