@@ -55,6 +55,15 @@ def get_mode_names(hass: HomeAssistant) -> list[str]:
     return [opt["name"] for opt in get_bestiarium_modes(hass) if opt.get("name")]
 
 
+def own_entity_ids(hass: HomeAssistant) -> list[str]:
+    """Return this integration's entities (the 'Allowed' switches)."""
+    return [
+        entity.entity_id
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN
+    ]
+
+
 def find_power_sensors_for_device(
     hass: HomeAssistant,
     device_id: str,
@@ -64,7 +73,11 @@ def find_power_sensors_for_device(
     power_sensors: list[str] = []
 
     for entity in entity_registry.entities.values():
-        if entity.domain == DOMAIN_SENSOR and entity.device_id == device_id:
+        if (
+            entity.domain == DOMAIN_SENSOR
+            and entity.device_id == device_id
+            and entity.platform != DOMAIN
+        ):
             error = validate_power_sensor(hass, entity.entity_id)
             if error is None:
                 power_sensors.append(entity.entity_id)
@@ -78,7 +91,11 @@ def find_devices_with_switch(hass: HomeAssistant) -> list[str]:
     devices_with_switch: set[str] = set()
 
     for entity in entity_registry.entities.values():
-        if entity.domain == DOMAIN_SWITCH and entity.device_id:
+        if (
+            entity.domain == DOMAIN_SWITCH
+            and entity.device_id
+            and entity.platform != DOMAIN
+        ):
             devices_with_switch.add(entity.device_id)
 
     # Convert to list of device IDs
@@ -97,6 +114,7 @@ def find_switches_for_device(
         if entity.domain == DOMAIN_SWITCH
         and entity.device_id == device_id
         and entity.disabled_by is None
+        and entity.platform != DOMAIN
     ]
 
 
@@ -220,7 +238,10 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_SWITCH_ENTITY_ID,
                     default=self._switch_entity_id,
                 ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain=DOMAIN_SWITCH),
+                    selector.EntitySelectorConfig(
+                        domain=DOMAIN_SWITCH,
+                        exclude_entities=own_entity_ids(self.hass),
+                    ),
                 ),
                 vol.Required(
                     CONF_POWER_SENSOR_ENTITY_ID,
@@ -369,7 +390,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     default=self._switch_entity_id,
                 )
             ] = selector.EntitySelector(
-                selector.EntitySelectorConfig(domain=DOMAIN_SWITCH),
+                selector.EntitySelectorConfig(include_entities=self._switches),
             )
 
         if needs_sensor_selection:
@@ -379,10 +400,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     default=self._power_sensor_entity_id,
                 )
             ] = selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    domain=DOMAIN_SENSOR,
-                    device_class=DEVICE_CLASS_POWER,
-                ),
+                selector.EntitySelectorConfig(include_entities=self._power_sensors),
             )
 
         data_schema = vol.Schema(schema_dict)
@@ -463,6 +481,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates=self._build_config_entry_data(),
+                    reason="reconfigure_successful",
                 )
 
             # Create new entry
