@@ -82,12 +82,80 @@
     }
   },
   "entity": {
+    "button": {
+      "reset_power_memory": {
+        "name": "Скинути пам'ять споживання"
+      },
+      "reset_power_memory_standalone": {
+        "name": "{device_name} Скинути пам'ять споживання"
+      }
+    },
     "number": {
       "default_priority": {
         "name": "Пріоритет навантаження за замовчуванням"
       },
       "mode_priority": {
         "name": "Пріоритет навантаження {mode_name}"
+      },
+      "estimated_power": {
+        "name": "Орієнтовне споживання"
+      },
+      "estimated_power_standalone": {
+        "name": "{device_name} Орієнтовне споживання"
+      }
+    },
+    "sensor": {
+      "expected_power": {
+        "name": "Очікуване споживання",
+        "state_attributes": {
+          "estimate_source": {
+            "name": "Звідки оцінка",
+            "state": {
+              "memory": "Побачені запуски",
+              "history": "Імпортована історія",
+              "manual": "Орієнтовне споживання",
+              "large_device_default": "Ще нічого не відомо (великий прилад)"
+            }
+          },
+          "runs": {
+            "name": "Запуски"
+          },
+          "manual_power_w": {
+            "name": "Орієнтовне споживання"
+          },
+          "manual_power_note": {
+            "name": "Примітка",
+            "state": {
+              "counts_until_real_runs": "Орієнтовне споживання діє, доки не буде 3 справжніх запусків приладу"
+            }
+          }
+        }
+      },
+      "expected_power_standalone": {
+        "name": "{device_name} Очікуване споживання",
+        "state_attributes": {
+          "estimate_source": {
+            "name": "Звідки оцінка",
+            "state": {
+              "memory": "Побачені запуски",
+              "history": "Імпортована історія",
+              "manual": "Орієнтовне споживання",
+              "large_device_default": "Ще нічого не відомо (великий прилад)"
+            }
+          },
+          "runs": {
+            "name": "Запуски"
+          },
+          "manual_power_w": {
+            "name": "Орієнтовне споживання"
+          },
+          "manual_power_note": {
+            "name": "Примітка",
+            "state": {
+              "counts_until_real_runs": "Орієнтовне споживання діє, доки не буде 3 справжніх запусків приладу"
+            }
+          }
+        }
       }
     },
     "switch": {

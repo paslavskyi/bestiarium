@@ -20,6 +20,17 @@ CONF_THERMOSTAT_DRIVEN = "thermostat_driven"
 
 # Config entry options
 CONF_ALLOWED = "allowed"
+CONF_ESTIMATED_POWER = "estimated_power_w"  # 0 or missing = not set
+
+# Expected power of a device (learned from its runs)
+MIN_CONSUMING_POWER_W = 10  # below this a switched-on device is idle (standby)
+STABLE_POWER_SECONDS = 30  # a run's power is the highest level held this long
+POWER_MEMORY_SIZE = 10  # runs remembered per device
+REAL_RUNS_FOR_ESTIMATE = 3  # from this many real runs only they count
+LARGE_DEVICE_POWER_W = 2000  # expected power when nothing is known
+
+# Dispatcher signal: a device's expected power changed (format with entry_id)
+SIGNAL_EXPECTED_POWER_CHANGED = f"{DOMAIN}_expected_power_changed_{{}}"
 
 # Key for storing the balancing coordinator in hass.data[DOMAIN]
 DATA_COORDINATOR = "balancing_coordinator"
@@ -49,6 +60,11 @@ UNIT_WATT = "W"
 # naming and can be renamed by the user.
 MODE_SELECT_UNIQUE_ID = "select"
 ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
+
+# bestiarium_mode entry data and zone sensor attributes the balancer reads
+MODE_AC_LOAD_LIMITS = "ac_load_limits"
+MODE_AC_POWER_SENSOR = "ac_power_sensor"
+MODE_RED_THRESHOLD = "red_threshold"
 
 # Balancing strategy timing constants (in seconds)
 GREEN_INTERVAL_SECONDS = 60
