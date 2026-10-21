@@ -210,3 +210,38 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
         CONF_AC_RED_ZONE_PERCENT: 90,
         CONF_AC_OVERLOAD_RECOVERY_SECONDS: DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     }
+
+
+async def test_reconfigure_message_from_integration_translations(
+    hass: HomeAssistant,
+) -> None:
+    """Reconfigure success text comes from this integration (it has uk text)."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="bestiarium_mode",
+        data={"options": [{"name": "Eco", "icon": "mdi:leaf"}]},
+    )
+    entry.add_to_hass(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "configure_ac_load_limits"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_AC_POWER_SENSOR: "sensor.ac_power",
+            CONF_AC_LOAD_LIMIT_W: 3000,
+            CONF_AC_YELLOW_ZONE_PERCENT: 70,
+            CONF_AC_RED_ZONE_PERCENT: 85,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "complete"}
+    )
+    await hass.async_block_till_done()
+
+    assert result["reason"] == "reconfigure_successful"
+    assert result.get("translation_domain") is None
