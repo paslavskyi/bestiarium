@@ -79,7 +79,7 @@ action:
 
 ### `bestiarium_devices_device_turned_on`
 
-**When**: Green strategy turns on a device (restores power after load improved), or the device's "Allowed" switch is turned back on in the green zone.
+**When**: Green strategy turns on a device (restores power after load improved), or the device's "Allowed" switch is turned back on in the green zone. In both cases only if the device fits below the red zone threshold; the payload is unchanged.
 
 | Field              | Type   | Description                    |
 |--------------------|--------|--------------------------------|

@@ -1,6 +1,9 @@
 {
   "domain": "bestiarium_devices",
   "name": "Bestiarium Devices",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@paslavskyi"
   ],

@@ -82,12 +82,80 @@
     }
   },
   "entity": {
+    "button": {
+      "reset_power_memory": {
+        "name": "Reset power memory"
+      },
+      "reset_power_memory_standalone": {
+        "name": "{device_name} Reset power memory"
+      }
+    },
     "number": {
       "default_priority": {
         "name": "Default Load Priority"
       },
       "mode_priority": {
         "name": "{mode_name} Load Priority"
+      },
+      "estimated_power": {
+        "name": "Estimated power"
+      },
+      "estimated_power_standalone": {
+        "name": "{device_name} Estimated power"
+      }
+    },
+    "sensor": {
+      "expected_power": {
+        "name": "Expected power",
+        "state_attributes": {
+          "estimate_source": {
+            "name": "Based on",
+            "state": {
+              "memory": "Runs seen",
+              "history": "Imported history",
+              "manual": "Estimated power",
+              "large_device_default": "Nothing known yet (large device)"
+            }
+          },
+          "runs": {
+            "name": "Runs"
+          },
+          "manual_power_w": {
+            "name": "Estimated power"
+          },
+          "manual_power_note": {
+            "name": "Note",
+            "state": {
+              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
+            }
+          }
+        }
+      },
+      "expected_power_standalone": {
+        "name": "{device_name} Expected power",
+        "state_attributes": {
+          "estimate_source": {
+            "name": "Based on",
+            "state": {
+              "memory": "Runs seen",
+              "history": "Imported history",
+              "manual": "Estimated power",
+              "large_device_default": "Nothing known yet (large device)"
+            }
+          },
+          "runs": {
+            "name": "Runs"
+          },
+          "manual_power_w": {
+            "name": "Estimated power"
+          },
+          "manual_power_note": {
+            "name": "Note",
+            "state": {
+              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
+            }
+          }
+        }
       }
     },
     "switch": {

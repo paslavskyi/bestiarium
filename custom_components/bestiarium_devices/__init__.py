@@ -25,13 +25,25 @@ from .const import (
     LOGGER,
 )
 from .helpers import get_device_id_from_entry
+from .power_memory import (
+    async_get_power_memory,
+    async_import_history,
+    async_track_runs,
+)
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
     from .data import BestiariumDevicesConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
+
+RECORDER_DOMAIN = "recorder"
 
 
 async def async_migrate_entry(
@@ -101,6 +113,19 @@ async def async_setup_entry(
         await coordinator.async_start()
         hass.data[DOMAIN][DATA_COORDINATOR] = coordinator
 
+    memory = await async_get_power_memory(hass)
+    entry.async_on_unload(async_track_runs(hass, memory, entry))
+    # Without the recorder the import waits for a start that has one
+    if (
+        not memory.filled_from_history(entry.entry_id)
+        and RECORDER_DOMAIN in hass.config.components
+    ):
+        entry.async_create_background_task(
+            hass,
+            async_import_history(hass, memory, entry),
+            f"{DOMAIN} power history import {entry.entry_id}",
+        )
+
     # No update listener: the 'Allowed' switch updates the entry options at
     # runtime without a reload; the reconfigure flow reloads explicitly.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -137,6 +162,14 @@ async def async_unload_entry(
             del hass.data[DOMAIN]
 
     return unload_ok
+
+
+async def async_remove_entry(
+    hass: HomeAssistant,
+    entry: BestiariumDevicesConfigEntry,
+) -> None:
+    """Forget the power memory of a removed device."""
+    (await async_get_power_memory(hass)).remove(entry.entry_id)
 
 
 async def async_remove_config_entry_device(

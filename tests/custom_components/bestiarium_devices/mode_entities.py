@@ -10,6 +10,18 @@ BINARY_SENSOR_YELLOW = "binary_sensor.power_load_yellow"
 BINARY_SENSOR_RED = "binary_sensor.power_load_red"
 BINARY_SENSOR_OVERLOAD = "binary_sensor.power_load_overload"
 BESTIARIUM_MODE_SELECT_ENTITY_ID = "select.bestiarium_mode"
+GRID_POWER_SENSOR = "sensor.grid_power"
+
+# A bestiarium_mode entry watching GRID_POWER_SENSOR (data["ac_load_limits"])
+AC_LOAD_LIMITS = {
+    "ac_power_sensor": GRID_POWER_SENSOR,
+    "ac_load_limit_w": 5000,
+    "ac_yellow_zone_percent": 60,
+    "ac_red_zone_percent": 85,
+    "ac_overload_recovery_seconds": 30,
+}
+# The attributes the red zone sensor of that entry publishes
+RED_SENSOR_ATTRIBUTES = {"red_threshold": 4250}
 
 _UNIQUE_IDS = {
     BINARY_SENSOR_GREEN: "power_load_green",

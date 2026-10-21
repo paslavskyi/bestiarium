@@ -32,6 +32,7 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_EXTENDED,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
+    DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_TURNED_OFF,
     EVENT_DEVICE_TURNED_ON,
     GREEN_INTERVAL_SECONDS,
@@ -41,15 +42,18 @@ from custom_components.bestiarium_devices.const import (
 
 from .conftest import FakeRelays
 from .mode_entities import (
+    AC_LOAD_LIMITS,
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
     BINARY_SENSOR_GREEN,
     BINARY_SENSOR_OVERLOAD,
     BINARY_SENSOR_RED,
     BINARY_SENSOR_YELLOW,
+    GRID_POWER_SENSOR,
+    RED_SENSOR_ATTRIBUTES,
 )
 
 pytestmark = pytest.mark.usefixtures(
-    "enable_custom_integrations", "mode_entities", "unload_devices"
+    "enable_custom_integrations", "mode_entities", "grid", "unload_devices"
 )
 
 ZONE_SENSORS = {
@@ -63,7 +67,11 @@ PRIORITIES = {CONF_DEFAULT_PRIORITY: 500, "Always": LOAD_PRIORITY_ALWAYS_ON, "Of
 
 def _set_zone(hass: HomeAssistant, zone: str) -> None:
     for name, entity_id in ZONE_SENSORS.items():
-        hass.states.async_set(entity_id, STATE_ON if name == zone else STATE_OFF)
+        hass.states.async_set(
+            entity_id,
+            STATE_ON if name == zone else STATE_OFF,
+            RED_SENSOR_ATTRIBUTES if name == "red" else None,
+        )
 
 
 def _foreign_relay(
@@ -175,6 +183,15 @@ async def unload_devices(hass: HomeAssistant) -> AsyncIterator[None]:
     yield
     for entry in hass.config_entries.async_entries(DOMAIN):
         await hass.config_entries.async_remove(entry.entry_id)
+
+
+@pytest.fixture
+def grid(hass: HomeAssistant) -> None:
+    """Add a bestiarium_mode entry whose grid sensor leaves room for any device."""
+    hass.states.async_set(GRID_POWER_SENSOR, "0")
+    MockConfigEntry(
+        domain=DOMAIN_BESTIARIUM_MODE, data={"ac_load_limits": AC_LOAD_LIMITS}
+    ).add_to_hass(hass)
 
 
 @pytest.fixture
@@ -297,6 +314,23 @@ class TestAllowedSwitch:
 
         assert relays.is_on("switch.floor")
         assert [e.data["strategy"] for e in turned_on] == ["allowed"]
+
+    @pytest.mark.usefixtures("green_zone")
+    async def test_allow_in_green_waits_for_room(
+        self, hass: HomeAssistant, relays: FakeRelays
+    ) -> None:
+        """Re-allowing without room below the red zone waits for a green cycle."""
+        entry = await _setup_device(hass, relays, "switch.floor")
+        await _set_allowed(hass, entry, allowed=False)
+        # Nothing known about the floor: 2900 W + 2000 W > 4250 W
+        hass.states.async_set(GRID_POWER_SENSOR, "2900")
+
+        await _set_allowed(hass, entry, allowed=True)
+        assert not relays.is_on("switch.floor")
+
+        hass.states.async_set(GRID_POWER_SENSOR, "1000")
+        await _run_green_cycles(hass, cycles=1)
+        assert relays.is_on("switch.floor")
 
     @pytest.mark.usefixtures("green_zone")
     async def test_allow_in_green_respects_off_mode_priority(
