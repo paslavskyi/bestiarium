@@ -11,6 +11,7 @@ Core capabilities:
 3. **Balancing coordinator** — A singleton `BalancingCoordinator` reacts to power load zone changes and mode switches, executing zone-specific strategies to turn devices on/off based on their priorities.
 4. **"Allowed" switch** — One switch per device lets the family exclude it from balancing: off turns the relay off and the balancer never turns it on.
 5. **Thermostat-driven devices** — A device option for relays that their own thermostat turns on: the balancer only turns them off.
+6. **Headroom** — The balancer turns a device on only if the grid load plus the device's expected power stays at or below the red zone threshold. The expected power is learned from the device's runs (see [Expected Power](#expected-power-consumptionpy-power_memorypy)).
 
 Multiple config entries are allowed (one per device). The integration has a declared dependency on `bestiarium_mode`.
 
@@ -29,7 +30,13 @@ custom_components/bestiarium_devices/
 ├── config_flow.py       # Multi-step config flow (virtual + extended device creation)
 ├── helpers.py           # Priority resolution, validation, utility functions
 ├── balancer.py          # BalancingCoordinator — zone strategies and periodic jobs
+├── consumption.py       # Runs, stable power, memory eviction, estimate (no HA imports)
+├── power_memory.py      # PowerMemory (Store), live run tracking, recorder import
+├── entity.py            # BestiariumDeviceEntity — placement shared by all entities
 ├── switch.py            # AllowedSwitch — per-device "Allowed" switch
+├── sensor.py            # ExpectedPowerSensor — "Expected power"
+├── number.py            # EstimatedPowerNumber — "Estimated power"
+├── button.py            # ResetPowerMemoryButton — "Reset power memory"
 └── translations/
     ├── en.json           # English translations
     └── uk.json           # Ukrainian translations
@@ -39,6 +46,10 @@ tests/custom_components/bestiarium_devices/
 ├── test_config_flow.py
 ├── test_helpers.py
 ├── test_balancer.py
+├── test_consumption.py
+├── test_headroom.py
+├── test_power_entities.py
+├── test_power_memory.py
 ├── test_switch.py
 └── test_switch_split_device.py
 ```
@@ -48,10 +59,15 @@ tests/custom_components/bestiarium_devices/
 ## Platforms
 
 ```python
-PLATFORMS: list[Platform] = [Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.NUMBER,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 ```
 
-The only entity is the per-device "Allowed" switch. Relays are controlled via service calls to existing switch entities.
+Each device gets four entities: the "Allowed" switch and three power entities (see [Power Entities](#power-entities)). Relays are controlled via service calls to existing switch entities.
 
 ---
 
@@ -100,6 +116,7 @@ Each device gets its own config entry. The data shape depends on device type:
 ```python
 {
     "allowed": bool,   # State of the "Allowed" switch (missing = True)
+    "estimated_power_w": int,  # "Estimated power" number; 0 or missing = not set
 }
 ```
 
@@ -121,6 +138,7 @@ Options hold runtime state set by the family, not configuration. No migration wa
 | `CONF_OVERLOAD_FIRST_QUEUE` | `"overload_first_queue"` |
 | `CONF_THERMOSTAT_DRIVEN` | `"thermostat_driven"` |
 | `CONF_ALLOWED` (options) | `"allowed"` |
+| `CONF_ESTIMATED_POWER` (options) | `"estimated_power_w"` |
 | `CONF_DEFAULT_PRIORITY` | `"default"` |
 | `DEVICE_TYPE_VIRTUAL` | `"virtual"` |
 | `DEVICE_TYPE_EXTENDED` | `"extended"` |
@@ -162,7 +180,10 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 
 1. Initializes `hass.data[DOMAIN]` dict if needed
 2. Creates and starts a shared `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) — one coordinator for all device entries
-3. Forwards the `switch` platform (the "Allowed" switch; for virtual devices its device info creates the `identifiers={(DOMAIN, entry.entry_id)}` device)
+3. Starts tracking the device's runs (`async_track_runs`) and, if its memory was never filled and the recorder is loaded, imports its history in a background task (`async_import_history`)
+4. Forwards the platforms (for virtual devices the entities' device info creates the `identifiers={(DOMAIN, entry.entry_id)}` device)
+
+`async_remove_entry` drops the device's power memory. The manifest lists `recorder` in `after_dependencies`, so the recorder is set up before the device entries.
 
 There is **no update listener**: the "Allowed" switch updates the entry options at runtime without a reload; the reconfigure flow reloads explicitly with `async_update_reload_and_abort(..., reason="reconfigure_successful")` — the explicit reason makes HA show this integration's translated message instead of the core one (which has no Ukrainian text yet). Any future flow that changes the entry must reload explicitly too.
 
@@ -324,9 +345,23 @@ This relies only on the registry update event, so it works both with the HA 2026
 #### Green Strategy (`_execute_green_strategy`)
 
 - **Trigger**: Periodic, every 60 seconds
-- **Action**: Turn ON the **highest-priority OFF device** (one device per cycle)
-- **Skips**: Devices already ON, devices with priority `0` (OFF)
-- **Sorting**: Candidates sorted by priority descending
+- **Action**: Turn ON the **highest-priority OFF device that fits** (one device per cycle)
+- **Skips**: Devices already ON, devices with priority `0` (OFF), devices that do not fit (logged at debug: `X W + Y W (source) > Z W`)
+- **Sorting**: Candidates sorted by priority descending; the first one that fits is turned on, so a smaller, less important device can go before a large one
+- **ALWAYS_ON** (`9999`) candidates are turned on without the headroom check
+
+#### Headroom: `_fits(entry)`
+
+```
+fits = grid load + expected power of the device <= red zone threshold
+```
+
+- **Grid load** — the state of the power sensor `bestiarium_mode` watches (`ac_load_limits.ac_power_sensor` in the mode entry data).
+- **Red zone threshold** — the `red_threshold` attribute of the mode's red zone sensor, found by unique_id. It already follows the runtime load limit.
+- **Expected power** — `PowerMemory.expected_power(entry)`, see [Expected Power](#expected-power-consumptionpy-power_memorypy).
+- If the load or the threshold cannot be read, the device does **not** fit (debug log).
+
+Checked only where the balancer turns a device on by itself: the green strategy and "Allowed" turned back on in green. Not checked for mode priority `9999` and not for turning a device on by hand. Turning off is unchanged.
 
 #### Red Strategy (`_execute_red_strategy`)
 
@@ -352,7 +387,7 @@ Turning off is unchanged: red strategy, overload (both queues) and mode priority
 | Change | Green zone | Other zones / inactive balancer |
 |---|---|---|
 | Allowed → off | relay off now (if not off) | relay off now (if not off) |
-| Allowed → on | relay on now if it is off, its current mode priority is not `0` and it is not thermostat-driven | nothing; it waits for its turn in green |
+| Allowed → on | relay on now if it is off, its current mode priority is not `0`, it is not thermostat-driven and it fits; otherwise it waits for a green cycle | nothing; it waits for its turn in green |
 
 Both fire `bestiarium_devices_device_turned_off` / `_turned_on` with `strategy: "allowed"`. A relay without a state is left alone.
 
@@ -384,9 +419,60 @@ Both fire `bestiarium_devices_device_turned_off` / `_turned_on` with `strategy: 
 
 ---
 
+## Expected Power (`consumption.py`, `power_memory.py`)
+
+**A run** is a stretch where the device's relay is on **and** its power sensor reads at least `MIN_CONSUMING_POWER_W` (10 W): a boiler that is on but heated (0 W) or a socket in standby is not running. An unavailable power sensor ends a run.
+
+**The power of a run** is the highest level held for at least `STABLE_POWER_SECONDS` (30 s): the maximum, over all windows of at least 30 s, of the minimum power in the window. Power sensors report on change, so the power between two reports is taken as constant. Spikes shorter than 30 s do not count; a run shorter than 30 s is not remembered.
+
+`consumption.py` holds this logic without HA imports: `RunBuilder` (incremental, used live), `runs_from_states` (the same on recorded states), `stable_power`, `records_from_hourly_max`, `add_run`, `estimate`.
+
+**Memory** — `PowerMemory`, one `Store` at `.storage/bestiarium_devices.consumption`, keyed by entry_id:
+
+```json
+{ "<entry_id>": { "filled_from_history": true,
+                  "runs": [ { "start": "...", "duration_s": 312, "power_w": 2380, "source": "run" } ] } }
+```
+
+- `source`: `run` (seen live), `history` (rebuilt from the state history), `statistics` (from hourly long-term statistics). Imported records are a temporary hint.
+- Up to `POWER_MEMORY_SIZE` (10) records. A new run evicts the oldest imported record first, then the oldest real run. From `REAL_RUNS_FOR_ESTIMATE` (3) real runs on, imported records are dropped.
+- Saved with `async_delay_save` (10 s), not in the entry options: runs are frequent.
+- `async_get_power_memory(hass)` returns the loaded memory (an HA `singleton`), shared by the coordinator and the entities. Changes fire the dispatcher signal `SIGNAL_EXPECTED_POWER_CHANGED` for the entry.
+
+**Estimate** (`estimate(records, manual_w)`):
+
+| Real runs (`run`) | Expected power | `estimate_source` |
+|---|---|---|
+| ≥ 3 | max of the real runs | `memory` |
+| 1–2 | max of: estimated power (if set), imported records, real runs | `manual` / `history` / `memory`, whichever gave the max |
+| 0 | max of: estimated power (if set), imported records | `manual` / `history` |
+| nothing | `LARGE_DEVICE_POWER_W` (2000 W) | `large_device_default` |
+
+**Live tracking** — `async_track_runs` follows the relay and power sensor states; a finished run is added to the memory. A run going on during a restart is counted from the restart.
+
+**Import from the recorder** — on the first setup of an entry whose memory was never filled (`filled_from_history` not set), in a background task:
+
+1. State history of the relay and power sensor for the recorder's `keep_days` → runs with `source: history`, the last 10.
+2. With fewer than 3, hourly `max` statistics of the power sensor before the history window: consecutive hours with a max of at least 10 W make one record (`source: statistics`, power = the largest max). The newest ones fill up to 3 records in all.
+3. `filled_from_history = true`.
+
+Recorder errors are not caught: the import fails with an error in the log and runs again on the next start. Without the recorder loaded the import waits for a start that has it. The reset button keeps `filled_from_history = true`, so a reset is not undone by a new import.
+
+## Power Entities
+
+All entities of a device share `BestiariumDeviceEntity` (`entity.py`): `has_entity_name`, `unique_id = {entry_id}_{key}`, translation `key`, and the device placement described for the "Allowed" switch below (`{key}_standalone` with "{device_name} …" for a relay without a device).
+
+| Entity | Key | Category | What it does |
+|---|---|---|---|
+| sensor "Expected power" / «Очікуване споживання» | `expected_power` | diagnostic | state = expected power (W, `power`, `measurement`); attributes `estimate_source`, `runs` (start, duration_s, power_w, source), `manual_power_w`, `manual_power_note` (translated: the estimated power counts until 3 real runs) |
+| number "Estimated power" / «Орієнтовне споживання» | `estimated_power` | config | `entry.options["estimated_power_w"]`, 0–100000 W, step 10, box; 0 = not set |
+| button "Reset power memory" / «Скинути пам'ять споживання» | `reset_power_memory` | config | forgets the runs; history is not imported again |
+
+The sensor updates on `SIGNAL_EXPECTED_POWER_CHANGED`, which the memory and the number send. It does not use an entry update listener: HA expects those to reload the entry.
+
 ## "Allowed" Switch (`switch.py`)
 
-Class: `AllowedSwitch(SwitchEntity)` — one per config entry.
+Class: `AllowedSwitch(BestiariumDeviceEntity, SwitchEntity)` — one per config entry.
 
 | Property | Value |
 |---|---|
@@ -412,7 +498,8 @@ Translation keys cover:
 - Validation errors: `no_bestiarium_mode`, `no_switch`, `no_power_sensor`, `invalid_switch`, `invalid_power_sensor`, `name_required`, `required`
 - Abort reasons: `not_implemented`, `already_configured`, `no_bestiarium_mode`, `no_devices_with_switch`, `reconfigure_successful`
 - Config flow field `thermostat_driven` (label + description)
-- Entity names: `Allowed`, `{device_name} Allowed`, `Default Load Priority`, `{mode_name} Load Priority`
+- Entity names: `Allowed`, `Expected power`, `Estimated power`, `Reset power memory` (each also as `{device_name} …`), `Default Load Priority`, `{mode_name} Load Priority`
+- Attribute names and values of "Expected power": `estimate_source` (`memory`, `history`, `manual`, `large_device_default`), `runs`, `manual_power_w`, `manual_power_note`
 
 ---
 
@@ -447,13 +534,25 @@ Translation keys cover:
 - **bestiarium_mode entities by unique_id** (real `bestiarium_mode`): fresh install (`binary_sensor.overload`) runs the emergency shutdown, renamed red sensor still runs the red strategy, renaming the active zone sensor keeps the zone, renamed mode select drives priorities, no AC load limits → inactive + notification
 - **Zone transitions**: green 60s periodic job, red 5s periodic job, zone change stops old/starts new job, overload executes immediately
 
+### `test_consumption.py`
+- Stable power: short spike, steps, level held across changes, run under 30 s; runs from states (0 W, relay off, power drop, unavailable, standby); hourly grouping; eviction; the estimate table
+
+### `test_power_memory.py`
+- Store survives a restart, reset, manual value, signal, removal; live runs (40 s run, 0 W, unavailable); recorder import (`recorder_mock`): history runs, statistics up to 3 records, empty recorder, import once per entry, live runs kept
+
+### `test_headroom.py`
+- Real `bestiarium_mode` with a red threshold of 4250 W: 2900 + 2400 does not fit, a 300 W device below it turns on instead, 1500 + 2400 fits, unknown load turns nothing on, ALWAYS_ON is not limited
+
+### `test_power_entities.py`
+- Placement and categories, sensor attributes, number, reset button
+
 ---
 
 ## Design Notes & Gotchas
 
 1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload.
 
-2. **One entity per device**: The only entity is the "Allowed" switch. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
+2. **Entities per device**: the "Allowed" switch and the three power entities. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
 
 3. **Device ID semantics**: Virtual devices use `entry.entry_id` as their device ID (since they have no pre-existing HA device). Extended devices use the actual HA `device_id`. This distinction matters for priority lookups.
 

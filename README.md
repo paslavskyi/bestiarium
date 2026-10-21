@@ -20,6 +20,8 @@ Registers physical and virtual devices with **per-mode load priorities** and run
 
 - `switch` entity per device — "Allowed": off keeps the device off and out of balancing
 - Device option "switched on by its own thermostat" — the balancer only turns such devices off
+- Headroom: the balancer turns a device on only if the grid load plus the device's expected power stays below the red zone; the expected power is learned from the device's runs
+- `sensor` "Expected power", `number` "Estimated power" (used until 3 runs are seen), `button` "Reset power memory" per device
 
 ### bestiarium_climate
 
