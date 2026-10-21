@@ -2,10 +2,14 @@
   "domain": "bestiarium_devices",
   "name": "Bestiarium Devices",
   "codeowners": [
-    "@paslavsky"
+    "@paslavskyi"
   ],
   "config_flow": true,
-  "dependencies": ["bestiarium_mode"],
-  "documentation": "https://github.com/paslavsky/bestiarium",
+  "dependencies": [
+    "bestiarium_mode"
+  ],
+  "documentation": "https://github.com/paslavskyi/bestiarium",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/paslavskyi/bestiarium/issues",
   "version": "0.1.0"
 }

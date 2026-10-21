@@ -73,6 +73,10 @@ Detailed per-integration documentation (file structure, config schemas, entity s
 - [`docs/bestiarium_climate.md`](docs/bestiarium_climate.md)
 - [`docs/bestiarium_mock.md`](docs/bestiarium_mock.md)
 
+## Brand assets
+
+Each integration ships its icon and logo in `custom_components/<domain>/brand/` (Home Assistant 2026.3+ shows them; restart Home Assistant after updating). Source SVGs are in [`docs/brand/`](docs/brand/README.md).
+
 ## License
 
 [MIT](LICENSE)

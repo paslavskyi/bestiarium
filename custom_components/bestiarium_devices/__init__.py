@@ -2,7 +2,7 @@
 Custom integration to integrate Bestiarium Devices with Home Assistant.
 
 For more details about this integration, please refer to
-https://github.com/paslavsky/bestiarium
+https://github.com/paslavskyi/bestiarium
 """
 
 from __future__ import annotations
