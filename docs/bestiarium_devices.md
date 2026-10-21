@@ -164,7 +164,7 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 2. Creates and starts a shared `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) — one coordinator for all device entries
 3. Forwards the `switch` platform (the "Allowed" switch; for virtual devices its device info creates the `identifiers={(DOMAIN, entry.entry_id)}` device)
 
-There is **no update listener**: the "Allowed" switch updates the entry options at runtime without a reload; the reconfigure flow reloads explicitly with `async_update_reload_and_abort()`. Any future flow that changes the entry must reload explicitly too.
+There is **no update listener**: the "Allowed" switch updates the entry options at runtime without a reload; the reconfigure flow reloads explicitly with `async_update_reload_and_abort(..., reason="reconfigure_successful")` — the explicit reason makes HA show this integration's translated message instead of the core one (which has no Ukrainian text yet). Any future flow that changes the entry must reload explicitly too.
 
 ### Unload (`async_unload_entry`)
 
@@ -204,6 +204,8 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 4. If multiple of either → route through `select_entities`
 5. If no switch → error `"no_switch"`; no power sensor → error `"no_power_sensor"`
 
+Entities of this integration (the "Allowed" switches, which sit on the relay's device) are never relay or power-sensor candidates: the device lookups skip platform `bestiarium_devices`, `select_entities` offers only the device's own relays and sensors (`include_entities`), and the virtual-device relay selector excludes them (`exclude_entities`).
+
 ### Reconfigure Flow
 
 - **Virtual devices**: routes to `create_virtual` form (can change name, switch, sensor)
@@ -218,7 +220,8 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 | `get_mode_names(hass)` | Returns just the mode name strings |
 | `find_power_sensors_for_device(hass, device_id)` | Finds validated power sensors on a device |
 | `find_devices_with_switch(hass)` | Returns device IDs that have switch entities |
-| `find_switches_for_device(hass, device_id)` | Returns enabled switch entity IDs for a device |
+| `find_switches_for_device(hass, device_id)` | Returns enabled switch entity IDs for a device (not this integration's own) |
+| `own_entity_ids(hass)` | Returns this integration's entity IDs (the "Allowed" switches) |
 | `is_virtual_device(hass, device_id)` | Checks if device was created by this integration |
 | `find_config_entry_for_device(hass, device_id)` | Finds config entry for a virtual device |
 
