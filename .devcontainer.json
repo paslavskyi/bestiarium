@@ -37,6 +37,9 @@
         }
     },
     "remoteUser": "vscode",
+    "remoteEnv": {
+        "HA_TEST_ENV_TOKEN": "${localEnv:HA_TEST_ENV_TOKEN}"
+    },
     "features": {
         "ghcr.io/devcontainers-extra/features/apt-packages:1": {
             "packages": "ffmpeg,libturbojpeg0,libpcap-dev"

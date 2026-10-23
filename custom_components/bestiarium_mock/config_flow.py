@@ -6,13 +6,13 @@ from typing import Any
 
 from homeassistant import config_entries
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, LOGGER, MOCK_DEVICES, MOCK_THERMOMETERS
 
 
 class BestiariumMockFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Bestiarium Mock Devices."""
 
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(
         self,
@@ -35,6 +35,7 @@ class BestiariumMockFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=None,
             description_placeholders={
-                "device_count": "10",
+                "device_count": str(len(MOCK_DEVICES)),
+                "thermometer_count": str(len(MOCK_THERMOMETERS)),
             },
         )

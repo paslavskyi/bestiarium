@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from homeassistant.const import Platform
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -24,6 +25,7 @@ from .const import (
     DOMAIN,
     LOGGER,
 )
+from .control import async_get_response_memory
 from .helpers import get_device_id_from_entry
 from .power_memory import (
     async_get_power_memory,
@@ -32,16 +34,39 @@ from .power_memory import (
 )
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, HomeAssistant
+    from homeassistant.helpers.typing import ConfigType
 
     from .data import BestiariumDevicesConfigEntry
 
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
+    Platform.EVENT,
     Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001
+    """
+    Start the one balancing coordinator, shared by all device entries.
+
+    HA runs this once, before any entry is set up, so the entries cannot race
+    to start one each; it lives as long as HA does.
+    """
+    coordinator = BalancingCoordinator(hass)
+    hass.data[DOMAIN] = {DATA_COORDINATOR: coordinator}
+    await coordinator.async_start()
+
+    async def stop(_event: Event) -> None:
+        await coordinator.async_stop()
+
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, stop)
+    return True
+
 
 RECORDER_DOMAIN = "recorder"
 
@@ -101,17 +126,8 @@ async def async_setup_entry(
 ) -> bool:
     """Set up this integration using UI."""
     LOGGER.debug("Setting up Bestiarium Devices for entry %s", entry.entry_id)
-
-    # Initialize domain data storage if needed
-    hass.data.setdefault(DOMAIN, {})
-
-    # Start the balancing coordinator if not already running
-    # The coordinator is shared across all device entries
-    if DATA_COORDINATOR not in hass.data[DOMAIN]:
-        LOGGER.debug("Creating and starting BalancingCoordinator")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
-        hass.data[DOMAIN][DATA_COORDINATOR] = coordinator
+    coordinator: BalancingCoordinator = hass.data[DOMAIN][DATA_COORDINATOR]
+    entry.async_on_unload(coordinator.async_add_device(entry))
 
     memory = await async_get_power_memory(hass)
     entry.async_on_unload(async_track_runs(hass, memory, entry))
@@ -139,37 +155,16 @@ async def async_unload_entry(
 ) -> bool:
     """Handle removal of an entry."""
     LOGGER.debug("Unloading Bestiarium Devices entry %s", entry.entry_id)
-
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    # Check if this is the last entry being unloaded
-    # If so, stop the balancing coordinator
-    remaining_entries = [
-        e
-        for e in hass.config_entries.async_entries(DOMAIN)
-        if e.entry_id != entry.entry_id
-    ]
-
-    if not remaining_entries and DOMAIN in hass.data:
-        coordinator = hass.data[DOMAIN].get(DATA_COORDINATOR)
-        if coordinator:
-            LOGGER.debug("Stopping BalancingCoordinator (last entry unloaded)")
-            await coordinator.async_stop()
-            del hass.data[DOMAIN][DATA_COORDINATOR]
-
-        # Clean up domain data if empty
-        if not hass.data[DOMAIN]:
-            del hass.data[DOMAIN]
-
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
 
 async def async_remove_entry(
     hass: HomeAssistant,
     entry: BestiariumDevicesConfigEntry,
 ) -> None:
-    """Forget the power memory of a removed device."""
+    """Forget the power and response memory of a removed device."""
     (await async_get_power_memory(hass)).remove(entry.entry_id)
+    (await async_get_response_memory(hass)).remove(entry.entry_id)
 
 
 async def async_remove_config_entry_device(

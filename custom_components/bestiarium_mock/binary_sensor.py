@@ -10,7 +10,8 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import DOMAIN, LOGGER, MOCK_DEVICES, MOCK_GRID, MockDeviceSpec
+from .const import DOMAIN, LOGGER, MOCK_GRID
+from .entity import MockSocketEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -29,13 +30,10 @@ async def async_setup_entry(
     LOGGER.debug("Setting up mock device binary sensors")
 
     coordinator: MockDevicesCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[BinarySensorEntity] = []
-
-    # State sensor for each mock device
-    for device_spec in MOCK_DEVICES:
-        sensor = MockDeviceStateSensor(entry, device_spec)
-        coordinator.register_state_sensor(device_spec.device_id, sensor)
-        entities.append(sensor)
+    entities: list[BinarySensorEntity] = [
+        MockDeviceStateSensor(socket, "state")
+        for socket in coordinator.sockets.values()
+    ]
 
     # Grid alarm sensor
     alarm_sensor = MockGridAlarmSensor(entry)
@@ -45,36 +43,21 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class MockDeviceStateSensor(BinarySensorEntity):
-    """Binary sensor showing on/off state of a mock device."""
+class MockDeviceStateSensor(MockSocketEntity, BinarySensorEntity):
+    """
+    Whether the load of a mock socket draws power, whatever its switch shows.
 
-    _attr_has_entity_name = True
+    The tester's view of the truth: unlike the switch and the power sensor it
+    stays available during a dropout.
+    """
+
     _attr_translation_key = "state"
     _attr_device_class = BinarySensorDeviceClass.POWER
 
-    def __init__(
-        self,
-        entry: BestiariumMockConfigEntry,
-        device_spec: MockDeviceSpec,
-    ) -> None:
-        """Initialize the state sensor."""
-        super().__init__()
-        self._entry = entry
-        self._device_spec = device_spec
-        self._attr_is_on: bool = False
-
-        # Entity attributes
-        self._attr_unique_id = f"mock_{device_spec.device_id}_state"
-
-        # Device info - group under same device
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"mock_{device_spec.device_id}")},
-        )
-
-    def set_state(self, *, is_on: bool) -> None:
-        """Set the state (called by coordinator)."""
-        self._attr_is_on = is_on
-        self.async_write_ha_state()
+    @property
+    def is_on(self) -> bool:
+        """Return whether the load draws power; it stays known during a dropout."""
+        return self._socket.power > 0
 
 
 class MockGridAlarmSensor(BinarySensorEntity):

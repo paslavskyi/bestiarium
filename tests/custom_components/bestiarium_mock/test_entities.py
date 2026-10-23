@@ -1,343 +1,151 @@
-"""Tests for the Bestiarium Mock Devices entity platforms."""
+"""Tests for the Bestiarium Mock Devices entities."""
 
-# ruff: noqa: S101, PLR2004, PLC0415
+# ruff: noqa: S101
+
+from collections.abc import Callable
 
 import pytest
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import STATE_OFF, STATE_ON, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.bestiarium_mock.const import DOMAIN, MOCK_DEVICES
+from custom_components.bestiarium_mock.const import (
+    DOMAIN,
+    FAULT_PARAMS,
+    MOCK_DEVICES,
+    MOCK_GRID,
+    MOCK_THERMOMETERS,
+    FaultProfile,
+)
+from custom_components.bestiarium_mock.coordinator import MockDevicesCoordinator
 
-pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
+EntityId = Callable[[str, str], str]
+
+pytestmark = pytest.mark.usefixtures("stand")
 
 
-def _create_config_entry() -> MockConfigEntry:
-    """Create a mock config entry."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        unique_id=DOMAIN,
-        data={},
-    )
+def _category(hass: HomeAssistant, entity_id: str) -> EntityCategory | None:
+    return er.async_get(hass).async_get(entity_id).entity_category
 
 
-async def test_all_entities_created(hass: HomeAssistant) -> None:
-    """Test that all expected entities are created."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # For each device, check expected entities exist
-    for device_spec in MOCK_DEVICES:
-        device_id = device_spec.device_id
-
-        # Main switch
-        switch_id = entity_registry.async_get_entity_id(
-            "switch", DOMAIN, f"mock_{device_id}"
-        )
-        assert switch_id is not None, f"Switch for {device_id} not found"
-
-        # Mock enabled switch
-        mock_enabled_id = entity_registry.async_get_entity_id(
-            "switch", DOMAIN, f"mock_{device_id}_mock_enabled"
-        )
-        assert mock_enabled_id is not None, f"Mock enabled for {device_id} not found"
-
-        # Power sensor
-        power_id = entity_registry.async_get_entity_id(
-            "sensor", DOMAIN, f"mock_{device_id}_power"
-        )
-        assert power_id is not None, f"Power sensor for {device_id} not found"
-
-        # State sensor
-        state_id = entity_registry.async_get_entity_id(
-            "binary_sensor", DOMAIN, f"mock_{device_id}_state"
-        )
-        assert state_id is not None, f"State sensor for {device_id} not found"
-
-        # Number entity (only for variable power devices)
-        if device_spec.has_variable_power:
-            number_id = entity_registry.async_get_entity_id(
-                "number", DOMAIN, f"mock_{device_id}_mock_power"
+async def test_socket_entities(hass: HomeAssistant, entity_id: EntityId) -> None:
+    """A socket's switch, power and state have no category; its knobs are config."""
+    for spec in MOCK_DEVICES:
+        mock_id = f"mock_{spec.device_id}"
+        for domain, unique_id in (
+            ("switch", mock_id),
+            ("sensor", f"{mock_id}_power"),
+            ("binary_sensor", f"{mock_id}_state"),
+        ):
+            assert _category(hass, entity_id(domain, unique_id)) is None
+        knobs = [("select", f"{mock_id}_fault_profile")] + [
+            ("number", f"{mock_id}_{param.name}") for param in FAULT_PARAMS
+        ]
+        if spec.has_variable_power:
+            knobs.append(("number", f"{mock_id}_mock_power"))
+        for domain, unique_id in knobs:
+            assert (
+                _category(hass, entity_id(domain, unique_id)) is EntityCategory.CONFIG
             )
-            assert number_id is not None, f"Number for {device_id} not found"
-
-    # Grid entities
-    grid_power_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, "mock_grid_power"
-    )
-    assert grid_power_id is not None, "Grid power sensor not found"
-
-    grid_alarm_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "mock_grid_alarm"
-    )
-    assert grid_alarm_id is not None, "Grid alarm sensor not found"
 
 
-async def test_switch_initial_state_off(hass: HomeAssistant) -> None:
-    """Test that switches start in OFF state."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # Check boiler switch is off
-    switch_id = entity_registry.async_get_entity_id("switch", DOMAIN, "mock_boiler")
-    state = hass.states.get(switch_id)
-    assert state is not None
-    assert state.state == STATE_OFF
+async def test_no_mock_enabled_switch(hass: HomeAssistant) -> None:
+    """The fault profile replaced the 'Mock Enabled' switch."""
+    assert not [
+        entity
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN and entity.unique_id.endswith("_mock_enabled")
+    ]
 
 
-async def test_mock_enabled_initial_state_on(hass: HomeAssistant) -> None:
-    """Test that mock_enabled switches start in ON state (enabled by default)."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # Check boiler mock_enabled is on
-    mock_enabled_id = entity_registry.async_get_entity_id(
-        "switch", DOMAIN, "mock_boiler_mock_enabled"
-    )
-    state = hass.states.get(mock_enabled_id)
-    assert state is not None
-    assert state.state == STATE_ON
+async def test_thermometer_and_grid_entities(
+    hass: HomeAssistant, entity_id: EntityId
+) -> None:
+    """The thermometer knob is config; the measurements and grid are not."""
+    for spec in MOCK_THERMOMETERS:
+        temperature = entity_id("sensor", f"mock_{spec.device_id}_temperature")
+        knob = entity_id("number", f"mock_{spec.device_id}_mock_temperature")
+        assert _category(hass, temperature) is None
+        assert _category(hass, knob) is EntityCategory.CONFIG
+    assert _category(hass, entity_id("sensor", "mock_grid_power")) is None
+    assert _category(hass, entity_id("binary_sensor", "mock_grid_alarm")) is None
 
 
-async def test_power_sensor_initial_value_zero(hass: HomeAssistant) -> None:
-    """Test that power sensors start at 0."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # Check boiler power is 0
-    power_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, "mock_boiler_power"
-    )
-    state = hass.states.get(power_id)
-    assert state is not None
-    assert float(state.state) == 0
+async def test_initial_states(hass: HomeAssistant, entity_id: EntityId) -> None:
+    """Sockets start off, drawing nothing, with their scenario's profile."""
+    for spec in MOCK_DEVICES:
+        mock_id = f"mock_{spec.device_id}"
+        assert hass.states.get(entity_id("switch", mock_id)).state == STATE_OFF
+        assert hass.states.get(entity_id("sensor", f"{mock_id}_power")).state == "0"
+        profile = hass.states.get(entity_id("select", f"{mock_id}_fault_profile"))
+        assert profile.state == spec.profile
+    alarm = hass.states.get(entity_id("binary_sensor", "mock_grid_alarm"))
+    assert alarm.state == STATE_OFF
 
 
-async def test_state_sensor_initial_state_off(hass: HomeAssistant) -> None:
-    """Test that state sensors start in OFF state."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
+async def test_reliable_socket_turns_on_and_off(
+    hass: HomeAssistant, entity_id: EntityId, advance: Callable
+) -> None:
+    """A reliable socket follows its commands within a second."""
+    switch = entity_id("switch", "mock_boiler")
+    power = entity_id("sensor", "mock_boiler_power")
+    state = entity_id("binary_sensor", "mock_boiler_state")
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch})
+    await advance(1)
+    assert hass.states.get(switch).state == STATE_ON
+    assert hass.states.get(power).state == "2000"
+    assert hass.states.get(state).state == STATE_ON
 
-    entity_registry = er.async_get(hass)
-
-    # Check boiler state is off
-    state_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "mock_boiler_state"
-    )
-    state = hass.states.get(state_id)
-    assert state is not None
-    assert state.state == STATE_OFF
-
-
-async def test_number_entity_has_correct_range(hass: HomeAssistant) -> None:
-    """Test that number entities have correct min/max values."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # Check cooker number entity (400-4200W)
-    number_id = entity_registry.async_get_entity_id(
-        "number", DOMAIN, "mock_cooker_mock_power"
-    )
-    state = hass.states.get(number_id)
-    assert state is not None
-    assert state.attributes["min"] == 400
-    assert state.attributes["max"] == 4200
+    await hass.services.async_call("switch", "turn_off", {"entity_id": switch})
+    await advance(1)
+    assert hass.states.get(switch).state == STATE_OFF
+    assert hass.states.get(power).state == "0"
+    assert hass.states.get(state).state == STATE_OFF
 
 
-async def test_grid_alarm_initial_state_off(hass: HomeAssistant) -> None:
-    """Test that grid alarm starts in OFF state."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-
-    # Check grid alarm is off
-    alarm_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "mock_grid_alarm"
-    )
-    state = hass.states.get(alarm_id)
-    assert state is not None
-    assert state.state == STATE_OFF
-
-
-async def test_switch_turn_on_updates_power(hass: HomeAssistant) -> None:
-    """Test that turning on switch updates power sensor."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-    switch_id = entity_registry.async_get_entity_id("switch", DOMAIN, "mock_boiler")
-    power_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, "mock_boiler_power"
-    )
-
-    # Turn on the switch
+async def test_cooker_power_number(
+    hass: HomeAssistant, entity_id: EntityId, advance: Callable
+) -> None:
+    """The cooker's power knob sets what it draws when on."""
     await hass.services.async_call(
-        "switch",
-        "turn_on",
-        {"entity_id": switch_id},
+        "number",
+        "set_value",
+        {"entity_id": entity_id("number", "mock_cooker_mock_power"), "value": 3000},
         blocking=True,
     )
-    await hass.async_block_till_done()
-
-    # Power should now be 1800W (boiler spec)
-    state = hass.states.get(power_id)
-    assert float(state.state) == 1800
-
-
-async def test_switch_turn_off_sets_power_zero(hass: HomeAssistant) -> None:
-    """Test that turning off switch sets power to 0."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-    switch_id = entity_registry.async_get_entity_id("switch", DOMAIN, "mock_boiler")
-    power_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, "mock_boiler_power"
-    )
-
-    # Turn on then off
     await hass.services.async_call(
-        "switch", "turn_on", {"entity_id": switch_id}, blocking=True
+        "switch", "turn_on", {"entity_id": entity_id("switch", "mock_cooker")}
     )
-    await hass.async_block_till_done()
+    await advance(1)
 
-    await hass.services.async_call(
-        "switch", "turn_off", {"entity_id": switch_id}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-    # Power should be 0
-    state = hass.states.get(power_id)
-    assert float(state.state) == 0
+    power = hass.states.get(entity_id("sensor", "mock_cooker_power"))
+    assert float(power.state) == 3000  # noqa: PLR2004
 
 
-async def test_mock_disabled_sets_power_zero(hass: HomeAssistant) -> None:
-    """Test that disabling mock behavior sets power to 0."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
+async def test_names_are_translated() -> None:
+    """Every device, profile and fault parameter has a name in both languages."""
+    import json  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
 
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    import custom_components.bestiarium_mock as mock  # noqa: PLC0415
 
-    entity_registry = er.async_get(hass)
-    switch_id = entity_registry.async_get_entity_id("switch", DOMAIN, "mock_boiler")
-    mock_enabled_id = entity_registry.async_get_entity_id(
-        "switch", DOMAIN, "mock_boiler_mock_enabled"
-    )
-    power_id = entity_registry.async_get_entity_id(
-        "sensor", DOMAIN, "mock_boiler_power"
-    )
-
-    # Turn on switch
-    await hass.services.async_call(
-        "switch", "turn_on", {"entity_id": switch_id}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-    # Verify power is on
-    assert float(hass.states.get(power_id).state) == 1800
-
-    # Disable mock behavior
-    await hass.services.async_call(
-        "switch", "turn_off", {"entity_id": mock_enabled_id}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-    # Power should be 0
-    assert float(hass.states.get(power_id).state) == 0
+    for language in ("en", "uk"):
+        translations = json.loads(
+            (
+                Path(mock.__file__).parent / "translations" / f"{language}.json"
+            ).read_text(encoding="utf-8")
+        )
+        states = translations["entity"]["select"]["fault_profile"]["state"]
+        assert set(states) == set(FaultProfile)
+        assert set(translations["entity"]["number"]) >= {p.name for p in FAULT_PARAMS}
+        assert set(translations["device"]) == {
+            spec.device_id for spec in (*MOCK_DEVICES, *MOCK_THERMOMETERS, MOCK_GRID)
+        }
 
 
-async def test_state_sensor_reflects_power(hass: HomeAssistant) -> None:
-    """Test that state sensor reflects whether device has power."""
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-    switch_id = entity_registry.async_get_entity_id("switch", DOMAIN, "mock_boiler")
-    state_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "mock_boiler_state"
-    )
-
-    # Initially off
-    assert hass.states.get(state_id).state == STATE_OFF
-
-    # Turn on switch
-    await hass.services.async_call(
-        "switch", "turn_on", {"entity_id": switch_id}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-    # State should be on
-    assert hass.states.get(state_id).state == STATE_ON
-
-    # Turn off switch
-    await hass.services.async_call(
-        "switch", "turn_off", {"entity_id": switch_id}, blocking=True
-    )
-    await hass.async_block_till_done()
-
-    # State should be off
-    assert hass.states.get(state_id).state == STATE_OFF
-
-
-async def test_unload_entry(hass: HomeAssistant) -> None:
-    """Test that unloading entry works correctly."""
-    from homeassistant.config_entries import ConfigEntryState
-
-    entry = _create_config_entry()
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    # Verify loaded
-    assert entry.state == ConfigEntryState.LOADED
-
-    # Unload
-    assert await hass.config_entries.async_unload(entry.entry_id)
-    await hass.async_block_till_done()
-
-    # Verify unloaded (not removed, just unloaded)
-    assert entry.state == ConfigEntryState.NOT_LOADED
+async def test_unload_entry(hass: HomeAssistant, stand: MockDevicesCoordinator) -> None:
+    """Unloading stops the stand."""
+    assert await hass.config_entries.async_unload(stand.entry.entry_id)
+    assert stand.entry.state is ConfigEntryState.NOT_LOADED

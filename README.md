@@ -21,6 +21,7 @@ Registers physical and virtual devices with **per-mode load priorities** and run
 - `switch` entity per device — "Allowed": off keeps the device off and out of balancing
 - Device option "switched on by its own thermostat" — the balancer only turns such devices off
 - Headroom: the balancer turns a device on only if the grid load plus the device's expected power stays below the red zone; the expected power is learned from the device's runs
+- Device control: the balancer waits for each device's own response time, defers a device that does not respond so the queue goes on, and shows confirmed problems as a diagnostic "Control state" sensor and "Control events" entity; the thresholds are the device's options
 - `sensor` "Expected power", `number` "Estimated power" (used until 3 runs are seen), `button` "Reset power memory" per device
 
 ### bestiarium_climate
@@ -36,7 +37,7 @@ Depends on `bestiarium_mode`.
 
 ### bestiarium_mock
 
-Standalone test harness that simulates **13 smart-socket devices**, **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required.
+Standalone test stand that simulates **12 smart sockets** (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
 
 ## Installation
 
@@ -65,6 +66,10 @@ pip install -r requirements.txt
 # Run tests
 pytest tests/
 ```
+
+### Concepts
+
+Every change follows the Bestiarium concepts in [`docs/concepts/`](docs/concepts/README.md): [problem reporting](docs/concepts/problem-reporting.md), [settings vs entities](docs/concepts/settings-vs-entities.md) and [stability and adaptation](docs/concepts/stability.md). The skill [`.claude/skills/bestiarium-concepts`](.claude/skills/bestiarium-concepts/SKILL.md) routes a change to them and holds the pre-commit checklist.
 
 ### Knowledge base
 

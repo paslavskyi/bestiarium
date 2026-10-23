@@ -1,4 +1,4 @@
-"""Sensor platform for bestiarium_devices: the device's expected power."""
+"""Sensor platform for bestiarium_devices: expected power and control state."""
 
 from __future__ import annotations
 
@@ -12,7 +12,14 @@ from homeassistant.components.sensor import (
 from homeassistant.const import EntityCategory, UnitOfPower
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import CONF_ESTIMATED_POWER, SIGNAL_EXPECTED_POWER_CHANGED
+from .const import (
+    CONF_ESTIMATED_POWER,
+    DATA_COORDINATOR,
+    DOMAIN,
+    SIGNAL_CONTROL_CHANGED,
+    SIGNAL_EXPECTED_POWER_CHANGED,
+)
+from .control import ControlState
 from .entity import BestiariumDeviceEntity
 from .power_memory import PowerMemory, async_get_power_memory
 
@@ -20,6 +27,7 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+    from .control import DeviceControl
     from .data import BestiariumDevicesConfigEntry
 
 # Translated attribute value explaining when the manual value stops counting
@@ -31,9 +39,15 @@ async def async_setup_entry(
     entry: BestiariumDevicesConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the expected power sensor of a device entry."""
+    """Set up the expected power and control state sensors of a device entry."""
     memory = await async_get_power_memory(hass)
-    async_add_entities([ExpectedPowerSensor(hass, entry, memory)])
+    control = hass.data[DOMAIN][DATA_COORDINATOR].control(entry)
+    async_add_entities(
+        [
+            ExpectedPowerSensor(hass, entry, memory),
+            ControlStateSensor(hass, entry, control),
+        ]
+    )
 
 
 class ExpectedPowerSensor(BestiariumDeviceEntity, SensorEntity):
@@ -82,3 +96,61 @@ class ExpectedPowerSensor(BestiariumDeviceEntity, SensorEntity):
             "manual_power_w": self._entry.options.get(CONF_ESTIMATED_POWER) or None,
             "manual_power_note": MANUAL_POWER_NOTE,
         }
+
+
+class ControlStateSensor(BestiariumDeviceEntity, SensorEntity):
+    """
+    Whether the balancer can control the device, or the problem that stops it.
+
+    A lasting problem is a state (docs/concepts/problem-reporting.md); the
+    details change often and stay out of the history.
+    """
+
+    _key = "control_state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _unrecorded_attributes = frozenset(
+        {
+            "direction",
+            "failed_attempts",
+            "last_attempt",
+            "next_attempt",
+            "response_time",
+            "dropouts_last_hour",
+        }
+    )
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: BestiariumDevicesConfigEntry,
+        control: DeviceControl,
+    ) -> None:
+        """Show the device's control state."""
+        super().__init__(hass, entry)
+        self._control = control
+
+    async def async_added_to_hass(self) -> None:
+        """Update on every change of the control state or its details."""
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_CONTROL_CHANGED.format(self._entry.entry_id),
+                self.async_write_ha_state,
+            )
+        )
+
+    @property
+    def options(self) -> list[str]:
+        """Return the control states."""
+        return [state.value for state in ControlState]
+
+    @property
+    def native_value(self) -> str:
+        """Return the control state."""
+        return self._control.state
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the details of the control state."""
+        return self._control.attributes

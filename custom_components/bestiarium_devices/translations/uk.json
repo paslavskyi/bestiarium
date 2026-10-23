@@ -156,6 +156,74 @@
             }
           }
         }
+      },
+      "control_state": {
+        "name": "Стан керування",
+        "state": {
+          "normal": "Норма",
+          "switch_unavailable": "Вимикач недоступний",
+          "unresponsive": "Не відгукується",
+          "unstable": "Нестабільний зв'язок",
+          "no_power_data": "Немає даних потужності"
+        },
+        "state_attributes": {
+          "failed_attempts": {
+            "name": "Невдалих спроб"
+          },
+          "last_attempt": {
+            "name": "Остання спроба"
+          },
+          "next_attempt": {
+            "name": "Наступна спроба"
+          },
+          "response_time": {
+            "name": "Час відповіді"
+          },
+          "dropouts_last_hour": {
+            "name": "Зникнень за останню годину"
+          },
+          "direction": {
+            "name": "Команда",
+            "state": {
+              "turn_on": "Увімкнути",
+              "turn_off": "Вимкнути"
+            }
+          }
+        }
+      },
+      "control_state_standalone": {
+        "name": "{device_name} Стан керування",
+        "state": {
+          "normal": "Норма",
+          "switch_unavailable": "Вимикач недоступний",
+          "unresponsive": "Не відгукується",
+          "unstable": "Нестабільний зв'язок",
+          "no_power_data": "Немає даних потужності"
+        },
+        "state_attributes": {
+          "failed_attempts": {
+            "name": "Невдалих спроб"
+          },
+          "last_attempt": {
+            "name": "Остання спроба"
+          },
+          "next_attempt": {
+            "name": "Наступна спроба"
+          },
+          "response_time": {
+            "name": "Час відповіді"
+          },
+          "dropouts_last_hour": {
+            "name": "Зникнень за останню годину"
+          },
+          "direction": {
+            "name": "Команда",
+            "state": {
+              "turn_on": "Увімкнути",
+              "turn_off": "Вимкнути"
+            }
+          }
+        }
       }
     },
     "switch": {
@@ -164,6 +232,97 @@
       },
       "allowed_standalone": {
         "name": "{device_name} Дозволено"
+      }
+    },
+    "event": {
+      "control_events": {
+        "name": "Події керування",
+        "state_attributes": {
+          "event_type": {
+            "name": "Тип події",
+            "state": {
+              "deferred": "Відклав",
+              "retrying": "Пробую відновити зв'язок",
+              "recovered": "Відновився"
+            }
+          },
+          "direction": {
+            "name": "Команда",
+            "state": {
+              "turn_on": "Увімкнути",
+              "turn_off": "Вимкнути"
+            }
+          },
+          "failed_attempts": {
+            "name": "Невдалих спроб"
+          },
+          "next_attempt": {
+            "name": "Наступна спроба"
+          }
+        }
+      },
+      "control_events_standalone": {
+        "name": "{device_name} Події керування",
+        "state_attributes": {
+          "event_type": {
+            "name": "Тип події",
+            "state": {
+              "deferred": "Відклав",
+              "retrying": "Пробую відновити зв'язок",
+              "recovered": "Відновився"
+            }
+          },
+          "direction": {
+            "name": "Команда",
+            "state": {
+              "turn_on": "Увімкнути",
+              "turn_off": "Вимкнути"
+            }
+          },
+          "failed_attempts": {
+            "name": "Невдалих спроб"
+          },
+          "next_attempt": {
+            "name": "Наступна спроба"
+          }
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Керування балансувальником",
+        "description": "Як балансувальник керує цим приладом. Зміни діють одразу.",
+        "data": {
+          "attempts": "Спроб до відкладення",
+          "defer_minutes": "Відкладення, хв",
+          "tolerance_seconds": "Поріг входу (терпимість), с",
+          "hysteresis_seconds": "Поріг виходу (гістерезис), с",
+          "unstable_dropouts_per_hour": "Зникнень за годину для «Нестабільний зв'язок»"
+        },
+        "data_description": {
+          "attempts": "Стільки невдалих команд поспіль — і балансувальник відкладає прилад та береться за наступний",
+          "defer_minutes": "Скільки прилад, що не відгукується, чекає до нової спроби",
+          "tolerance_seconds": "Вимикач чи датчик потужності, що зник на менший час, — коротке зникнення, не проблема",
+          "hysteresis_seconds": "Проблема закінчується лише після стількох секунд роботи без зникнень",
+          "unstable_dropouts_per_hour": "Стільки коротких зникнень за годину роблять зв'язок нестабільним"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Розширені",
+            "data": {
+              "default_response_seconds": "Час відповіді нового приладу, с",
+              "response_margin": "Запас до часу відповіді",
+              "red_max_wait_seconds": "Межа очікування в червоній зоні, с"
+            },
+            "data_description": {
+              "default_response_seconds": "Діє, доки прилад не відповів на команди; далі — його власний час відповіді",
+              "response_margin": "Спроба невдала лише після найдовшого часу відповіді приладу, помноженого на це",
+              "red_max_wait_seconds": "У червоній зоні балансувальник чекає на прилад щонайбільше стільки, перш ніж вимкнути наступний"
+            }
+          }
+        }
       }
     }
   }

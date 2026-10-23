@@ -50,7 +50,7 @@ The values and the relay entity above are examples of a user's automation; Besti
 
 ## bestiarium_devices Events
 
-All events are fired from `custom_components/bestiarium_devices/balancer.py`.
+All events are fired from `custom_components/bestiarium_devices/balancer.py`. Their payloads are a contract: each has a `TypedDict` in `const.py` (`EVENT_DATA` maps an event to it), the logbook descriptions are typed with them, and the balancer tests check every fired payload against them.
 
 ### `bestiarium_devices_zone_changed`
 
@@ -230,6 +230,20 @@ action:
   - service: logbook.log
     data:
       message: "Mode {{ trigger.event.data.mode }} applied"
+```
+
+---
+
+### Device control events (event entities)
+
+Next to these bus events, each device has a "Control events" event entity (`event.<device>_control_events`, diagnostic) with the event types `deferred`, `retrying` and `recovered` and the attributes `direction`, `failed_attempts`, `next_attempt` — see [Device Control](bestiarium_devices.md#device-control-controlpy). Automations trigger on its state:
+
+```yaml
+trigger:
+  - platform: state
+    entity_id: event.rozetka_za_komodom_control_events
+    attribute: event_type
+    to: deferred
 ```
 
 ---

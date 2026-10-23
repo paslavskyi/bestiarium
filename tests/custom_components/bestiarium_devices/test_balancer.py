@@ -27,10 +27,12 @@ from custom_components.bestiarium_devices.const import (
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
     CONF_OVERLOAD_FIRST_QUEUE,
+    CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
+    EVENT_DATA,
     EVENT_DEVICE_TURNED_OFF,
     EVENT_DEVICE_TURNED_ON,
     EVENT_MODE_APPLIED,
@@ -45,6 +47,7 @@ from custom_components.bestiarium_devices.const import (
 )
 from custom_components.bestiarium_devices.helpers import get_current_priority
 
+from .conftest import started_coordinator
 from .mode_entities import (
     AC_LOAD_LIMITS,
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
@@ -105,6 +108,7 @@ def bestiarium_devices_entry(hass: HomeAssistant) -> MockConfigEntry:
             CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
             CONF_DEVICE_NAME: "Test Device",
             CONF_SWITCH_ENTITY_ID: "switch.test_device",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_device_power",
             CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
         },
     )
@@ -137,8 +141,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         zone_green_on: None,  # noqa: ARG002
     ) -> None:
         """Test coordinator detects green zone when green sensor is ON."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.active_zone == ActiveZone.GREEN
         finally:
@@ -150,8 +153,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         zone_binary_sensors: None,  # noqa: ARG002
     ) -> None:
         """Test starting coordinator twice does not duplicate subscriptions."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         await coordinator.async_start()  # Second start should return early
         assert coordinator.is_running
         await coordinator.async_stop()
@@ -170,8 +172,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         hass: HomeAssistant,
     ) -> None:
         """Coordinator still running when sensors missing (no subscriptions)."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
             assert coordinator.active_zone == ActiveZone.NONE
@@ -196,6 +197,7 @@ class TestModeChangeHandling:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Device",
                 CONF_SWITCH_ENTITY_ID: "switch.off_device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_device_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -204,8 +206,7 @@ class TestModeChangeHandling:
         )
         entry.add_to_hass(hass)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -234,6 +235,7 @@ class TestModeChangeHandling:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On Device",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on_device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_device_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -242,8 +244,7 @@ class TestModeChangeHandling:
         )
         entry.add_to_hass(hass)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -277,6 +278,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 3000},
             },
         )
@@ -289,14 +291,14 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "High",
                 CONF_SWITCH_ENTITY_ID: "switch.high",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.high_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 7000},
             },
         )
         entry_high.add_to_hass(hass)
         hass.states.async_set("switch.high", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -325,14 +327,14 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Already On",
                 CONF_SWITCH_ENTITY_ID: "switch.already_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.already_on_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.already_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -361,6 +363,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.off_priority",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_priority_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -376,6 +379,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.always_priority",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_priority_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -385,8 +389,7 @@ class TestGreenStrategy:
         entry_always.add_to_hass(hass)
         hass.states.async_set("switch.always_priority", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -419,6 +422,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "High",
                 CONF_SWITCH_ENTITY_ID: "switch.high",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.high_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 7000},
             },
         )
@@ -430,14 +434,14 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 3000},
             },
         )
         entry_low.add_to_hass(hass)
         hass.states.async_set("switch.low", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -466,14 +470,14 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Already Off",
                 CONF_SWITCH_ENTITY_ID: "switch.already_off",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.already_off_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.already_off", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -501,6 +505,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -510,8 +515,7 @@ class TestRedStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -543,6 +547,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Normal",
                 CONF_SWITCH_ENTITY_ID: "switch.normal",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.normal_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -554,6 +559,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -563,8 +569,7 @@ class TestOverloadStrategy:
         entry_always.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -595,6 +600,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -604,8 +610,7 @@ class TestOverloadStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -647,6 +652,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First Queue",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -659,6 +665,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second Queue",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -666,8 +673,7 @@ class TestOverloadTwoStepStrategy:
         entry_second.add_to_hass(hass)
         hass.states.async_set("switch.second", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -703,6 +709,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -715,6 +722,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -731,8 +739,7 @@ class TestOverloadTwoStepStrategy:
                 if entity_id == "switch.first":
                     hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             mock_call = AsyncMock(side_effect=clear_overload_on_first_turn_off)
             with patch(
@@ -762,6 +769,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -774,6 +782,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -784,8 +793,7 @@ class TestOverloadTwoStepStrategy:
         async def clear_overload_after_sleep(_seconds: float) -> None:
             hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -820,6 +828,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First1",
                 CONF_SWITCH_ENTITY_ID: "switch.first1",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first1_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -831,6 +840,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First2",
                 CONF_SWITCH_ENTITY_ID: "switch.first2",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first2_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -839,8 +849,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.first1", STATE_ON)
         hass.states.async_set("switch.first2", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -876,6 +885,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "A",
                 CONF_SWITCH_ENTITY_ID: "switch.a",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.a_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -887,6 +897,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "B",
                 CONF_SWITCH_ENTITY_ID: "switch.b",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.b_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -895,8 +906,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.a", STATE_ON)
         hass.states.async_set("switch.b", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             sleep_mock = AsyncMock()
             with (
@@ -934,6 +944,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -945,6 +956,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -956,8 +968,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.first", STATE_ON)
         hass.states.async_set("switch.second", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -997,14 +1008,14 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1038,14 +1049,14 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1079,14 +1090,14 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1141,14 +1152,14 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1164,6 +1175,14 @@ class TestZoneTransitions:
                 assert turn_off_calls[0][0][2]["entity_id"] == "switch.device"
         finally:
             await coordinator.async_stop()
+
+
+def _assert_contract(events: list[dict]) -> None:
+    """Each payload has exactly the fields of its event's TypedDict."""
+    for event in events:
+        assert set(event["data"]) == set(
+            EVENT_DATA[event["event_type"]].__annotations__
+        )
 
 
 class TestEventFiring:
@@ -1184,8 +1203,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
             hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
@@ -1195,6 +1213,7 @@ class TestEventFiring:
             assert events[0]["event_type"] == EVENT_ZONE_CHANGED
             assert events[0]["data"]["previous_zone"] == "green"
             assert events[0]["data"]["zone"] == "red"
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1212,6 +1231,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Test Device",
                 CONF_SWITCH_ENTITY_ID: "switch.test",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 6000},
             },
         )
@@ -1224,8 +1244,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_ON, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1240,6 +1259,7 @@ class TestEventFiring:
             assert events[0]["data"]["device_name"] == "Test Device"
             assert events[0]["data"]["switch_entity_id"] == "switch.test"
             assert events[0]["data"]["priority"] == 6000  # noqa: PLR2004
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1257,6 +1277,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 2000},
             },
         )
@@ -1269,8 +1290,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_OFF, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1285,6 +1305,7 @@ class TestEventFiring:
             assert events[0]["data"]["device_name"] == "Low Priority"
             assert events[0]["data"]["switch_entity_id"] == "switch.low"
             assert events[0]["data"]["priority"] == 2000  # noqa: PLR2004
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1302,6 +1323,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -1313,6 +1335,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -1360,6 +1383,7 @@ class TestEventFiring:
         assert len(cleared_events) == 1
         assert cleared_events[0]["data"]["cleared_after"] == "first_queue"
         assert cleared_events[0]["data"]["first_queue_count"] == 1
+        _assert_contract(events)
 
     async def test_overload_second_queue_event(
         self,
@@ -1375,6 +1399,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -1386,6 +1411,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -1422,6 +1448,7 @@ class TestEventFiring:
         assert second_queue_events[0]["data"]["first_queue_count"] == 1
         assert second_queue_events[0]["data"]["second_queue_count"] == 1
         assert "Second" in second_queue_events[0]["data"]["device_names"]
+        _assert_contract(events)
 
     async def test_mode_applied_event(
         self,
@@ -1437,6 +1464,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Device",
                 CONF_SWITCH_ENTITY_ID: "switch.off",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -1450,6 +1478,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always Device",
                 CONF_SWITCH_ENTITY_ID: "switch.always",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -1467,8 +1496,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_MODE_APPLIED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1482,6 +1510,7 @@ class TestEventFiring:
             assert events[0]["data"]["mode"] == "Eco"
             assert len(events[0]["data"]["devices_turned_off"]) == 1
             assert len(events[0]["data"]["devices_turned_on"]) == 1
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1530,8 +1559,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             for power in power_readings:
                 hass.states.async_set("sensor.power_meter", power)
@@ -1615,8 +1643,7 @@ class TestLoadLimitChange:
     ) -> None:
         """At constant load, a limit change moves straight to the final zone."""
         await _setup_real_mode(hass, power, old_limit)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, new_limit)
@@ -1630,8 +1657,7 @@ class TestLoadLimitChange:
     ) -> None:
         """Raising the limit below the yellow threshold waits out green recovery."""
         await _setup_real_mode(hass, "4500", 5000)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, 8800)
@@ -1652,13 +1678,13 @@ class TestLoadLimitChange:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Heater",
                 CONF_SWITCH_ENTITY_ID: "switch.heater",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.heater_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 100},
             },
         ).add_to_hass(hass)
         hass.states.async_set("switch.heater", STATE_ON)
         await _setup_real_mode(hass, "4000", 5000)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         turned_off: list[Event] = []
 
@@ -1696,6 +1722,7 @@ def _add_device(
             CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
             CONF_DEVICE_NAME: name,
             CONF_SWITCH_ENTITY_ID: switch_entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: f"{switch_entity_id}_power",
             CONF_LOAD_PRIORITIES: priorities or {CONF_DEFAULT_PRIORITY: 100},
             CONF_OVERLOAD_FIRST_QUEUE: first_queue,
         },
@@ -1739,8 +1766,7 @@ class TestModeEntitiesByUniqueId:
         _add_device(hass, "Boiler", "switch.boiler", first_queue=True)
         turn_off = async_mock_service(hass, "switch", "turn_off")
         first_queue = _record_events(hass, EVENT_OVERLOAD_FIRST_QUEUE)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "custom_components.bestiarium_devices.balancer.asyncio.sleep",
@@ -1761,8 +1787,7 @@ class TestModeEntitiesByUniqueId:
         await _setup_real_mode(hass, "1000")
         _add_device(hass, "Boiler", "switch.boiler")
         turn_off = async_mock_service(hass, "switch", "turn_off")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             er.async_get(hass).async_update_entity(
                 _mode_entity_id(hass, "binary_sensor", "power_load_red"),
@@ -1785,8 +1810,7 @@ class TestModeEntitiesByUniqueId:
     ) -> None:
         """Renaming the active zone sensor neither changes nor loses the zone."""
         await _setup_real_mode(hass, "4500")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             er.async_get(hass).async_update_entity(
@@ -1817,8 +1841,7 @@ class TestModeEntitiesByUniqueId:
         )
         turn_off = async_mock_service(hass, "switch", "turn_off")
         mode_applied = _record_events(hass, EVENT_MODE_APPLIED)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             er.async_get(hass).async_update_entity(
                 _mode_entity_id(hass, "select", "select"),
@@ -1853,8 +1876,7 @@ class TestModeEntitiesByUniqueId:
         assert await hass.config_entries.async_setup(mode_entry.entry_id)
         await hass.async_block_till_done()
         notifications = async_mock_service(hass, "persistent_notification", "create")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
             assert coordinator.active_zone == ActiveZone.NONE

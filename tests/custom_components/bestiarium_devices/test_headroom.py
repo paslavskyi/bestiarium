@@ -16,7 +16,6 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.bestiarium_devices.balancer import (
     ActiveZone,
-    BalancingCoordinator,
 )
 from custom_components.bestiarium_devices.const import (
     CONF_DEFAULT_PRIORITY,
@@ -33,7 +32,7 @@ from custom_components.bestiarium_devices.const import (
 from custom_components.bestiarium_devices.consumption import SOURCE_RUN, PowerRecord
 from custom_components.bestiarium_devices.power_memory import async_get_power_memory
 
-from .conftest import FakeRelays
+from .conftest import FakeRelays, started_coordinator
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -103,8 +102,7 @@ async def _add_device(
 
 
 async def _green_cycle(hass: HomeAssistant) -> None:
-    coordinator = BalancingCoordinator(hass)
-    await coordinator.async_start()
+    coordinator = await started_coordinator(hass)
     try:
         assert coordinator.active_zone == ActiveZone.GREEN
         await coordinator._execute_green_strategy()  # noqa: SLF001
@@ -153,8 +151,7 @@ async def test_unknown_load_turns_nothing_on(
     """An unreadable grid load: no device is turned on."""
     await _setup_mode(hass, "1500")
     await _add_device(hass, relays, GARLAND, 300, {CONF_DEFAULT_PRIORITY: 100})
-    coordinator = BalancingCoordinator(hass)
-    await coordinator.async_start()
+    coordinator = await started_coordinator(hass)
     try:
         hass.states.async_set(GRID, STATE_UNAVAILABLE)
         await coordinator._execute_green_strategy()  # noqa: SLF001
@@ -179,8 +176,7 @@ async def test_always_on_mode_is_not_limited(
     select = er.async_get(hass).async_get_entity_id(
         "select", DOMAIN_BESTIARIUM_MODE, "select"
     )
-    coordinator = BalancingCoordinator(hass)
-    await coordinator.async_start()
+    coordinator = await started_coordinator(hass)
     try:
         await hass.services.async_call(
             "select",

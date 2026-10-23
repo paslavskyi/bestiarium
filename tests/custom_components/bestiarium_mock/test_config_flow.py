@@ -8,13 +8,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.bestiarium_mock.const import DOMAIN
+from custom_components.bestiarium_mock.const import (
+    DOMAIN,
+    MOCK_DEVICES,
+    MOCK_THERMOMETERS,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
 async def test_config_flow_shows_form(hass: HomeAssistant) -> None:
-    """Test that config flow shows confirmation form."""
+    """The form counts the stand's sockets and thermometers."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_USER},
@@ -22,7 +26,9 @@ async def test_config_flow_shows_form(hass: HomeAssistant) -> None:
 
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "user"
-    assert result["description_placeholders"]["device_count"] == "10"
+    placeholders = result["description_placeholders"]
+    assert placeholders["device_count"] == str(len(MOCK_DEVICES))
+    assert placeholders["thermometer_count"] == str(len(MOCK_THERMOMETERS))
 
 
 async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:

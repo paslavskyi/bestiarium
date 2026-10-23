@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_RECONFIGURE
+from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
@@ -35,6 +38,7 @@ from .const import (
     DOMAIN_SENSOR,
     DOMAIN_SWITCH,
     LOAD_PRIORITY_DEFAULT,
+    ControlSettings,
 )
 from .helpers import (
     build_priority_form_key,
@@ -57,12 +61,22 @@ def get_mode_names(hass: HomeAssistant) -> list[str]:
     return [opt["name"] for opt in get_bestiarium_modes(hass) if opt.get("name")]
 
 
-def own_entity_ids(hass: HomeAssistant) -> list[str]:
-    """Return this integration's entities (the 'Allowed' switches)."""
+def _may_be_relay_or_sensor(entity: er.RegistryEntry) -> bool:
+    """
+    Return whether an entity may be a device's relay or power sensor.
+
+    Not this integration's own entities, nor config or diagnostic ones: those
+    are settings of a device (such as the knobs of a test socket), not its relay.
+    """
+    return entity.platform != DOMAIN and entity.entity_category is None
+
+
+def non_candidate_entity_ids(hass: HomeAssistant, domain: str) -> list[str]:
+    """Return the entities of `domain` that may not be a relay or power sensor."""
     return [
         entity.entity_id
         for entity in er.async_get(hass).entities.values()
-        if entity.platform == DOMAIN
+        if entity.domain == domain and not _may_be_relay_or_sensor(entity)
     ]
 
 
@@ -71,7 +85,7 @@ def _candidate_entities(hass: HomeAssistant, domain: str) -> Iterator[er.Registr
     return (
         entity
         for entity in er.async_get(hass).entities.values()
-        if entity.domain == domain and entity.platform != DOMAIN
+        if entity.domain == domain and _may_be_relay_or_sensor(entity)
     )
 
 
@@ -139,6 +153,14 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     MINOR_VERSION = 2
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,  # noqa: ARG004
+    ) -> ControlOptionsFlow:
+        """Return the form of how the balancer controls the device."""
+        return ControlOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -228,7 +250,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SWITCH,
-                        exclude_entities=own_entity_ids(self.hass),
+                        exclude_entities=non_candidate_entity_ids(
+                            self.hass, DOMAIN_SWITCH
+                        ),
                     ),
                 ),
                 vol.Required(
@@ -238,6 +262,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SENSOR,
                         device_class=DEVICE_CLASS_POWER,
+                        exclude_entities=non_candidate_entity_ids(
+                            self.hass, DOMAIN_SENSOR
+                        ),
                     ),
                 ),
             },
@@ -552,3 +579,55 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Single switch AND single sensor - go directly to priorities
         return await self.async_step_configure_priorities()
+
+
+ADVANCED = "advanced"
+
+
+def _control_schema(settings: ControlSettings) -> vol.Schema:
+    """Return the form of the control settings; the rarely changed ones folded."""
+    main: dict[vol.Marker, Any] = {}
+    advanced: dict[vol.Marker, Any] = {}
+    for setting in fields(ControlSettings):
+        bounds = setting.metadata
+        form = advanced if bounds["advanced"] else main
+        form[vol.Required(setting.name, default=getattr(settings, setting.name))] = (
+            selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=bounds["min"],
+                    max=bounds["max"],
+                    step=bounds["step"],
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+        )
+    main[vol.Required(ADVANCED)] = section(vol.Schema(advanced), {"collapsed": True})
+    return vol.Schema(main)
+
+
+class ControlOptionsFlow(config_entries.OptionsFlow):
+    """
+    How the balancer controls a device: attempts, waits, thresholds.
+
+    Algorithm parameters live in the entry's options, not in entities
+    (docs/concepts/settings-vs-entities.md). They apply at once: the balancer
+    reads them on every step.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show and store the control settings; keep the other options."""
+        if user_input is not None:
+            values = {**user_input.pop(ADVANCED), **user_input}
+            settings = {
+                setting.name: type(setting.default)(values[setting.name])
+                for setting in fields(ControlSettings)
+            }
+            return self.async_create_entry(
+                data={**self.config_entry.options, **settings}
+            )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_control_schema(ControlSettings.of(self.config_entry)),
+        )

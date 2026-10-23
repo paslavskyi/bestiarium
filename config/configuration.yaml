@@ -20,6 +20,7 @@ usb:
 webhook:
 zeroconf:
 automation: !include automations.yaml
+script: !include scripts.yaml
 
 # https://www.home-assistant.io/integrations/homeassistant/
 homeassistant:

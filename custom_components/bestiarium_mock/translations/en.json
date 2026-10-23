@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bestiarium Mock Devices",
-        "description": "This will create mock devices for testing purposes:\n\n- Mock Grid (power monitoring with alarm)\n- Mock Boiler, AC, Router, Kettle, Heating, Fridge (fixed power)\n- Mock Cooker, Washing Machine, Dishwasher (variable power)\n- 4 Mock Smart Sockets (600W fixed power)\n- 4 Mock Thermometers (temperature sensors with manual input)\n\nEach device includes a switch, power sensor, and mock behavior controls."
+        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring with an overload alarm)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
       }
     },
     "abort": {
@@ -15,9 +15,6 @@
     "switch": {
       "device_switch": {
         "name": "Switch"
-      },
-      "mock_enabled": {
-        "name": "Mock Enabled"
       }
     },
     "sensor": {
@@ -45,7 +42,99 @@
       },
       "mock_temperature": {
         "name": "Set Temperature"
+      },
+      "ignore_percent": {
+        "name": "Command ignore chance"
+      },
+      "delay_min_s": {
+        "name": "Command delay from"
+      },
+      "delay_max_s": {
+        "name": "Command delay to"
+      },
+      "stuck_percent": {
+        "name": "Stuck state chance"
+      },
+      "dropouts_per_hour": {
+        "name": "Dropouts per hour"
+      },
+      "dropout_min_s": {
+        "name": "Dropout duration from"
+      },
+      "dropout_max_s": {
+        "name": "Dropout duration to"
       }
+    },
+    "select": {
+      "fault_profile": {
+        "name": "Fault profile",
+        "state": {
+          "reliable": "Reliable",
+          "slow_cloud": "Slow cloud",
+          "unstable": "Unstable",
+          "stuck_state": "Stuck state",
+          "unresponsive": "Unresponsive",
+          "custom": "Custom"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "custom_profile_required": {
+      "message": "To change this parameter, select the Custom fault profile"
+    }
+  },
+  "device": {
+    "night_light": {
+      "name": "Mock Night Light"
+    },
+    "boiler": {
+      "name": "Mock Boiler"
+    },
+    "slow_cloud_socket": {
+      "name": "Mock Slow Cloud Socket"
+    },
+    "tuya_socket": {
+      "name": "Mock Tuya Socket"
+    },
+    "commode_socket": {
+      "name": "Mock Commode Socket (SmartThings)"
+    },
+    "bedside_socket": {
+      "name": "Mock Bedside Socket"
+    },
+    "dead_socket": {
+      "name": "Mock Dead Socket"
+    },
+    "cooker": {
+      "name": "Mock Cooker"
+    },
+    "fridge": {
+      "name": "Mock Fridge"
+    },
+    "floor_heating_1": {
+      "name": "Mock Floor Heating 1"
+    },
+    "floor_heating_2": {
+      "name": "Mock Floor Heating 2"
+    },
+    "floor_heating_3": {
+      "name": "Mock Floor Heating 3"
+    },
+    "thermo_1": {
+      "name": "Mock Thermometer 1"
+    },
+    "thermo_2": {
+      "name": "Mock Thermometer 2"
+    },
+    "thermo_3": {
+      "name": "Mock Thermometer 3"
+    },
+    "thermo_4": {
+      "name": "Mock Thermometer 4"
+    },
+    "grid": {
+      "name": "Mock Grid"
     }
   }
 }

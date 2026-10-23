@@ -8,6 +8,7 @@ from homeassistant.config_entries import (
     SOURCE_USER,
     ConfigEntryState,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
@@ -616,6 +617,7 @@ async def test_config_flow_reconfigure_extended_device(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -669,6 +671,7 @@ async def test_reconfigure_preserves_overload_first_queue(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -1111,6 +1114,7 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -1210,6 +1214,7 @@ async def test_reconfigure_shows_and_updates_thermostat_driven(
         },
     )
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
     assert entry.data[CONF_THERMOSTAT_DRIVEN] is True
 
 
@@ -1331,6 +1336,96 @@ async def test_virtual_device_relay_selector_excludes_allowed_switches(
     await hass.config_entries.async_unload(entry.entry_id)
 
 
+def _relay_device_with_knobs(hass: HomeAssistant) -> tuple[str, str, str, str]:
+    """
+    Register a test socket: relay, power sensor and config knobs of each kind.
+
+    Return the device id, relay, knob switch and knob power sensor.
+    """
+    mock = MockConfigEntry(domain="bestiarium_mock")
+    mock.add_to_hass(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=mock.entry_id,
+        identifiers={("bestiarium_mock", "mock_boiler")},
+        name="Mock Boiler",
+    )
+    entity_registry = er.async_get(hass)
+
+    def register(domain: str, unique_id: str, *, knob: bool) -> str:
+        return entity_registry.async_get_or_create(
+            domain,
+            "bestiarium_mock",
+            unique_id,
+            config_entry=mock,
+            device_id=device.id,
+            entity_category=EntityCategory.CONFIG if knob else None,
+        ).entity_id
+
+    relay = register("switch", "mock_boiler", knob=False)
+    knob_switch = register("switch", "mock_boiler_mock_enabled", knob=True)
+    power = register("sensor", "mock_boiler_power", knob=False)
+    knob_power = register("sensor", "mock_boiler_test_power", knob=True)
+    hass.states.async_set(relay, "off")
+    hass.states.async_set(knob_switch, "on")
+    for sensor in (power, knob_power):
+        hass.states.async_set(
+            sensor, "0", {"device_class": "power", "unit_of_measurement": "W"}
+        )
+    return device.id, relay, knob_switch, knob_power
+
+
+async def test_config_knobs_are_not_offered_when_extending_a_device(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """A device's config switch and sensor are settings, not its relay and meter."""
+    device_id, relay, _, _ = _relay_device_with_knobs(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "extend_device"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_DEVICE_ID: device_id}
+    )
+
+    assert result["step_id"] == "configure_priorities"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {CONF_DEFAULT_PRIORITY: 5000, CONF_OVERLOAD_FIRST_QUEUE: False},
+    )
+    created = hass.config_entries.async_get_entry(result["result"].entry_id)
+    assert created.data[CONF_SWITCH_ENTITY_ID] == relay
+    await hass.config_entries.async_unload(created.entry_id)
+
+
+async def test_virtual_device_selectors_exclude_config_knobs(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> None:
+    """The relay and power selectors of a virtual device hide config entities."""
+    _, relay, knob_switch, knob_power = _relay_device_with_knobs(hass)
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+
+    schema = result["data_schema"].schema
+    relay_excluded = schema[CONF_SWITCH_ENTITY_ID].config["exclude_entities"]
+    power_excluded = schema[CONF_POWER_SENSOR_ENTITY_ID].config["exclude_entities"]
+    assert knob_switch in relay_excluded
+    assert relay not in relay_excluded
+    assert knob_power in power_excluded
+    # Each selector lists only its own domain
+    assert knob_power not in relay_excluded
+    assert knob_switch not in power_excluded
+
+
 async def test_reconfigure_abort_uses_integration_translation(
     hass: HomeAssistant,
     bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
@@ -1348,5 +1443,6 @@ async def test_reconfigure_abort_uses_integration_translation(
     await hass.async_block_till_done()
 
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
     assert result.get("translation_domain") is None
     await hass.config_entries.async_unload(entry.entry_id)
