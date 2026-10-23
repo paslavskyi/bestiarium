@@ -76,7 +76,7 @@ async def _dev_ha(
     automations = [BROKEN_AUTOMATION, FOREIGN_AUTOMATION]
     (config_dir / "automations.yaml").write_text(dump(automations))
     (config_dir / "scripts.yaml").write_text("")
-    for component in ("api", "config", "lovelace", "script", "logbook"):
+    for component in ("api", "websocket_api", "config", "lovelace", "script"):
         assert await async_setup_component(hass, component, {})
     assert await async_setup_component(hass, "automation", {"automation": automations})
     client = await hass_client()

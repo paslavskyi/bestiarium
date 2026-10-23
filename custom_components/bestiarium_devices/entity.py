@@ -26,6 +26,7 @@ class BestiariumDeviceEntity(Entity):
     """An entity of a device entry, placed on the device its relay belongs to."""
 
     _attr_has_entity_name = True
+    _attr_should_poll = False  # every entity is updated by a push
     _key: str  # unique_id suffix and translation key
 
     def __init__(

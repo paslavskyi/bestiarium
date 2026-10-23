@@ -617,6 +617,7 @@ async def test_config_flow_reconfigure_extended_device(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -670,6 +671,7 @@ async def test_reconfigure_preserves_overload_first_queue(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -1112,6 +1114,7 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
     )
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
@@ -1211,6 +1214,7 @@ async def test_reconfigure_shows_and_updates_thermostat_driven(
         },
     )
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
     assert entry.data[CONF_THERMOSTAT_DRIVEN] is True
 
 
@@ -1439,5 +1443,6 @@ async def test_reconfigure_abort_uses_integration_translation(
     await hass.async_block_till_done()
 
     assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
     assert result.get("translation_domain") is None
     await hass.config_entries.async_unload(entry.entry_id)
