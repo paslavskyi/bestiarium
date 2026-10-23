@@ -163,6 +163,8 @@ async def test_existing_mode_follows_the_renamed_grid(
         == MODE_ON_OLD_GRID_ID["ac_load_limits"]["ac_load_limit_w"]
     )
     assert _zone_states(hass) <= {"on", "off"}
+    # Its modes stay; the Night the scenarios select is added
+    assert [o["name"] for o in mode.data["options"]] == ["Grid on", "Night"]
 
 
 async def test_only_stand_things_are_removed(

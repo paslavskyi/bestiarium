@@ -174,7 +174,8 @@ the script fails if HA did not load them.
 
 1. Adds Bestiarium Mock and Bestiarium Mode (modes "Grid on" and "Night",
    limit 5000 W on the mock grid, yellow 75 %, red 90 %) if they are missing.
-   An existing Bestiarium Mode keeps its modes and limits; its power sensor is
+   An existing Bestiarium Mode keeps its modes and limits and gets the stand's
+   modes it lacks ("Night" for the scenarios); its power sensor is
    set (reconfigure flow) to the test grid's current entity_id. Every test
    device gets back its own name (no `name_by_user`, no area) and every test
    entity the entity_id `<domain>.<unique_id>` (for example

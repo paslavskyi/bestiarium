@@ -101,17 +101,26 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
     Add Bestiarium Mode on the test grid if it is missing.
 
     An existing one keeps its modes and limits but watches the test grid by its
-    current entity_id, which normalize_mock may just have changed.
+    current entity_id, which normalize_mock may just have changed, and gets
+    the stand's modes it lacks (the scenarios select "Night").
     """
     grid = reg.mock("sensor", "mock_grid_power")
     if entries := await ha.entries(MODE):
+        select = await ha.rest(
+            "GET", f"states/{reg.entity_id('select', MODE, 'select')}"
+        )
+        missing = [m for m in MODES if m not in select["attributes"]["options"]]
+        added: list[dict[str, Any]] = []
+        for mode in missing:
+            added += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
         await ha.reconfigure(
             entries[0],
+            *added,
             {"next_step_id": "configure_ac_load_limits"},
             {"ac_power_sensor": grid},
             {"next_step_id": "complete"},
         )
-        print(f"  Bestiarium Mode kept, watching {grid}")
+        print(f"  Bestiarium Mode kept, watching {grid}; modes added: {missing}")
         return
     steps: list[dict[str, Any]] = []
     for mode in MODES:
@@ -156,9 +165,6 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
     for entry in await ha.entries(DEVICES):
         if _belongs_to_stand(entry, reg):
             await ha.remove_entry(entry)
-    # A mode entry the stand kept may have no Night mode
-    select = await ha.rest("GET", f"states/{reg.entity_id('select', MODE, 'select')}")
-    night = "Night" in select["attributes"]["options"]
     for device in STAND_DEVICES:
         await ha.flow(
             "flow",
@@ -168,9 +174,7 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
             {
                 "default": device.priority,
                 **(
-                    {"priority_Night": device.night}
-                    if night and device.night is not None
-                    else {}
+                    {"priority_Night": device.night} if device.night is not None else {}
                 ),
                 "overload_first_queue": device.first_queue,
                 "thermostat_driven": device.thermostat_driven,
