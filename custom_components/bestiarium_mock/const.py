@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from logging import Logger, getLogger
 
 LOGGER: Logger = getLogger(__package__)
@@ -17,6 +18,76 @@ GRID_ALARM_THRESHOLD_SECONDS = 10
 GRID_UPDATE_INTERVAL_SECONDS = 5
 
 
+class FaultProfile(StrEnum):
+    """How a mock socket misbehaves; each but CUSTOM sets all fault parameters."""
+
+    RELIABLE = "reliable"
+    SLOW_CLOUD = "slow_cloud"
+    UNSTABLE = "unstable"
+    STUCK_STATE = "stuck_state"
+    UNRESPONSIVE = "unresponsive"
+    CUSTOM = "custom"
+
+
+@dataclass(frozen=True)
+class FaultParams:
+    """
+    The fault model of a mock socket.
+
+    A command is ignored with ignore_percent chance, else it takes effect after
+    a delay from the range. With stuck_percent chance the socket switches but
+    HA keeps the previous state. dropouts_per_hour times an hour on average the
+    socket is unavailable for a duration from the range.
+    """
+
+    ignore_percent: float = 0
+    delay_min_s: float = 0
+    delay_max_s: float = 0
+    stuck_percent: float = 0
+    dropouts_per_hour: float = 0
+    dropout_min_s: float = 5
+    dropout_max_s: float = 5
+
+
+PROFILE_PARAMS: dict[FaultProfile, FaultParams] = {
+    FaultProfile.RELIABLE: FaultParams(delay_max_s=1),
+    FaultProfile.SLOW_CLOUD: FaultParams(delay_min_s=4, delay_max_s=15),
+    FaultProfile.UNSTABLE: FaultParams(
+        ignore_percent=10,
+        delay_min_s=1,
+        delay_max_s=5,
+        dropouts_per_hour=6,
+        dropout_min_s=5,
+        dropout_max_s=40,
+    ),
+    FaultProfile.STUCK_STATE: FaultParams(
+        delay_min_s=1, delay_max_s=3, stuck_percent=100
+    ),
+    FaultProfile.UNRESPONSIVE: FaultParams(ignore_percent=100),
+}
+
+
+@dataclass(frozen=True)
+class FaultParamSpec:
+    """Range and unit of a fault parameter's number entity."""
+
+    key: str
+    min_value: float
+    max_value: float
+    unit: str
+
+
+FAULT_PARAMS: tuple[FaultParamSpec, ...] = (
+    FaultParamSpec("ignore_percent", 0, 100, "%"),
+    FaultParamSpec("delay_min_s", 0, 120, "s"),
+    FaultParamSpec("delay_max_s", 0, 120, "s"),
+    FaultParamSpec("stuck_percent", 0, 100, "%"),
+    FaultParamSpec("dropouts_per_hour", 0, 60, "/h"),
+    FaultParamSpec("dropout_min_s", 1, 600, "s"),
+    FaultParamSpec("dropout_max_s", 1, 600, "s"),
+)
+
+
 @dataclass(frozen=True)
 class MockDeviceSpec:
     """Specification for a mock device."""
@@ -26,6 +97,7 @@ class MockDeviceSpec:
     power_w: int
     power_min_w: int | None = None
     power_max_w: int | None = None
+    profile: FaultProfile = FaultProfile.RELIABLE
 
     @property
     def has_variable_power(self) -> bool:
@@ -44,10 +116,37 @@ class MockThermometerSpec:
     temp_max_c: float = 50.0
 
 
-# Device specifications (smart sockets with power monitoring)
+# Smart sockets with power monitoring, one per test scenario
 MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
-    MockDeviceSpec(device_id="boiler", name="Mock Boiler", power_w=1800),
-    MockDeviceSpec(device_id="ac", name="Mock AC", power_w=1200),
+    MockDeviceSpec(device_id="night_light", name="Mock Night Light", power_w=15),
+    MockDeviceSpec(device_id="boiler", name="Mock Boiler", power_w=2000),
+    MockDeviceSpec(
+        device_id="slow_cloud_socket",
+        name="Mock Slow Cloud Socket",
+        power_w=800,
+        profile=FaultProfile.SLOW_CLOUD,
+    ),
+    MockDeviceSpec(
+        device_id="tuya_socket",
+        name="Mock Tuya Socket",
+        power_w=300,
+        profile=FaultProfile.UNSTABLE,
+    ),
+    # The night of 2026-10-23: a SmartThings socket kept a stale 'off' state
+    # while its neighbour of the same priority waited for its turn
+    MockDeviceSpec(
+        device_id="commode_socket",
+        name="Mock Commode Socket (SmartThings)",
+        power_w=8,
+        profile=FaultProfile.STUCK_STATE,
+    ),
+    MockDeviceSpec(device_id="bedside_socket", name="Mock Bedside Socket", power_w=8),
+    MockDeviceSpec(
+        device_id="dead_socket",
+        name="Mock Dead Socket",
+        power_w=500,
+        profile=FaultProfile.UNRESPONSIVE,
+    ),
     MockDeviceSpec(
         device_id="cooker",
         name="Mock Cooker",
@@ -55,29 +154,16 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
         power_min_w=400,
         power_max_w=4200,
     ),
-    MockDeviceSpec(device_id="router", name="Mock Router", power_w=20),
-    MockDeviceSpec(device_id="kettle", name="Mock Kettle", power_w=1000),
-    MockDeviceSpec(device_id="heating", name="Mock Heating", power_w=1000),
+    MockDeviceSpec(device_id="fridge", name="Mock Fridge", power_w=100),
     MockDeviceSpec(
-        device_id="washing_machine",
-        name="Mock Washing Machine",
-        power_w=60,
-        power_min_w=60,
-        power_max_w=1200,
+        device_id="floor_heating_1", name="Mock Floor Heating 1", power_w=1200
     ),
     MockDeviceSpec(
-        device_id="dishwasher",
-        name="Mock Dishwasher",
-        power_w=60,
-        power_min_w=60,
-        power_max_w=1800,
+        device_id="floor_heating_2", name="Mock Floor Heating 2", power_w=1200
     ),
-    MockDeviceSpec(device_id="fridge", name="Mock Fridge", power_w=80),
-    # 4 additional smart sockets with fixed 600W power
-    MockDeviceSpec(device_id="socket_1", name="Mock Socket 1", power_w=600),
-    MockDeviceSpec(device_id="socket_2", name="Mock Socket 2", power_w=600),
-    MockDeviceSpec(device_id="socket_3", name="Mock Socket 3", power_w=600),
-    MockDeviceSpec(device_id="socket_4", name="Mock Socket 4", power_w=600),
+    MockDeviceSpec(
+        device_id="floor_heating_3", name="Mock Floor Heating 3", power_w=1200
+    ),
 )
 
 # Thermometer specifications (passive temperature sensors)
