@@ -152,6 +152,7 @@
         "state": {
           "normal": "Normal",
           "switch_unavailable": "Switch unavailable",
+          "mode_off_failed": "Does not turn off by mode",
           "unresponsive": "Not responding",
           "unstable": "Unstable connection",
           "no_power_data": "No power data"
@@ -186,6 +187,7 @@
         "state": {
           "normal": "Normal",
           "switch_unavailable": "Switch unavailable",
+          "mode_off_failed": "Does not turn off by mode",
           "unresponsive": "Not responding",
           "unstable": "Unstable connection",
           "no_power_data": "No power data"
@@ -233,7 +235,8 @@
             "state": {
               "deferred": "Deferred",
               "retrying": "Retrying the connection",
-              "recovered": "Recovered"
+              "recovered": "Recovered",
+              "mode_off_failed": "Could not turn off by mode"
             }
           },
           "direction": {
@@ -259,7 +262,8 @@
             "state": {
               "deferred": "Deferred",
               "retrying": "Retrying the connection",
-              "recovered": "Recovered"
+              "recovered": "Recovered",
+              "mode_off_failed": "Could not turn off by mode"
             }
           },
           "direction": {

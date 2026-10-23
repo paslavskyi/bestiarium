@@ -70,6 +70,8 @@ class BalancingCoordinator:
 
         # Reference to cancel periodic job callback
         self._job_cancel: Callable[[], None] | None = None
+        # The job that repeats the mode's turn-offs
+        self._mode_job_cancel: Callable[[], None] | None = None
 
         # Unsubscribe callbacks for bestiarium_mode entity listeners
         self._subscriptions: list[Callable[[], None]] = []
@@ -186,6 +188,9 @@ class BalancingCoordinator:
         if self._job_cancel:
             self._job_cancel()
             self._job_cancel = None
+        if self._mode_job_cancel:
+            self._mode_job_cancel()
+            self._mode_job_cancel = None
 
         self._unsubscribe()
         for unsubscribe in self._unsubscribe_start:
@@ -430,7 +435,20 @@ class BalancingCoordinator:
         LOGGER.info("Mode changed from %s to %s", old_mode, new_mode)
 
         # Apply mode priorities: turn off OFF, turn on ALWAYS_ON
-        self._hass.async_create_task(self._strategies.async_apply_mode())
+        self._hass.async_create_task(self._async_apply_mode())
+
+    async def _async_apply_mode(self) -> None:
+        """Apply the mode, then repeat its turn-offs until they are done."""
+        await self._strategies.async_apply_mode()
+        if self._mode_job_cancel is None:
+            self._mode_job_cancel = async_track_time_interval(
+                self._hass, self._mode_job, timedelta(seconds=RED_INTERVAL_SECONDS)
+            )
+
+    async def _mode_job(self, _now: object) -> None:
+        if not await self._strategies.async_mode_duties() and self._mode_job_cancel:
+            self._mode_job_cancel()
+            self._mode_job_cancel = None
 
     async def async_allowed_changed(self, entry: ConfigEntry) -> None:
         """Apply a change of a device's 'Allowed' switch to its relay."""

@@ -152,6 +152,7 @@
         "state": {
           "normal": "Норма",
           "switch_unavailable": "Вимикач недоступний",
+          "mode_off_failed": "Не вимикається за режимом",
           "unresponsive": "Не відгукується",
           "unstable": "Нестабільний зв'язок",
           "no_power_data": "Немає даних потужності"
@@ -186,6 +187,7 @@
         "state": {
           "normal": "Норма",
           "switch_unavailable": "Вимикач недоступний",
+          "mode_off_failed": "Не вимикається за режимом",
           "unresponsive": "Не відгукується",
           "unstable": "Нестабільний зв'язок",
           "no_power_data": "Немає даних потужності"
@@ -233,7 +235,8 @@
             "state": {
               "deferred": "Відклав",
               "retrying": "Пробую відновити зв'язок",
-              "recovered": "Відновився"
+              "recovered": "Відновився",
+              "mode_off_failed": "Не вдалося вимкнути за режимом"
             }
           },
           "direction": {
@@ -259,7 +262,8 @@
             "state": {
               "deferred": "Відклав",
               "retrying": "Пробую відновити зв'язок",
-              "recovered": "Відновився"
+              "recovered": "Відновився",
+              "mode_off_failed": "Не вдалося вимкнути за режимом"
             }
           },
           "direction": {

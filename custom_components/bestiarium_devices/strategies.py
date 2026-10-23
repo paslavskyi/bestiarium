@@ -155,15 +155,20 @@ class Strategies:
         Apply mode-specific priorities (turn off/on devices based on priority).
 
         A rare human action: every device gets its command, a deferred one
-        too, without waiting for the answer or counting attempts.
+        too. A device that is on and should be off gets the mode's duty: its
+        turn-off is repeated like any balancer command until it is off
+        (async_mode_duties).
         """
         devices_turned_off: list[str] = []
         devices_turned_on: list[str] = []
+        now = dt_util.utcnow()
 
-        for entry, _control, _state in self._devices():
+        for entry, control, state in self._devices():
             device_id = get_device_id_from_entry(entry)
             device_name = get_device_name_from_entry(entry)
             priority = get_current_priority(self._hass, entry)
+            if priority != LOAD_PRIORITY_OFF:
+                control.end_mode_off()
 
             if priority == LOAD_PRIORITY_OFF:
                 LOGGER.debug(
@@ -171,6 +176,11 @@ class Strategies:
                     device_name,
                     device_id,
                 )
+                if state is not None and state.state == STATE_ON:
+                    control.start_mode_off()
+                    control.command_sent(
+                        Direction.TURN_OFF, now, step_s=RED_INTERVAL_SECONDS, red=False
+                    )
                 if await self._async_command(entry, Direction.TURN_OFF):
                     devices_turned_off.append(device_id)
             elif priority == LOAD_PRIORITY_ALWAYS_ON and balancer_may_turn_on(entry):
@@ -193,6 +203,37 @@ class Strategies:
                     devices_turned_on=devices_turned_on,
                 ),
             )
+
+    async def async_mode_duties(self) -> bool:
+        """
+        Repeat the mode's turn-off of the devices that are still on.
+
+        Each waits for its answer, is deferred after its attempts and tried
+        again, as any balancer command. Return whether a duty is still open.
+        """
+        now = dt_util.utcnow()
+        open_duty = False
+        for entry, control, state in self._devices():
+            if not control.mode_off:
+                continue
+            if (
+                get_current_priority(self._hass, entry) != LOAD_PRIORITY_OFF
+                or state is None
+                or state.state == STATE_OFF
+            ):
+                control.end_mode_off()
+                continue
+            open_duty = True
+            if control.may_command(Direction.TURN_OFF, now):
+                LOGGER.debug(
+                    "Mode: turning off device %s again",
+                    get_device_name_from_entry(entry),
+                )
+                control.command_sent(
+                    Direction.TURN_OFF, now, step_s=RED_INTERVAL_SECONDS, red=False
+                )
+                await self._async_command(entry, Direction.TURN_OFF)
+        return open_duty
 
     def _fits(self, entry: ConfigEntry) -> bool:
         """
@@ -301,30 +342,47 @@ class Strategies:
         """
         Execute red strategy: turn off lowest priority device that is ON.
 
-        While a device may still answer its turn-off command (its response
-        time, at most the red zone's limit), no other device is turned off.
-        A deferred device is not a candidate.
+        First every device the mode says off (someone turned it on) is turned
+        off at once; the queue goes on at the next step. While a device of the
+        queue may still answer its turn-off command (its response time, at
+        most the red zone's limit), no other device is turned off; the
+        devices that are off by mode do not hold the queue. A deferred device
+        is not a candidate.
         """
         now = dt_util.utcnow()
-        if any(
-            control.waiting(Direction.TURN_OFF, now)
-            for control in self._controls.values()
-        ):
-            LOGGER.debug("Red strategy: waiting for a device to turn off")
-            return
-
         candidates: list[tuple[int, ConfigEntry, DeviceControl]] = []
+        off_by_mode: list[tuple[int, ConfigEntry, DeviceControl]] = []
+        waiting = False
 
         for entry, control, state in self._devices():
+            priority = get_current_priority(self._hass, entry)
+            if priority != LOAD_PRIORITY_OFF:
+                waiting = waiting or control.waiting(Direction.TURN_OFF, now)
             if state is None or state.state != STATE_ON:
                 continue
-            priority = get_current_priority(self._hass, entry)
             # ALWAYS_ON devices should NOT be turned off by red strategy
             if priority == LOAD_PRIORITY_ALWAYS_ON:
                 continue
             if not control.may_command(Direction.TURN_OFF, now):
                 continue
-            candidates.append((priority, entry, control))
+            queue = off_by_mode if priority == LOAD_PRIORITY_OFF else candidates
+            queue.append((priority, entry, control))
+
+        if off_by_mode:
+            for priority, entry, control in off_by_mode:
+                await self._async_strategy_command(
+                    entry,
+                    control,
+                    Direction.TURN_OFF,
+                    "red",
+                    priority,
+                    now,
+                    step_s=RED_INTERVAL_SECONDS,
+                )
+            return
+        if waiting:
+            LOGGER.debug("Red strategy: waiting for a device to turn off")
+            return
 
         if not candidates:
             LOGGER.debug("Red strategy: No devices to turn off")
