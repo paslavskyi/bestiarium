@@ -15,7 +15,9 @@ Core capabilities:
 
 Multiple config entries are allowed (one per device). The integration has a declared dependency on `bestiarium_mode`.
 
-**Automation events**: The balancer fires HA bus events at zone changes, device turn-on/off, overload shutdowns, and mode application. See [Automation Events](events.md) for event types, payloads, and automation examples.
+**Automation events**: The balancer fires HA bus events at zone changes, device turn-on/off, overload shutdowns, and mode application. See [Automation Events](events.md) for event types, payloads, and automation examples. The events are also described for the HA logbook (`logbook.py`).
+
+**Concepts**: problems, settings and device stability follow the Bestiarium concepts in [`concepts/`](concepts/README.md) — [problem reporting](concepts/problem-reporting.md), [settings vs entities](concepts/settings-vs-entities.md), [stability and adaptation](concepts/stability.md).
 
 ---
 
@@ -37,6 +39,7 @@ custom_components/bestiarium_devices/
 ├── sensor.py            # ExpectedPowerSensor — "Expected power"
 ├── number.py            # EstimatedPowerNumber — "Estimated power"
 ├── button.py            # ResetPowerMemoryButton — "Reset power memory"
+├── logbook.py           # Logbook descriptions of the balancer's bus events
 └── translations/
     ├── en.json           # English translations
     └── uk.json           # Ukrainian translations
@@ -48,6 +51,7 @@ tests/custom_components/bestiarium_devices/
 ├── test_balancer.py
 ├── test_consumption.py
 ├── test_headroom.py
+├── test_logbook.py
 ├── test_power_entities.py
 ├── test_power_memory.py
 ├── test_switch.py
@@ -231,7 +235,7 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 4. If multiple of either → route through `select_entities`
 5. If no switch → error `"no_switch"`; no power sensor → error `"no_power_sensor"`
 
-Entities of this integration (the "Allowed" switches, which sit on the relay's device) are never relay or power-sensor candidates: the device lookups (`find_switches_for_device`, `find_power_sensors_for_device`, `find_devices_with_switch`) all go through one predicate, `_candidate_entities(hass, domain)`, which skips platform `bestiarium_devices`; `select_entities` offers only the device's own relays and sensors (`include_entities`), and the virtual-device relay selector excludes them (`exclude_entities`).
+Entities of this integration (the "Allowed" switches, which sit on the relay's device) and entities with an `entity_category` (`config` / `diagnostic`: settings of a device, such as the knobs of a test socket) are never relay or power-sensor candidates: one predicate, `_may_be_relay_or_sensor(entity)`, decides. The device lookups (`find_switches_for_device`, `find_power_sensors_for_device`, `find_devices_with_switch`) go through `_candidate_entities(hass, domain)`; `select_entities` offers only the device's own candidates (`include_entities`), and the virtual-device relay and power selectors exclude the rest (`exclude_entities=non_candidate_entity_ids(hass)`).
 
 ### Reconfigure Flow
 
@@ -248,7 +252,7 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 | `find_power_sensors_for_device(hass, device_id)` | Finds validated power sensors on a device |
 | `find_devices_with_switch(hass)` | Returns device IDs that have switch entities |
 | `find_switches_for_device(hass, device_id)` | Returns enabled switch entity IDs for a device (not this integration's own) |
-| `own_entity_ids(hass)` | Returns this integration's entity IDs (the "Allowed" switches) |
+| `non_candidate_entity_ids(hass)` | Returns entity IDs that may not be a relay or power sensor (this integration's own, and those with an `entity_category`) |
 | `is_virtual_device(hass, device_id)` | Checks if device was created by this integration |
 | `find_config_entry_for_device(hass, device_id)` | Finds config entry for a virtual device |
 

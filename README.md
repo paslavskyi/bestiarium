@@ -36,7 +36,7 @@ Depends on `bestiarium_mode`.
 
 ### bestiarium_mock
 
-Standalone test harness that simulates **13 smart-socket devices**, **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required.
+Standalone test stand that simulates **12 smart sockets** (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
 
 ## Installation
 
@@ -65,6 +65,10 @@ pip install -r requirements.txt
 # Run tests
 pytest tests/
 ```
+
+### Concepts
+
+Every change follows the Bestiarium concepts in [`docs/concepts/`](docs/concepts/README.md): [problem reporting](docs/concepts/problem-reporting.md), [settings vs entities](docs/concepts/settings-vs-entities.md) and [stability and adaptation](docs/concepts/stability.md). The skill [`.claude/skills/bestiarium-concepts`](.claude/skills/bestiarium-concepts/SKILL.md) routes a change to them and holds the pre-commit checklist.
 
 ### Knowledge base
 
