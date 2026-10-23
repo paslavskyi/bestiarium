@@ -151,8 +151,10 @@ Unique IDs of the kept devices do not change.
 
 `scripts/stand_setup.py` sets up the stand in the development HA through its
 REST and websocket APIs, using the real config flows. It needs a long-lived
-access token of that HA in `BESTIARIUM_STAND_TOKEN` and refuses any HA that is
-not on this machine. Running it again gives the same stand.
+access token of that HA in `HA_TEST_ENV_TOKEN` and refuses any HA that is not
+on this machine. The token is a Windows user environment variable;
+`.devcontainer.json` passes it into the devcontainer (`remoteEnv`), so VS Code
+must be restarted once after the variable is set. The script never prints it. Running it again gives the same stand.
 
 1. Adds Bestiarium Mock and Bestiarium Mode (modes "Grid on" and "Night",
    limit 5000 W on the mock grid, yellow 75 %, red 90 %) if they are missing.

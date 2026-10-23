@@ -53,6 +53,6 @@ test-cov:
 
 # Set up the test stand (Bestiarium Mock sockets, their Bestiarium Devices and
 # Climate entries, scenario scripts, dashboard) in the HA of `make develop`.
-# Needs a long-lived access token of that HA in BESTIARIUM_STAND_TOKEN.
+# Needs a long-lived access token of that HA in HA_TEST_ENV_TOKEN.
 stand:
 	PYTHONPATH="$(CURDIR)" python3 scripts/stand_setup.py

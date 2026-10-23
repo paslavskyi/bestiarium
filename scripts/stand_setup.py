@@ -2,7 +2,8 @@
 Set up the Bestiarium test stand in the development Home Assistant.
 
 Run it against the running development HA (`make develop`) with a long-lived
-access token of that HA in BESTIARIUM_STAND_TOKEN:
+access token of that HA in HA_TEST_ENV_TOKEN (a Windows user variable, passed
+into the devcontainer by `remoteEnv` in .devcontainer.json):
 
     make stand
 
@@ -34,7 +35,7 @@ from custom_components.bestiarium_mock.const import (
 )
 
 HA_URL = os.environ.get("BESTIARIUM_STAND_URL", "http://localhost:8123")
-TOKEN_ENV = "BESTIARIUM_STAND_TOKEN"  # noqa: S105 - the name of the variable
+TOKEN_ENV = "HA_TEST_ENV_TOKEN"  # noqa: S105 - the name of the variable
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 MOCK = "bestiarium_mock"
@@ -535,7 +536,11 @@ def main() -> int:
         print(f"Refusing {HA_URL}: the stand is set up only on this machine.")
         return 1
     if not (token := os.environ.get(TOKEN_ENV)):
-        print(f"Set {TOKEN_ENV} to a long-lived access token of the development HA.")
+        print(
+            f"{TOKEN_ENV} is empty: set it (a Windows user variable) to a "
+            "long-lived access token of the development HA, then restart VS Code "
+            "and reopen the folder in the container."
+        )
         return 1
     print(f"Setting up the Bestiarium stand on {HA_URL}")
     try:
