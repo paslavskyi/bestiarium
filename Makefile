@@ -1,4 +1,4 @@
-.PHONY: setup develop lint lint-check test help setup-go2rtc
+.PHONY: setup develop lint lint-check test help setup-go2rtc stand
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  lint-check - Check code without fixing (for CI)"
 	@echo "  test	    - Run unit tests with pytest"
 	@echo "  test-cov   - Run tests with coverage"
+	@echo "  stand      - Set up the test stand in the running development HA"
 	@echo "  help	    - Show this help message"
 # Install dependencies
 setup:
@@ -49,3 +50,9 @@ test:
 # Run tests with coverage
 test-cov:
 	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" pytest tests/ -v --cov=custom_components --cov-report=term-missing
+
+# Set up the test stand (Bestiarium Mock sockets, their Bestiarium Devices and
+# Climate entries, scenario scripts, dashboard) in the HA of `make develop`.
+# Needs a long-lived access token of that HA in BESTIARIUM_STAND_TOKEN.
+stand:
+	PYTHONPATH="$(CURDIR)" python3 scripts/stand_setup.py
