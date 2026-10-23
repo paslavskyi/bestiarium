@@ -30,15 +30,17 @@ def _category(hass: HomeAssistant, entity_id: str) -> EntityCategory | None:
 
 
 async def test_socket_entities(hass: HomeAssistant, entity_id: EntityId) -> None:
-    """A socket's switch, power and state have no category; its knobs are config."""
+    """
+    A socket's switch and power have no category; its knobs are config.
+
+    The tester's truth of the load (state) is to be seen: diagnostic.
+    """
     for spec in MOCK_DEVICES:
         mock_id = f"mock_{spec.device_id}"
-        for domain, unique_id in (
-            ("switch", mock_id),
-            ("sensor", f"{mock_id}_power"),
-            ("binary_sensor", f"{mock_id}_state"),
-        ):
+        for domain, unique_id in (("switch", mock_id), ("sensor", f"{mock_id}_power")):
             assert _category(hass, entity_id(domain, unique_id)) is None
+        state = entity_id("binary_sensor", f"{mock_id}_state")
+        assert _category(hass, state) == EntityCategory.DIAGNOSTIC
         knobs = [("select", f"{mock_id}_fault_profile")] + [
             ("number", f"{mock_id}_{param.name}") for param in FAULT_PARAMS
         ]

@@ -8,7 +8,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from custom_components.bestiarium_devices.const import LOAD_PRIORITY_ALWAYS_ON
+from custom_components.bestiarium_devices.const import (
+    LOAD_PRIORITY_ALWAYS_ON,
+    LOAD_PRIORITY_OFF,
+)
 
 TOKEN_ENV = "HA_TEST_ENV_TOKEN"  # noqa: S105 - the name of the variable
 
@@ -46,6 +49,7 @@ class StandDevice:
     priority: int
     first_queue: bool = False
     thermostat_driven: bool = False
+    night: int | None = None  # its priority in the Night mode, if not the default
 
 
 # Added in this order: of two devices with the same priority the balancer
@@ -55,7 +59,7 @@ STAND_DEVICES = (
     StandDevice("bedside_socket", 5200),
     StandDevice("boiler", 5000, first_queue=True),
     StandDevice("slow_cloud_socket", 4000),
-    StandDevice("tuya_socket", 3500),
+    StandDevice("tuya_socket", 3500, night=LOAD_PRIORITY_OFF),
     StandDevice("night_light", 3000),
     StandDevice("dead_socket", 1000),
     StandDevice("cooker", LOAD_PRIORITY_ALWAYS_ON),
@@ -71,6 +75,8 @@ THERMOSTATS = (
     ("Stand floor 3", "thermo_3", "floor_heating_3"),
 )
 MODES = ("Grid on", "Night")
+YELLOW_W = 3750  # the yellow threshold: 75 % of 5000 W
+RED_W = 4500  # the red threshold: 90 % of 5000 W
 LOAD_LIMIT_W = 5000
 YELLOW_PERCENT = 75
 RED_PERCENT = 90

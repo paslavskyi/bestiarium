@@ -8,6 +8,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 
 from .const import DOMAIN, LOGGER, MOCK_GRID
@@ -53,6 +54,7 @@ class MockDeviceStateSensor(MockSocketEntity, BinarySensorEntity):
 
     _attr_translation_key = "state"
     _attr_device_class = BinarySensorDeviceClass.POWER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def is_on(self) -> bool:

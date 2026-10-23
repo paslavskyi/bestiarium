@@ -156,6 +156,9 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
     for entry in await ha.entries(DEVICES):
         if _belongs_to_stand(entry, reg):
             await ha.remove_entry(entry)
+    # A mode entry the stand kept may have no Night mode
+    select = await ha.rest("GET", f"states/{reg.entity_id('select', MODE, 'select')}")
+    night = "Night" in select["attributes"]["options"]
     for device in STAND_DEVICES:
         await ha.flow(
             "flow",
@@ -164,6 +167,11 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
             {"device_id": reg.mock_device(device.mock_id)["id"]},
             {
                 "default": device.priority,
+                **(
+                    {"priority_Night": device.night}
+                    if night and device.night is not None
+                    else {}
+                ),
                 "overload_first_queue": device.first_queue,
                 "thermostat_driven": device.thermostat_driven,
             },

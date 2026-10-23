@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from custom_components.bestiarium_mock.const import MOCK_DEVICES
 
 from .ha import StandError
-from .layout import DASHBOARD, MODE, ZONE_CHECK_SECONDS, ZONES
+from .layout import DASHBOARD, MODE, STAND_DEVICES, ZONE_CHECK_SECONDS, ZONES
 
 if TYPE_CHECKING:
     from .ha import HomeAssistant, Registry
@@ -58,11 +58,19 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
         },
     ]
     logged = [*zones, mode_select]
+    balanced = {device.mock_id for device in STAND_DEVICES}
     for spec in MOCK_DEVICES:
         device = reg.mock_device(spec.device_id)
         switch = reg.mock("switch", f"mock_{spec.device_id}")
-        control_state = reg.control(device["id"], "control_state")
-        logged += [switch, control_state, reg.control(device["id"], "control_events")]
+        logged.append(switch)
+        # The free socket has no Bestiarium device until one is re-pointed to it
+        control = []
+        if spec.device_id in balanced:
+            control = [_tile(reg.control(device["id"], "control_state"))]
+            logged += [
+                reg.control(device["id"], "control_state"),
+                reg.control(device["id"], "control_events"),
+            ]
         open_page = {
             "action": "navigate",
             "navigation_path": f"/config/devices/device/{device['id']}",
@@ -79,7 +87,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                     _tile(switch, tap_action=open_page),
                     _tile(reg.mock("sensor", f"mock_{spec.device_id}_power")),
                     _tile(reg.mock("select", f"mock_{spec.device_id}_fault_profile")),
-                    _tile(control_state),
+                    *control,
                 ],
             }
         )

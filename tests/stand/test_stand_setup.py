@@ -255,6 +255,9 @@ def test_reset_leaves_always_on_devices_on() -> None:
         def mock(self, domain: str, unique_id: str) -> str:
             return f"{domain}.{unique_id}"
 
+        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
+            return f"{domain}.{unique_id}"
+
     reset = scenario_scripts(_Registry())["reset"]["sequence"]
     switched = {
         step["action"]: step["target"]["entity_id"]

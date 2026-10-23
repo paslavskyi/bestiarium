@@ -56,6 +56,7 @@ async def setup_stand(url: str, token: str) -> None:
             await remove_broken_automations(ha, reg)
             reg = await registry(ha)
             await ensure_mode(ha, reg)
+            reg = await registry(ha)  # with the mode select
             await recreate_devices(ha, reg)
             await recreate_climate(ha, reg)
             reg = await registry(ha)
