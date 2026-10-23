@@ -51,7 +51,7 @@ from .helpers import (
     load_and_red_threshold,
     mode_entity_id,
 )
-from .power_memory import PowerMemory, async_get_power_memory
+from .power_memory import PowerMemory, async_get_power_memory, watts
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -545,20 +545,15 @@ class BalancingCoordinator:
         Its relay state is stale: the meter reported power since the relay last
         switched. A meter that only kept its reading from before does not count.
         """
-        power_entity_id = entry.data.get(CONF_POWER_SENSOR_ENTITY_ID)
-        power = self._hass.states.get(power_entity_id) if power_entity_id else None
+        power = self._hass.states.get(entry.data[CONF_POWER_SENSOR_ENTITY_ID])
         if power is None or power.last_reported <= relay.last_changed:
             return False
-        try:
-            watts = float(power.state)
-        except ValueError:
-            return False
-        if watts <= RELAY_ON_POWER_W:
+        if (reported := watts(power)) is None or reported <= RELAY_ON_POWER_W:
             return False
         LOGGER.debug(
             "%s is on: its relay reads off, its meter %s W",
             get_device_name_from_entry(entry),
-            watts,
+            reported,
         )
         return True
 

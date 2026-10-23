@@ -156,7 +156,8 @@ async def async_get_power_memory(hass: HomeAssistant) -> PowerMemory:
     return memory
 
 
-def _watts(state: State | None) -> float | None:
+def watts(state: State | None) -> float | None:
+    """Return the power a sensor state reports, None if it reports none."""
     try:
         return float(state.state) if state else None
     except ValueError:
@@ -177,7 +178,7 @@ def async_track_runs(
         if entity_id == relay:
             run = builder.relay(time, on=state is not None and state.state == STATE_ON)
         else:
-            run = builder.power(time, _watts(state))
+            run = builder.power(time, watts(state))
         if run:
             memory.add_run(entry.entry_id, run)
 
@@ -227,7 +228,7 @@ def _read_recorder(
     ).get(power, [])
     runs = runs_from_states(
         [(state.last_changed, state.state == STATE_ON) for state in relay_states],
-        [(state.last_changed, _watts(state)) for state in power_states],
+        [(state.last_changed, watts(state)) for state in power_states],
         SOURCE_HISTORY,
     )[-POWER_MEMORY_SIZE:]
     missing = REAL_RUNS_FOR_ESTIMATE - len(runs)
