@@ -47,6 +47,7 @@ from custom_components.bestiarium_devices.const import (
 )
 from custom_components.bestiarium_devices.helpers import get_current_priority
 
+from .conftest import started_coordinator
 from .mode_entities import (
     AC_LOAD_LIMITS,
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
@@ -140,8 +141,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         zone_green_on: None,  # noqa: ARG002
     ) -> None:
         """Test coordinator detects green zone when green sensor is ON."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.active_zone == ActiveZone.GREEN
         finally:
@@ -153,8 +153,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         zone_binary_sensors: None,  # noqa: ARG002
     ) -> None:
         """Test starting coordinator twice does not duplicate subscriptions."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         await coordinator.async_start()  # Second start should return early
         assert coordinator.is_running
         await coordinator.async_stop()
@@ -173,8 +172,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         hass: HomeAssistant,
     ) -> None:
         """Coordinator still running when sensors missing (no subscriptions)."""
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
             assert coordinator.active_zone == ActiveZone.NONE
@@ -208,8 +206,7 @@ class TestModeChangeHandling:
         )
         entry.add_to_hass(hass)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -247,8 +244,7 @@ class TestModeChangeHandling:
         )
         entry.add_to_hass(hass)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -302,8 +298,7 @@ class TestGreenStrategy:
         entry_high.add_to_hass(hass)
         hass.states.async_set("switch.high", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -339,8 +334,7 @@ class TestGreenStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.already_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -395,8 +389,7 @@ class TestGreenStrategy:
         entry_always.add_to_hass(hass)
         hass.states.async_set("switch.always_priority", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -448,8 +441,7 @@ class TestRedStrategy:
         entry_low.add_to_hass(hass)
         hass.states.async_set("switch.low", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -485,8 +477,7 @@ class TestRedStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.already_off", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -524,8 +515,7 @@ class TestRedStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -579,8 +569,7 @@ class TestOverloadStrategy:
         entry_always.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -621,8 +610,7 @@ class TestOverloadStrategy:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.always_on", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -685,8 +673,7 @@ class TestOverloadTwoStepStrategy:
         entry_second.add_to_hass(hass)
         hass.states.async_set("switch.second", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -752,8 +739,7 @@ class TestOverloadTwoStepStrategy:
                 if entity_id == "switch.first":
                     hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             mock_call = AsyncMock(side_effect=clear_overload_on_first_turn_off)
             with patch(
@@ -807,8 +793,7 @@ class TestOverloadTwoStepStrategy:
         async def clear_overload_after_sleep(_seconds: float) -> None:
             hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -864,8 +849,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.first1", STATE_ON)
         hass.states.async_set("switch.first2", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -922,8 +906,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.a", STATE_ON)
         hass.states.async_set("switch.b", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             sleep_mock = AsyncMock()
             with (
@@ -985,8 +968,7 @@ class TestOverloadTwoStepStrategy:
         hass.states.async_set("switch.first", STATE_ON)
         hass.states.async_set("switch.second", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with (
                 patch(
@@ -1033,8 +1015,7 @@ class TestZoneTransitions:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1075,8 +1056,7 @@ class TestZoneTransitions:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1117,8 +1097,7 @@ class TestZoneTransitions:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_OFF)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1180,8 +1159,7 @@ class TestZoneTransitions:
         entry.add_to_hass(hass)
         hass.states.async_set("switch.device", STATE_ON)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1225,8 +1203,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
             hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
@@ -1267,8 +1244,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_ON, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1314,8 +1290,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_DEVICE_TURNED_OFF, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1521,8 +1496,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_MODE_APPLIED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "homeassistant.core.ServiceRegistry.async_call",
@@ -1585,8 +1559,7 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
 
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             for power in power_readings:
                 hass.states.async_set("sensor.power_meter", power)
@@ -1670,8 +1643,7 @@ class TestLoadLimitChange:
     ) -> None:
         """At constant load, a limit change moves straight to the final zone."""
         await _setup_real_mode(hass, power, old_limit)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, new_limit)
@@ -1685,8 +1657,7 @@ class TestLoadLimitChange:
     ) -> None:
         """Raising the limit below the yellow threshold waits out green recovery."""
         await _setup_real_mode(hass, "4500", 5000)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, 8800)
@@ -1713,8 +1684,7 @@ class TestLoadLimitChange:
         ).add_to_hass(hass)
         hass.states.async_set("switch.heater", STATE_ON)
         await _setup_real_mode(hass, "4000", 5000)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         turned_off: list[Event] = []
 
@@ -1796,8 +1766,7 @@ class TestModeEntitiesByUniqueId:
         _add_device(hass, "Boiler", "switch.boiler", first_queue=True)
         turn_off = async_mock_service(hass, "switch", "turn_off")
         first_queue = _record_events(hass, EVENT_OVERLOAD_FIRST_QUEUE)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             with patch(
                 "custom_components.bestiarium_devices.balancer.asyncio.sleep",
@@ -1818,8 +1787,7 @@ class TestModeEntitiesByUniqueId:
         await _setup_real_mode(hass, "1000")
         _add_device(hass, "Boiler", "switch.boiler")
         turn_off = async_mock_service(hass, "switch", "turn_off")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             er.async_get(hass).async_update_entity(
                 _mode_entity_id(hass, "binary_sensor", "power_load_red"),
@@ -1842,8 +1810,7 @@ class TestModeEntitiesByUniqueId:
     ) -> None:
         """Renaming the active zone sensor neither changes nor loses the zone."""
         await _setup_real_mode(hass, "4500")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             er.async_get(hass).async_update_entity(
@@ -1874,8 +1841,7 @@ class TestModeEntitiesByUniqueId:
         )
         turn_off = async_mock_service(hass, "switch", "turn_off")
         mode_applied = _record_events(hass, EVENT_MODE_APPLIED)
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             er.async_get(hass).async_update_entity(
                 _mode_entity_id(hass, "select", "select"),
@@ -1910,8 +1876,7 @@ class TestModeEntitiesByUniqueId:
         assert await hass.config_entries.async_setup(mode_entry.entry_id)
         await hass.async_block_till_done()
         notifications = async_mock_service(hass, "persistent_notification", "create")
-        coordinator = BalancingCoordinator(hass)
-        await coordinator.async_start()
+        coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
             assert coordinator.active_zone == ActiveZone.NONE

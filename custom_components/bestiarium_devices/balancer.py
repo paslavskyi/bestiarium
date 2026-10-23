@@ -175,18 +175,21 @@ class BalancingCoordinator:
         self._active_zone = ActiveZone.NONE
         self._running = False
 
-    def control(self, entry: ConfigEntry) -> DeviceControl:
-        """Return the control state of a device, following it from now on."""
-        if (control := self._controls.get(entry.entry_id)) is None:
-            control = DeviceControl(self._hass, entry, self._response_memory)
-            control.async_start()
-            self._controls[entry.entry_id] = control
-        return control
+    def control(self, entry: ConfigEntry) -> DeviceControl | None:
+        """
+        Return the control state of a device that is set up.
+
+        Disabled, unloading and removed entries have none, and the strategies
+        leave them alone.
+        """
+        return self._controls.get(entry.entry_id)
 
     @callback
     def async_add_device(self, entry: ConfigEntry) -> CALLBACK_TYPE:
         """Follow a device entry; return the call that stops following it."""
-        self.control(entry)
+        control = DeviceControl(self._hass, entry, self._response_memory)
+        control.async_start()
+        self._controls[entry.entry_id] = control
 
         @callback
         def remove() -> None:
@@ -235,6 +238,7 @@ class BalancingCoordinator:
     async def _async_strategy_command(  # noqa: PLR0913
         self,
         entry: ConfigEntry,
+        control: DeviceControl,
         direction: Direction,
         strategy: str,
         priority: int,
@@ -248,7 +252,6 @@ class BalancingCoordinator:
         Only the first attempt of a series is logged at info, the repeats at
         debug: a device that does not respond gives no line a step.
         """
-        control = self.control(entry)
         LOGGER.log(
             logging.INFO if control.first_attempt(direction) else logging.DEBUG,
             "%s strategy: Turning %s device %s (%s) (priority %d)",
@@ -608,12 +611,13 @@ class BalancingCoordinator:
         now = dt_util.utcnow()
         entries = self._hass.config_entries.async_entries(DOMAIN)
 
-        candidates: list[tuple[int, ConfigEntry]] = []
+        candidates: list[tuple[int, ConfigEntry, DeviceControl]] = []
 
         for entry in entries:
             switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
+            control = self.control(entry)
 
-            if not switch_entity_id:
+            if not switch_entity_id or control is None:
                 continue
 
             # Check if switch is OFF
@@ -627,17 +631,17 @@ class BalancingCoordinator:
             if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
                 continue
 
-            if not self.control(entry).may_command(Direction.TURN_ON, now):
+            if not control.may_command(Direction.TURN_ON, now):
                 continue
 
-            candidates.append((priority, entry))
+            candidates.append((priority, entry, control))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
         fitting = next(
             (
-                (priority, entry)
-                for priority, entry in candidates
-                if priority == LOAD_PRIORITY_ALWAYS_ON or self._fits(entry)
+                candidate
+                for candidate in candidates
+                if candidate[0] == LOAD_PRIORITY_ALWAYS_ON or self._fits(candidate[1])
             ),
             None,
         )
@@ -645,9 +649,10 @@ class BalancingCoordinator:
             LOGGER.debug("Green strategy: No devices to turn on")
             return
 
-        priority, entry = fitting
+        priority, entry, control = fitting
         await self._async_strategy_command(
             entry,
+            control,
             Direction.TURN_ON,
             "green",
             priority,
@@ -666,19 +671,19 @@ class BalancingCoordinator:
         now = dt_util.utcnow()
         entries = self._hass.config_entries.async_entries(DOMAIN)
         if any(
-            self.control(entry).waiting(Direction.TURN_OFF, now)
-            for entry in entries
-            if entry.data.get(CONF_SWITCH_ENTITY_ID)
+            control.waiting(Direction.TURN_OFF, now)
+            for control in self._controls.values()
         ):
             LOGGER.debug("Red strategy: waiting for a device to turn off")
             return
 
-        candidates: list[tuple[int, ConfigEntry]] = []
+        candidates: list[tuple[int, ConfigEntry, DeviceControl]] = []
 
         for entry in entries:
             switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
+            control = self.control(entry)
 
-            if not switch_entity_id:
+            if not switch_entity_id or control is None:
                 continue
 
             # Check if switch is ON
@@ -693,10 +698,10 @@ class BalancingCoordinator:
             if priority == LOAD_PRIORITY_ALWAYS_ON:
                 continue
 
-            if not self.control(entry).may_command(Direction.TURN_OFF, now):
+            if not control.may_command(Direction.TURN_OFF, now):
                 continue
 
-            candidates.append((priority, entry))
+            candidates.append((priority, entry, control))
 
         if not candidates:
             LOGGER.debug("Red strategy: No devices to turn off")
@@ -706,9 +711,10 @@ class BalancingCoordinator:
         candidates.sort(key=lambda x: x[0])
 
         # Turn off the lowest priority device
-        priority, entry = candidates[0]
+        priority, entry, control = candidates[0]
         await self._async_strategy_command(
             entry,
+            control,
             Direction.TURN_OFF,
             "red",
             priority,

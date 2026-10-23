@@ -482,7 +482,10 @@ One `DeviceControl` per device entry (`BalancingCoordinator.control(entry)`), fo
 
 - A strategy's command starts or continues a **series** of one direction (turn on / turn off). The attempt waits `max(strategy step, longest response × margin)`; the longest response is the longest of the device's last `RESPONSE_MEMORY_SIZE` (10) answers (`ResponseMemory`, Store `bestiarium_devices.control`, kept across restarts), or `default_response_seconds` before any. In the red zone the deadline is also capped by the series' limit, `red_max_wait_seconds` after its first command.
 - At the next step after the deadline (timers within `STEP_JITTER_SECONDS`) the attempt failed. After `attempts` failures, or when the red limit is reached, the device is **deferred** for `defer_minutes`: no strategy picks it; the event `deferred` fires and its control state is "Not responding". When the deferral ends the event `retrying` fires and a new series starts; the state stays "Not responding".
-- **Any change of the relay state** answers: the series and the deferral end (a change to the expected state is remembered as a response time). After the hysteresis the state leaves "Not responding" and the event `recovered` fires.
+- **Any change of the relay state** ends the series and the deferral, a change to `unavailable` too. "Not responding" ends only when the relay comes back with the expected state or another state than before (a dead device that drops out and returns as it was did not answer); each such change starts the hysteresis again, and after it the event `recovered` fires.
+- **Response time** counts from the series' first command to the expected state, also when the answer comes after a repeat; not while the device is deferred.
+- **Only set-up devices** have a control (`async_add_device` from `async_setup_entry`, removed on unload); the strategies leave disabled, unloading and removed entries alone, so the Store holds only devices that exist.
+- **The other direction**: a strategy asking about the opposite direction changes nothing (the red zone's check of turn-offs keeps a turn-on deferral and a turn-on in flight); only a command of the other direction starts its own series.
 - Deferral and series are not stored: after a restart every device gets its attempts again.
 
 ### Control state (`ControlStateSensor`, enum, diagnostic)

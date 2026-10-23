@@ -86,7 +86,7 @@ They are equal unless the fault model separates them.
 | Parameter (`FaultParams`) | Range | Effect |
 |---|---|---|
 | `ignore_percent` | 0–100 % | the command is ignored |
-| `delay_min_s`, `delay_max_s` | 0–120 s | the command takes effect after a random delay from the range (the latest command wins) |
+| `delay_min_s`, `delay_max_s` | 0–120 s | the command takes effect after a random delay from the range; a repeat of the command on its way changes nothing (the device is already carrying it out), the opposite command replaces it |
 | `stuck_percent` | 0–100 % | the load switches but HA keeps the old state, until a later command goes through without sticking (like SmartThings until its next poll) |
 | `dropouts_per_hour` | 0–60 | on average this many dropouts an hour (exponential gaps) |
 | `dropout_min_s`, `dropout_max_s` | 1–600 s | a dropout makes the switch **and** the power sensor `unavailable` for a random time; the load keeps its state, and the "State" binary sensor keeps showing it |

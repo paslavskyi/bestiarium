@@ -8,7 +8,19 @@ import pytest
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, ServiceRegistry
 
+from custom_components.bestiarium_devices.balancer import BalancingCoordinator
+from custom_components.bestiarium_devices.const import DOMAIN
+
 from .mode_entities import register_mode_entities
+
+
+async def started_coordinator(hass: HomeAssistant) -> BalancingCoordinator:
+    """Start a balancer following every device entry, as their setup does."""
+    coordinator = BalancingCoordinator(hass)
+    await coordinator.async_start()
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        coordinator.async_add_device(entry)
+    return coordinator
 
 
 @pytest.fixture

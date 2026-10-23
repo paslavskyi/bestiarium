@@ -6,6 +6,7 @@ import logging
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant.config_entries import ConfigEntryDisabler
 from homeassistant.const import (
     EVENT_HOMEASSISTANT_STARTED,
     STATE_OFF,
@@ -14,13 +15,17 @@ from homeassistant.const import (
 )
 from homeassistant.core import CoreState, HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bestiarium_devices.const import (
     CONF_DEFAULT_PRIORITY,
     DATA_COORDINATOR,
     DOMAIN,
 )
-from custom_components.bestiarium_devices.control import ControlState
+from custom_components.bestiarium_devices.control import (
+    ControlState,
+    async_get_response_memory,
+)
 from custom_components.bestiarium_devices.sensor import ControlStateSensor
 
 from .conftest import FakeRelays
@@ -341,3 +346,143 @@ async def test_control_entities_are_diagnostic(home: Home) -> None:
     for domain, key in (("sensor", "control_state"), ("event", "control_events")):
         entity = registry.async_get(home.entity_id(device, domain, key))
         assert entity.entity_category == "diagnostic"
+
+
+async def test_deferral_survives_a_red_episode(home: Home) -> None:
+    """Review 14, 1: the red zone's questions do not wipe a turn-on deferral."""
+    commode, _ = await _night_case(home)
+    await home.tick(4 * MINUTE, step=MINUTE)
+
+    home.load("4400")
+    await home.tick(30, step=5)
+    home.load("1000")
+    await home.tick(31)
+    await home.tick(2 * MINUTE, step=MINUTE)
+
+    assert home.commands(COMMODE) == ["turn_on"] * 3
+    assert home.events[commode.entry_id] == ["deferred"]
+    assert home.state(commode) == ControlState.UNRESPONSIVE
+
+
+async def test_answer_after_red_began_is_remembered(home: Home) -> None:
+    """Review 14, 1: a turn-on in flight keeps its series through the red zone."""
+    await home.mode("1000")
+    slow = await home.device(COMMODE, 5200)
+    home.relays.stuck.add(COMMODE)
+    await home.tick(MINUTE, step=MINUTE)
+    assert home.commands(COMMODE) == ["turn_on"]
+
+    home.load("4400")
+    await home.tick(12)
+    home.set(COMMODE, STATE_ON)
+    await home.tick(1)
+
+    coordinator = home.hass.data[DOMAIN][DATA_COORDINATOR]
+    assert coordinator.control(slow).attributes["response_time"] == pytest.approx(12)
+
+
+async def test_response_time_counts_from_the_first_command(home: Home) -> None:
+    """Review 14, 2: an answer after a repeat counts from the series' start."""
+    await home.mode("4400")
+    slow = await home.device(DEAD, 1000, on=True)
+    await home.device(NIGHT, 3000, on=True)
+    home.relays.stuck.add(DEAD)
+
+    # First command at 5 s; it fails at 30 s and is repeated
+    await home.tick(30, step=5)
+    assert home.commands(DEAD) == ["turn_off", "turn_off"]
+    await home.tick(3)
+    home.set(DEAD, STATE_OFF)
+    await home.tick(1)
+
+    coordinator = home.hass.data[DOMAIN][DATA_COORDINATOR]
+    assert coordinator.control(slow).attributes["response_time"] == pytest.approx(28)
+
+
+async def test_entries_not_set_up_have_no_control(
+    hass: HomeAssistant, home: Home
+) -> None:
+    """Review 14, 3: a disabled or removed entry is left alone and not stored."""
+    await home.mode("1000")
+    removed = await home.device(BEDSIDE, 5200)
+    disabled = MockConfigEntry(
+        domain=DOMAIN,
+        data=dict(removed.data, switch_entity_id=COMMODE),
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    disabled.add_to_hass(hass)
+    home.relays.add(COMMODE, on=False)
+    await hass.config_entries.async_remove(removed.entry_id)
+    await hass.async_block_till_done()
+
+    await home.tick(2 * MINUTE, step=MINUTE)
+
+    coordinator = hass.data[DOMAIN][DATA_COORDINATOR]
+    assert coordinator.control(disabled) is None
+    assert coordinator.control(removed) is None
+    assert home.commands(COMMODE) == []
+    memory = await async_get_response_memory(hass)
+    assert memory.longest(removed.entry_id) is None
+
+
+async def test_dead_device_dropping_out_does_not_recover(home: Home) -> None:
+    """Review 14, 4: unavailable and back as it was is no answer."""
+    commode, _ = await _night_case(home)
+    await home.tick(4 * MINUTE, step=MINUTE)
+
+    home.set(COMMODE, STATE_UNAVAILABLE)
+    await home.tick(30)
+    home.set(COMMODE, STATE_OFF)
+    await home.tick(2 * MINUTE)
+
+    assert "recovered" not in home.events[commode.entry_id]
+    assert home.state(commode) == ControlState.UNRESPONSIVE
+
+
+async def test_change_back_restarts_the_hysteresis(home: Home) -> None:
+    """Review 14, 4: switched on, then back off: the minute starts again."""
+    commode, _ = await _night_case(home)
+    await home.tick(4 * MINUTE, step=MINUTE)
+
+    home.set(COMMODE, STATE_ON)
+    await home.tick(40)
+    home.set(COMMODE, STATE_OFF)
+    await home.tick(40)
+    assert home.state(commode) == ControlState.UNRESPONSIVE
+
+    await home.tick(21)
+    assert home.state(commode) == ControlState.NORMAL
+
+
+async def test_retrying_tells_the_series_it_ends(home: Home) -> None:
+    """Review 14, 5: the retrying event carries the attempts and the time."""
+    commode, _ = await _night_case(home)
+    await home.tick(19 * MINUTE, step=MINUTE)
+
+    assert home.events[commode.entry_id] == ["deferred", "retrying"]
+    retrying = home.payloads[commode.entry_id][1]
+    assert retrying["direction"] == "turn_on"
+    assert retrying["failed_attempts"] == 3
+    assert retrying["next_attempt"] is not None
+
+
+async def test_device_appearing_after_start_is_no_dropout(
+    hass: HomeAssistant, home: Home
+) -> None:
+    """Review 14, 6: a sensor still loading at HA's start is not a dropout."""
+    await home.mode("1000")
+    hass.set_state(CoreState.starting)
+    device = await home.device(COMMODE, 5200, on=True)
+    hass.states.async_remove(f"{COMMODE}_power")
+    hass.set_state(CoreState.running)
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await home.tick(10)
+
+    home.set(f"{COMMODE}_power", "100")
+    await home.tick(MINUTE)
+
+    attributes = hass.states.get(
+        home.entity_id(device, "sensor", "control_state")
+    ).attributes
+    assert attributes["dropouts_last_hour"] == 0
+    assert home.state(device) == ControlState.NORMAL

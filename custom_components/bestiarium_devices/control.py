@@ -155,6 +155,10 @@ class _Condition:
         if raw != self.raw:
             self.raw, self.since = raw, now
 
+    def clear(self, now: datetime) -> None:
+        """End the raw problem now; a later clear starts the wait to leave again."""
+        self.raw, self.since = False, now
+
     def settle(self, now: datetime, enter: timedelta, leave: timedelta) -> None:
         """Confirm a problem that lasted enter, or end one stable for leave."""
         if (when := self.next_change(enter, leave)) is not None and now >= when:
@@ -175,8 +179,7 @@ class _Series:
     started: datetime
     limit: datetime | None  # the red zone's hard limit of the series' wait
     failures: int = 0
-    sent: datetime | None = None  # the attempt waiting for an answer
-    deadline: datetime | None = None
+    deadline: datetime | None = None  # of the attempt waiting for an answer
     deferred_until: datetime | None = None
 
 
@@ -195,6 +198,8 @@ class DeviceControl:
         self._power: str = entry.data[CONF_POWER_SENSOR_ENTITY_ID]
         self._series: _Series | None = None
         self._last_attempt: datetime | None = None
+        # The relay's last state that was not gone, to tell an answer from a return
+        self._known_state: str | None = None
         self._switch_gone = _Condition()
         self._power_gone = _Condition()
         self._unstable = _Condition()
@@ -215,6 +220,8 @@ class DeviceControl:
     @callback
     def async_start(self) -> None:
         """Follow the relay and the power sensor; availability once HA has started."""
+        if not _gone(relay := self._hass.states.get(self._relay)):
+            self._known_state = relay.state
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self._relay, self._power], self._on_state
@@ -248,11 +255,7 @@ class DeviceControl:
     def first_attempt(self, direction: Direction) -> bool:
         """Return whether the next command of the direction starts a series."""
         series = self._series
-        return (
-            series is None
-            or series.direction is not direction
-            or (series.failures == 0 and series.sent is None)
-        )
+        return series is None or series.direction is not direction
 
     def command_sent(
         self, direction: Direction, now: datetime, *, step_s: float, red: bool
@@ -269,28 +272,29 @@ class DeviceControl:
         deadline = now + timedelta(
             seconds=max(step_s, response * settings.response_margin)
         )
-        series.sent, self._last_attempt = now, now
+        self._last_attempt = now
         series.deadline = min(deadline, series.limit) if series.limit else deadline
         self._changed()
 
     def _settle_series(self, direction: Direction, now: datetime) -> _Series | None:
-        """Count a failed attempt, defer the device or try it again."""
+        """
+        Count a failed attempt, defer the device or try it again.
+
+        A question about the other direction changes nothing: only a command of
+        the other direction starts its own series (command_sent).
+        """
         series = self._series
-        if series is None:
-            return None
-        if series.direction is not direction:
-            # The other strategy wants the opposite: its own series starts
-            self._series = None
+        if series is None or series.direction is not direction:
             return None
         if series.deferred_until is not None:
             if now + JITTER < series.deferred_until:
                 return series
             self._series = None
-            self._event(ControlEvent.RETRYING, direction)
+            self._event(ControlEvent.RETRYING, series)
             return None
         if series.deadline is not None and now + JITTER >= series.deadline:
             series.failures += 1
-            series.sent = series.deadline = None
+            series.deadline = None
             if series.failures >= self.settings.attempts or (
                 series.limit is not None and now + JITTER >= series.limit
             ):
@@ -302,7 +306,7 @@ class DeviceControl:
     def _defer(self, series: _Series, now: datetime) -> None:
         series.deferred_until = now + timedelta(minutes=self.settings.defer_minutes)
         self._unresponsive.set(True, now)  # noqa: FBT003
-        self._event(ControlEvent.DEFERRED, series.direction)
+        self._event(ControlEvent.DEFERRED, series)
         self._refresh(now)
 
     # States of the relay and the power sensor
@@ -313,8 +317,6 @@ class DeviceControl:
         now = dt_util.utcnow()
         self._switch_gone.set(_gone(self._hass.states.get(self._relay)), now)
         self._power_gone.set(_gone(self._hass.states.get(self._power)), now)
-        if self._switch_gone.raw or self._power_gone.raw:
-            self._gone_since = now
         self._refresh(now)
 
     @callback
@@ -345,17 +347,26 @@ class DeviceControl:
                 self._dropouts.append(now)
 
     def _on_relay_changed(self, new: State | None, now: datetime) -> None:
-        """Any change of the relay answers the commands and ends a deferral."""
-        series = self._series
-        if (
-            series is not None
-            and series.sent is not None
-            and new is not None
-            and new.state == series.direction.expected_state
-        ):
-            self._memory.add(self._entry.entry_id, (now - series.sent).total_seconds())
-        self._series = None
-        self._unresponsive.set(False, now)  # noqa: FBT003
+        """
+        Any change of the relay ends the series and its deferral.
+
+        "Not responding" ends only when the relay is back with the expected
+        state or another state than before: a dead device that drops out and
+        returns as it was did not answer. Each such change starts the
+        hysteresis again. The response time counts from the series' first
+        command, while the device was not deferred.
+        """
+        series, self._series = self._series, None
+        if _gone(new):
+            return
+        expected = series is not None and new.state == series.direction.expected_state
+        if expected and series.deferred_until is None:
+            self._memory.add(
+                self._entry.entry_id, (now - series.started).total_seconds()
+            )
+        if expected or new.state != self._known_state:
+            self._unresponsive.clear(now)
+        self._known_state = new.state
 
     # The control state
 
@@ -441,14 +452,13 @@ class DeviceControl:
             self._hass, SIGNAL_CONTROL_CHANGED.format(self._entry.entry_id)
         )
 
-    def _event(self, event: ControlEvent, direction: Direction | None) -> None:
-        series = self._series
+    def _event(self, event: ControlEvent, series: _Series | None) -> None:
         async_dispatcher_send(
             self._hass,
             SIGNAL_CONTROL_EVENT.format(self._entry.entry_id),
             event,
             {
-                "direction": direction,
+                "direction": series.direction if series else None,
                 "failed_attempts": series.failures if series else 0,
                 "next_attempt": series.deferred_until if series else None,
             },

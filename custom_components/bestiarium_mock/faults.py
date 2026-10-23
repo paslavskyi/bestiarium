@@ -47,6 +47,7 @@ class MockSocket:
         self.custom = PROFILE_PARAMS[spec.profile]
         self._listeners: list[Callable[[], None]] = []
         self._cancel_command: CALLBACK_TYPE | None = None
+        self._pending_on: bool | None = None  # the command on its way, if any
         self._cancel_dropout: CALLBACK_TYPE | None = None
 
     @property
@@ -83,7 +84,7 @@ class MockSocket:
         for cancel in (self._cancel_command, self._cancel_dropout):
             if cancel:
                 cancel()
-        self._cancel_command = self._cancel_dropout = None
+        self._cancel_command = self._cancel_dropout = self._pending_on = None
 
     @callback
     def restore(self, *, on: bool) -> None:
@@ -92,7 +93,15 @@ class MockSocket:
 
     @callback
     def command(self, *, on: bool) -> None:
-        """Receive a turn on/off command; the fault model decides what follows."""
+        """
+        Receive a turn on/off command; the fault model decides what follows.
+
+        A repeat of the command on its way changes nothing, like a real device
+        that is already carrying it out; the opposite command replaces it.
+        """
+        if self._pending_on is on:
+            LOGGER.debug("%s already carries out the command", self.spec.device_id)
+            return
         params = self.params
         if self.rng.random() * 100 < params.ignore_percent:
             LOGGER.debug("%s ignores the command", self.spec.device_id)
@@ -103,6 +112,7 @@ class MockSocket:
         if delay <= 0:
             self._execute(on=on)
             return
+        self._pending_on = on
         self._cancel_command = async_call_later(
             self._hass, delay, partial(self._execute_later, on=on)
         )
@@ -113,7 +123,7 @@ class MockSocket:
 
     @callback
     def _execute(self, *, on: bool) -> None:
-        self._cancel_command = None
+        self._cancel_command = self._pending_on = None
         self.physical_on = on
         if self.rng.random() * 100 < self.params.stuck_percent:
             LOGGER.debug(

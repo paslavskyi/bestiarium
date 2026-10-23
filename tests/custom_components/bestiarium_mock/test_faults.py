@@ -95,6 +95,24 @@ async def test_delay_from_the_range(
     assert _power(hass, entity_id, "boiler") == "2000"
 
 
+async def test_repeated_command_keeps_its_delay(
+    hass: HomeAssistant,
+    stand: MockDevicesCoordinator,
+    entity_id: EntityId,
+    advance: Callable,
+) -> None:
+    """A repeat of the command on its way does not start the delay again."""
+    _custom(stand, "boiler", delay_min_s=5, delay_max_s=5)
+    switch = entity_id("switch", "mock_boiler")
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch})
+    await advance(3)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": switch})
+    await advance(2)
+
+    assert _state(hass, entity_id, "boiler") == STATE_ON
+
+
 async def test_stuck_state_until_a_clean_command(
     hass: HomeAssistant,
     stand: MockDevicesCoordinator,

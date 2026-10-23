@@ -42,6 +42,7 @@ class Home:
         self.relays = relays
         self._freezer = freezer
         self.events: dict[str, list[str]] = {}
+        self.payloads: dict[str, list[dict[str, Any]]] = {}
         self.entries: list[MockConfigEntry] = []
 
     async def mode(self, load: str) -> None:
@@ -88,10 +89,12 @@ class Home:
         assert await self.hass.config_entries.async_setup(entry.entry_id)  # noqa: S101
         await self.hass.async_block_till_done()
         events = self.events.setdefault(entry.entry_id, [])
+        payloads = self.payloads.setdefault(entry.entry_id, [])
 
         @callback
-        def record(event: str, _attributes: dict[str, Any]) -> None:
+        def record(event: str, attributes: dict[str, Any]) -> None:
             events.append(event)
+            payloads.append(attributes)
 
         async_dispatcher_connect(
             self.hass, SIGNAL_CONTROL_EVENT.format(entry.entry_id), record
