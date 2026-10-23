@@ -51,14 +51,18 @@
           "ac_load_limit_w": "AC load limit (W)",
           "ac_yellow_zone_percent": "Yellow zone (%)",
           "ac_red_zone_percent": "Red zone (%)",
-          "ac_overload_recovery_seconds": "Recovery time (s)"
+          "ac_overload_recovery_seconds": "Pause before green (s)",
+          "ac_zone_hysteresis_percent": "Zone margin (% of the limit)",
+          "ac_power_tolerance_seconds": "Power data tolerance (s)"
         },
         "data_description": {
           "ac_power_sensor": "Sensor that measures AC power (W)",
           "ac_load_limit_w": "Current maximum AC load (W). It can also be changed at runtime with the Power Load Limit entity, e.g. from an automation.",
           "ac_yellow_zone_percent": "Yellow warning threshold percentage",
           "ac_red_zone_percent": "Red critical threshold percentage",
-          "ac_overload_recovery_seconds": "Wait time after load decreases below threshold before allowing device turn-on"
+          "ac_overload_recovery_seconds": "After the load drops below the yellow threshold minus the margin, how long it must stay there before the green zone (and turning devices on) starts",
+          "ac_zone_hysteresis_percent": "A zone goes down only when the load is this much below its threshold; up is at once",
+          "ac_power_tolerance_seconds": "How long the zone stays as it was when the power sensor gives no data; then the zone is “no data”"
         }
       },
       "add": {

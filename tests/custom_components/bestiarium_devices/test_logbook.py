@@ -74,8 +74,8 @@ def test_every_event_of_the_contract_is_described() -> None:
     [
         (
             EVENT_ZONE_CHANGED,
-            ZoneChangedData(previous_zone="none", zone="green"),
-            "zone changed from none to green",
+            ZoneChangedData(previous_zone="pause", zone="green"),
+            "zone changed from pause to green",
         ),
         (
             EVENT_DEVICE_TURNED_ON,

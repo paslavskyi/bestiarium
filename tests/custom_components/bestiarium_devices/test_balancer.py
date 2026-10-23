@@ -133,7 +133,7 @@ class TestBalancingCoordinatorInitAndCleanup:
 
         await coordinator.async_stop()
         assert not coordinator.is_running
-        assert coordinator.active_zone == ActiveZone.NONE
+        assert coordinator.active_zone == ActiveZone.NO_DATA
 
     async def test_coordinator_initial_active_zone_when_green_on(
         self,
@@ -175,7 +175,7 @@ class TestBalancingCoordinatorInitAndCleanup:
         coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
-            assert coordinator.active_zone == ActiveZone.NONE
+            assert coordinator.active_zone == ActiveZone.NO_DATA
         finally:
             await coordinator.async_stop()
 
@@ -1612,6 +1612,25 @@ def _record_zone_changes(hass: HomeAssistant) -> list[tuple[str, str]]:
     return zone_changes
 
 
+async def test_zone_changed_tells_pause_and_no_data(hass: HomeAssistant) -> None:
+    """The balancer's zone: the pause before green and no power data apart."""
+    await _setup_real_mode(hass, "3500")
+    coordinator = await started_coordinator(hass)
+    zone_changes = _record_zone_changes(hass)
+    try:
+        hass.states.async_set(POWER_SENSOR, "2000")
+        await hass.async_block_till_done()
+        assert coordinator.active_zone == ActiveZone.PAUSE
+
+        hass.states.async_set(POWER_SENSOR, STATE_UNAVAILABLE)
+        await hass.async_block_till_done()
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+        await hass.async_block_till_done()
+        assert zone_changes == [("yellow", "pause"), ("pause", "no_data")]
+    finally:
+        await coordinator.async_stop()
+
+
 class TestLoadLimitChange:
     """Changing the bestiarium_mode load limit at runtime, seen by the balancer."""
 
@@ -1655,17 +1674,17 @@ class TestLoadLimitChange:
     async def test_raised_limit_waits_for_green_recovery(
         self, hass: HomeAssistant
     ) -> None:
-        """Raising the limit below the yellow threshold waits out green recovery."""
+        """Raising the limit above the load waits out the pause before green."""
         await _setup_real_mode(hass, "4500", 5000)
         coordinator = await started_coordinator(hass)
         zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, 8800)
-            assert zone_changes == [("red", "none")]
+            assert zone_changes == [("red", "pause")]
 
             async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=31))
             await hass.async_block_till_done()
-            assert zone_changes == [("red", "none"), ("none", "green")]
+            assert zone_changes == [("red", "pause"), ("pause", "green")]
         finally:
             await coordinator.async_stop()
 
@@ -1879,7 +1898,7 @@ class TestModeEntitiesByUniqueId:
         coordinator = await started_coordinator(hass)
         try:
             assert coordinator.is_running
-            assert coordinator.active_zone == ActiveZone.NONE
+            assert coordinator.active_zone == ActiveZone.NO_DATA
         finally:
             await coordinator.async_stop()
 

@@ -39,9 +39,14 @@ NOTIFICATION_ID_MISSING_SENSORS = "bestiarium_devices_missing_sensors"
 
 
 class ActiveZone(StrEnum):
-    """Active power load zone for balancing."""
+    """
+    Active power load zone for balancing.
 
-    NONE = "none"
+    Pause (green on pause) and no data run no strategy.
+    """
+
+    NO_DATA = "no_data"
+    PAUSE = "pause"
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"
@@ -59,7 +64,7 @@ class BalancingCoordinator:
         self._hass = hass
 
         # Current active zone
-        self._active_zone: ActiveZone = ActiveZone.NONE
+        self._active_zone: ActiveZone = ActiveZone.NO_DATA
 
         # Reference to cancel periodic job callback
         self._job_cancel: Callable[[], None] | None = None
@@ -146,7 +151,7 @@ class BalancingCoordinator:
             control.async_stop()
         self._controls.clear()
 
-        self._active_zone = ActiveZone.NONE
+        self._active_zone = ActiveZone.NO_DATA
         self._running = False
 
     def control(self, entry: ConfigEntry) -> DeviceControl | None:
@@ -256,12 +261,19 @@ class BalancingCoordinator:
             LOGGER.debug("Could not send persistent notification")
 
     def _determine_active_zone(self) -> ActiveZone:
-        """Determine which zone is currently active based on binary sensor states."""
-        # Check sensors in priority order (overload is highest priority)
+        """
+        Return the zone whose sensor is on.
+
+        None on: the pause before green while the sensors are available, no
+        data when they are not.
+        """
         for zone in reversed(ZONES):
             if self._is_sensor_on(zone):
                 return zone
-        return ActiveZone.NONE
+        green = self._zone_state(ActiveZone.GREEN)
+        if green is not None and green.state == STATE_OFF:
+            return ActiveZone.PAUSE
+        return ActiveZone.NO_DATA
 
     def _is_sensor_on(self, zone: ActiveZone) -> bool:
         """Check if a zone binary sensor is ON."""

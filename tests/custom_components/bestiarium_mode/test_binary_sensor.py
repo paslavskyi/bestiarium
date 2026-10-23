@@ -630,8 +630,12 @@ async def test_default_recovery_seconds(hass: HomeAssistant) -> None:
     assert hass.states.get(green_id).state == STATE_ON
 
 
-async def test_green_unavailable_cancels_recovery(hass: HomeAssistant) -> None:
-    """Test that unavailable sensor cancels recovery and makes green unavailable."""
+async def test_lost_data_stops_the_pause(hass: HomeAssistant) -> None:
+    """
+    No data within the tolerance: the zone stays, the pause does not run out.
+
+    After the tolerance the sensors are unavailable.
+    """
     hass.states.async_set("sensor.power_meter", "3000")
 
     entry = _create_config_entry(AC_LOAD_LIMITS_CONFIG_WITH_RECOVERY)
@@ -644,20 +648,17 @@ async def test_green_unavailable_cancels_recovery(hass: HomeAssistant) -> None:
     green_id = entity_registry.async_get_entity_id(
         "binary_sensor", DOMAIN, "power_load_green"
     )
-
-    # Recovery should be pending
     assert hass.states.get(green_id).attributes["recovery_pending"] is True
 
-    # Make sensor unavailable
     hass.states.async_set("sensor.power_meter", STATE_UNAVAILABLE)
     await hass.async_block_till_done()
-
-    # Green should be unavailable
-    assert hass.states.get(green_id).state == STATE_UNAVAILABLE
-
-    # Advance time past recovery - should not turn on
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))
     await hass.async_block_till_done()
 
-    # Green should still be unavailable
+    state = hass.states.get(green_id)
+    assert state.state == STATE_OFF
+    assert state.attributes["recovery_pending"] is True
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
+    await hass.async_block_till_done()
     assert hass.states.get(green_id).state == STATE_UNAVAILABLE

@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 from homeassistant.const import Platform
 
 from .const import LOGGER
+from .data import power_load_monitoring_configured
+from .zones import ZoneTracker
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -32,6 +34,12 @@ async def async_setup_entry(
 ) -> bool:
     """Set up this integration using UI."""
     LOGGER.debug("Setting up Bestiarium Mode integration")
+    entry.runtime_data = None
+    if power_load_monitoring_configured(entry):
+        tracker = ZoneTracker(hass, entry)
+        tracker.async_start()
+        entry.async_on_unload(tracker.async_stop)
+        entry.runtime_data = tracker
 
     # No update listener: the load limit entity updates the entry at runtime
     # without a reload; the reconfigure flow reloads explicitly.
