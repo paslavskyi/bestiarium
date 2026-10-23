@@ -150,13 +150,10 @@ class _Condition:
     since: datetime | None = None  # when raw last changed
     confirmed: bool = False
 
-    def set(self, raw: bool, now: datetime) -> timedelta | None:  # noqa: FBT001
-        """Set the raw value; when a raw problem ends, return how long it lasted."""
-        if raw == self.raw:
-            return None
-        lasted = now - self.since if self.raw and self.since else None
-        self.raw, self.since = raw, now
-        return lasted
+    def set(self, raw: bool, now: datetime) -> None:  # noqa: FBT001
+        """Set the raw value, remembering when it changed."""
+        if raw != self.raw:
+            self.raw, self.since = raw, now
 
     def settle(self, now: datetime, enter: timedelta, leave: timedelta) -> None:
         """Confirm a problem that lasted enter, or end one stable for leave."""
@@ -203,6 +200,8 @@ class DeviceControl:
         self._unstable = _Condition()
         self._unresponsive = _Condition()
         self._dropouts: deque[datetime] = deque()
+        # Since when the relay or the power sensor is gone: one device, one dropout
+        self._gone_since: datetime | None = None
         self._watching_availability = False
         self.state = ControlState.NORMAL
         self._unsubscribe: list[CALLBACK_TYPE] = []
@@ -314,6 +313,8 @@ class DeviceControl:
         now = dt_util.utcnow()
         self._switch_gone.set(_gone(self._hass.states.get(self._relay)), now)
         self._power_gone.set(_gone(self._hass.states.get(self._power)), now)
+        if self._switch_gone.raw or self._power_gone.raw:
+            self._gone_since = now
         self._refresh(now)
 
     @callback
@@ -328,11 +329,20 @@ class DeviceControl:
         else:
             condition = self._power_gone
         if self._watching_availability:
-            lasted = condition.set(_gone(new), now)
-            if lasted is not None and lasted < self._tolerance:
+            condition.set(_gone(new), now)
+            self._count_dropout(now)
+        self._refresh(now)
+
+    def _count_dropout(self, now: datetime) -> None:
+        """Count the device gone (relay or power sensor) shorter than the tolerance."""
+        gone = self._switch_gone.raw or self._power_gone.raw
+        if gone and self._gone_since is None:
+            self._gone_since = now
+        elif not gone and self._gone_since is not None:
+            lasted, self._gone_since = now - self._gone_since, None
+            if lasted < self._tolerance:
                 LOGGER.debug("%s: short dropout of %s", self._name, lasted)
                 self._dropouts.append(now)
-        self._refresh(now)
 
     def _on_relay_changed(self, new: State | None, now: datetime) -> None:
         """Any change of the relay answers the commands and ends a deferral."""

@@ -238,11 +238,20 @@ async def test_unstable_connection(
     await home.mode("1000")
     device = await home.device(COMMODE, 5200, on=True)
 
-    for _ in range(4):
+    async def drop_out() -> None:
+        # The whole device drops out: its relay and its power sensor
         home.set(COMMODE, STATE_UNAVAILABLE)
+        home.set(f"{COMMODE}_power", STATE_UNAVAILABLE)
         await home.tick(10)
         home.set(COMMODE, STATE_ON)
+        home.set(f"{COMMODE}_power", "100")
         await home.tick(5 * MINUTE, step=10)
+
+    for _ in range(2):
+        await drop_out()
+    assert home.state(device) == ControlState.NORMAL
+    for _ in range(2):
+        await drop_out()
     assert home.state(device) == ControlState.UNSTABLE
     assert len(_logged(caplog, logging.WARNING)) == 1
 
