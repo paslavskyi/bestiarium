@@ -71,6 +71,13 @@ GREEN_INTERVAL_SECONDS = 60
 RED_INTERVAL_SECONDS = 5
 OVERLOAD_WAIT_SECONDS = 5
 
+# Green strategy: a device still off after this many turn-on attempts waits
+# this long before it is tried again, so the devices after it get their turn
+TURN_ON_ATTEMPTS = 3
+TURN_ON_RETRY_MINUTES = 30
+# An 'off' relay whose meter reported more than this since it switched is on
+RELAY_ON_POWER_W = 2
+
 # Event types for automations
 EVENT_ZONE_CHANGED = "bestiarium_devices_zone_changed"
 EVENT_DEVICE_TURNED_ON = "bestiarium_devices_device_turned_on"

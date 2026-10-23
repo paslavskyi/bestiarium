@@ -50,8 +50,10 @@ tests/custom_components/bestiarium_devices/
 ├── test_headroom.py
 ├── test_power_entities.py
 ├── test_power_memory.py
+├── test_single_balancer.py
 ├── test_switch.py
-└── test_switch_split_device.py
+├── test_switch_split_device.py
+└── test_turn_on_attempts.py
 ```
 
 ---
@@ -171,6 +173,9 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 | `GREEN_INTERVAL_SECONDS` | `60` | Green strategy periodic interval |
 | `RED_INTERVAL_SECONDS` | `5` | Red strategy periodic interval |
 | `OVERLOAD_WAIT_SECONDS` | `5` | Pause between first and second overload queue |
+| `TURN_ON_ATTEMPTS` | `3` | Green strategy turn-on attempts before a device still off waits |
+| `TURN_ON_RETRY_MINUTES` | `30` | How long it waits, from its last attempt |
+| `RELAY_ON_POWER_W` | `2` | An "off" relay whose meter reported more since it switched is on |
 
 ---
 
@@ -349,6 +354,8 @@ This relies only on the registry update event, so it works both with the HA 2026
 - **Skips**: Devices already ON, devices with priority `0` (OFF), devices that do not fit (logged at debug: `X W + Y W (source) > Z W`)
 - **Sorting**: Candidates sorted by priority descending; the first one that fits is turned on, so a smaller, less important device can go before a large one
 - **ALWAYS_ON** (`9999`) candidates are turned on without the headroom check
+- **Stale relay state**: a relay that reads OFF while its power sensor reported more than `RELAY_ON_POWER_W` since the relay last switched is in fact on — not a candidate. A meter reading older than the relay's last switch does not count, so a meter that kept its last value never holds a device back.
+- **Turn-on attempts**: a device whose relay is still OFF after `TURN_ON_ATTEMPTS` attempts waits `TURN_ON_RETRY_MINUTES` from its last attempt (one warning in the log), so the devices after it get their turn; then it gets its attempts again. A relay that switched since the last attempt answered it: its count starts over. The attempts live in the coordinator (not stored): a restart gives every device its attempts back.
 
 #### Headroom: `_fits(entry)`
 
@@ -546,11 +553,17 @@ Translation keys cover:
 ### `test_power_entities.py`
 - Placement and categories, sensor attributes, number, reset button
 
+### `test_turn_on_attempts.py`
+- A stuck "off" socket gets 3 attempts, then the next socket of the same priority turns on; it is tried again 30 minutes later; a relay that switched in between gets all its attempts back; an "off" socket whose meter reports 7.5 W counts as on, a meter reading older than the relay's switch does not
+
+### `test_single_balancer.py`
+- Entries set up together (as at HA start, with the power memory read from disk meanwhile) share one coordinator: one turn-on per green tick
+
 ---
 
 ## Design Notes & Gotchas
 
-1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload.
+1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload. HA sets up the entries of an integration concurrently, so the coordinator is stored in `hass.data` before it starts: an entry set up while it starts (it awaits the power memory) finds it instead of creating its own.
 
 2. **Entities per device**: the "Allowed" switch and the three power entities. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
 

@@ -25,6 +25,8 @@ class FakeRelays:
         self._hass = hass
         self.entity_ids: set[str] = set()
         self.calls: list[tuple[str, str]] = []
+        # Relays that take the commands but keep their state, like a stale one
+        self.stuck: set[str] = set()
 
     def add(self, entity_id: str, *, on: bool) -> None:
         """Add a relay in the given state."""
@@ -53,6 +55,8 @@ def relays(hass: HomeAssistant) -> Iterator[FakeRelays]:
         entity_id = (service_data or {}).get("entity_id")
         if domain == "switch" and entity_id in fake.entity_ids:
             fake.calls.append((service, entity_id))
+            if entity_id in fake.stuck:
+                return None
             hass.states.async_set(
                 entity_id, STATE_ON if service == "turn_on" else STATE_OFF
             )

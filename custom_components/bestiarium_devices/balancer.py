@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -14,9 +15,11 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_OVERLOAD_FIRST_QUEUE,
+    CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DOMAIN,
     EVENT_DEVICE_TURNED_OFF,
@@ -33,6 +36,9 @@ from .const import (
     MODE_SELECT_UNIQUE_ID,
     OVERLOAD_WAIT_SECONDS,
     RED_INTERVAL_SECONDS,
+    RELAY_ON_POWER_W,
+    TURN_ON_ATTEMPTS,
+    TURN_ON_RETRY_MINUTES,
     ZONE_SENSOR_UNIQUE_ID,
 )
 from .helpers import (
@@ -71,6 +77,15 @@ class ActiveZone(StrEnum):
 ZONES = (ActiveZone.GREEN, ActiveZone.YELLOW, ActiveZone.RED, ActiveZone.OVERLOAD)
 
 
+@dataclass
+class _TurnOnAttempts:
+    """Green strategy attempts to turn on a device whose relay stayed off."""
+
+    count: int
+    last: datetime
+    waiting: bool = False  # the attempts are used up; the next devices go first
+
+
 class BalancingCoordinator:
     """Coordinator for device consumption balancing based on power load zones."""
 
@@ -91,6 +106,9 @@ class BalancingCoordinator:
         self._running: bool = False
 
         self._power_memory: PowerMemory  # loaded by async_start
+
+        # Unanswered green strategy turn-on attempts, by entry_id
+        self._turn_on_attempts: dict[str, _TurnOnAttempts] = {}
 
     @property
     def active_zone(self) -> ActiveZone:
@@ -520,6 +538,66 @@ class BalancingCoordinator:
             },
         )
 
+    def _draws_power(self, entry: ConfigEntry, relay: State) -> bool:
+        """
+        Return whether a device whose relay reads 'off' is in fact on.
+
+        Its relay state is stale: the meter reported power since the relay last
+        switched. A meter that only kept its reading from before does not count.
+        """
+        power_entity_id = entry.data.get(CONF_POWER_SENSOR_ENTITY_ID)
+        power = self._hass.states.get(power_entity_id) if power_entity_id else None
+        if power is None or power.last_reported <= relay.last_changed:
+            return False
+        try:
+            watts = float(power.state)
+        except ValueError:
+            return False
+        if watts <= RELAY_ON_POWER_W:
+            return False
+        LOGGER.debug(
+            "%s is on: its relay reads off, its meter %s W",
+            get_device_name_from_entry(entry),
+            watts,
+        )
+        return True
+
+    def _waits_for_retry(self, entry: ConfigEntry, relay: State) -> bool:
+        """
+        Return whether a device that ignored its turn-on attempts waits.
+
+        A relay that switched since the last attempt answered it, and the wait
+        ends TURN_ON_RETRY_MINUTES after the last attempt: either way the
+        attempts start over.
+        """
+        attempts = self._turn_on_attempts.get(entry.entry_id)
+        if attempts is None:
+            return False
+        retry_at = attempts.last + timedelta(minutes=TURN_ON_RETRY_MINUTES)
+        if relay.last_changed > attempts.last or dt_util.utcnow() >= retry_at:
+            del self._turn_on_attempts[entry.entry_id]
+            return False
+        if attempts.count < TURN_ON_ATTEMPTS:
+            return False
+        if not attempts.waiting:
+            attempts.waiting = True
+            LOGGER.warning(
+                "Green strategy: %s is still off after %d turn-on attempts; "
+                "the next devices go first, it is tried again in %d minutes",
+                get_device_name_from_entry(entry),
+                attempts.count,
+                TURN_ON_RETRY_MINUTES,
+            )
+        return True
+
+    def _count_turn_on_attempt(self, entry: ConfigEntry) -> None:
+        now = dt_util.utcnow()
+        attempts = self._turn_on_attempts.setdefault(
+            entry.entry_id, _TurnOnAttempts(count=0, last=now)
+        )
+        attempts.count += 1
+        attempts.last = now
+
     async def _execute_green_strategy(self) -> None:
         """Execute green strategy: turn on the most important OFF device that fits."""
         entries = self._hass.config_entries.async_entries(DOMAIN)
@@ -541,6 +619,9 @@ class BalancingCoordinator:
             priority = get_current_priority(self._hass, entry)
 
             if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
+                continue
+
+            if self._draws_power(entry, state) or self._waits_for_retry(entry, state):
                 continue
 
             candidates.append((priority, entry))
@@ -568,6 +649,7 @@ class BalancingCoordinator:
             device_id,
             priority,
         )
+        self._count_turn_on_attempt(entry)
         try:
             await self._hass.services.async_call(
                 "switch",
