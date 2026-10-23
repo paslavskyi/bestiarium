@@ -121,12 +121,8 @@ class BalancingCoordinator:
             ),
             async_at_started(self._hass, self._on_started),
         ]
-        if self._zones_exist():
+        if self._zone_entity_ids():
             self._activate()
-
-    def _zones_exist(self) -> bool:
-        """Return whether bestiarium_mode has zone sensors."""
-        return bool(self._zone_entity_ids())
 
     @callback
     def _on_entity_registry_updated(

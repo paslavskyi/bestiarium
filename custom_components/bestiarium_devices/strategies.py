@@ -213,14 +213,10 @@ class Strategies:
         """
         now = dt_util.utcnow()
         open_duty = False
-        for entry, control, state in self._devices():
+        for entry, control, _state in self._devices():
             if not control.mode_off:
                 continue
-            if (
-                get_current_priority(self._hass, entry) != LOAD_PRIORITY_OFF
-                or state is None
-                or state.state == STATE_OFF
-            ):
+            if get_current_priority(self._hass, entry) != LOAD_PRIORITY_OFF:
                 control.end_mode_off()
                 continue
             open_duty = True

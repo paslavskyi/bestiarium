@@ -151,11 +151,6 @@ class ZoneTracker:
         self._unsubscribe = []
         self._cancel_timers()
 
-    @property
-    def pause_pending(self) -> bool:
-        """Return whether green waits for the end of its pause."""
-        return self.zone is Zone.PAUSE
-
     @callback
     def _on_power(self, _event: Event) -> None:
         self._update()

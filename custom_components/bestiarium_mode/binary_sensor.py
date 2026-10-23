@@ -78,7 +78,7 @@ class PowerLoadBinarySensor(BinarySensorEntity):
             "limit_w": config.limit_w,
         }
         if self._zone is Zone.GREEN:
-            attrs["recovery_pending"] = self._tracker.pause_pending
+            attrs["recovery_pending"] = self._tracker.zone is Zone.PAUSE
         return attrs
 
     async def async_added_to_hass(self) -> None:
