@@ -5,7 +5,7 @@
 `bestiarium_mock` (domain `bestiarium_mock`) simulates smart-home devices for
 testing the Bestiarium integrations without hardware. It has no dependencies.
 
-1. **12 mock smart sockets**, one per test scenario. Each socket has a
+1. **13 mock smart sockets**, one per test scenario. Each socket has a
    **fault model** that makes it misbehave like a real cloud socket (ignored
    commands, slow replies, a stale state in HA, short dropouts), chosen with
    a **fault profile**.
@@ -31,7 +31,7 @@ custom_components/bestiarium_mock/
 ├── entity.py            # MockSocketEntity — entities of a socket follow it
 ├── switch.py            # MockDeviceSwitch — the socket's switch
 ├── sensor.py            # Socket power, grid power, thermometer temperature
-├── binary_sensor.py     # Socket "State" (draws power), grid overload alarm
+├── binary_sensor.py     # Socket "State" (draws power, diagnostic), grid overload alarm
 ├── number.py            # Fault parameters, cooker power, thermometer temperature
 ├── select.py            # Fault profile
 ├── config_flow.py       # Confirmation form counting the device set (VERSION 2)
@@ -69,6 +69,7 @@ Device names are translated (`device` in the translations, `translation_key`
 | `cooker` | Mock Cooker | 400–4200 W | Reliable | pushes the load to yellow, red, overload |
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Climate thermostats (DEV-008) |
+| `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
 | `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
 
 ---
@@ -158,7 +159,9 @@ removes it (it is named after a retired test socket) and adds the new set.
 
 ## The stand (`make stand`)
 
-`scripts/stand_setup.py` sets up the stand in the development HA through its
+`scripts/stand_setup.py` (with its modules in `scripts/stand/`: `ha` the client
+of the HA, `layout` what the stand is made of, `entries`, `scenarios`,
+`dashboard`) sets up the stand in the development HA through its
 REST and websocket APIs, using the real config flows. It needs a long-lived
 access token of that HA in `HA_TEST_ENV_TOKEN` and refuses any HA that is not
 on this machine. The token is a Windows user environment variable;
@@ -189,11 +192,14 @@ the script fails if HA did not load them.
    | commode, bedside | 5200 (commode added first) | | |
    | boiler | 5000 | yes | |
    | slow cloud | 4000 | | |
-   | Tuya | 3500 | | |
+   | Tuya | 3500, **off** in "Night" | | |
    | night light | 3000 | | |
    | dead | 1000 | | |
    | cooker, fridge | 9999 (always on) | | |
    | floor heating 1–3 | 2000 | yes | yes |
+
+   The Matter socket gets no entry: it is free for re-pointing the boiler to
+   it (the boiler's "Reconfigure" → another device).
 
 3. Replaces the stand's Bestiarium Climate entry (the one with the "Stand
    floor" thermostats; others are kept) with one entry (capacity 2) and
@@ -202,19 +208,27 @@ the script fails if HA did not load them.
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable, cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
+   | `reset` | every profile Reliable, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |
+   | `zone_flicker` | reset; the cooker holds the grid at the yellow threshold ±100 W, 12 times 5 s each way (2 min); the zone stays yellow |
+   | `mode_off` | reset; the Tuya socket on; mode "Night" turns it off |
+   | `mode_off_unresponsive` | reset; the Tuya socket on, then "Unresponsive"; "Night": retries, then "Does not turn off by mode" |
+   | `mode_off_turned_on` | reset; the Tuya socket on; "Night" turns it off; 10 s later a person turns it on; green leaves it on |
+   | `mode_off_red` | reset; "Night"; the Tuya socket, night light and boiler on; the cooker pushes the grid 200 W into red: the Tuya socket goes first, then the queue |
    | `unstable_tuya` | reset; the Tuya socket "Unstable" and on |
 
 5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode
    and zones; the scenario buttons; a section per socket (switch, power,
-   profile; the heading and the switch tile open the device page with its
-   knobs); a logbook of the sockets, zones and mode.
+   profile, control state; the heading and the switch tile open the device
+   page with its knobs; the free Matter socket has no control state); a
+   logbook of the sockets, zones and mode.
 
 6. Checks that the load zones of Bestiarium Mode are available, and fails
    instead of printing "Done." if they are not.
 
 The scenarios assume the stand's Bestiarium Mode thresholds above; with other
-limits the cooker power in `red_zone_dead_socket` must change.
+limits the cooker power in `red_zone_dead_socket` must change. `zone_flicker`
+and `mode_off_red` set the cooker from the grid's current load (a template), so
+the grid noise does not move them.

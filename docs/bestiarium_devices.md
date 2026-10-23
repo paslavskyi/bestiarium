@@ -32,16 +32,16 @@ custom_components/bestiarium_devices/
 ├── control.py           # DeviceControl, ResponseMemory — control state of each device
 ├── event.py             # ControlEventEntity — "Control events"
 ├── data.py              # Type alias for ConfigEntry
-├── config_flow.py       # Multi-step config flow (virtual + extended device creation)
+├── config_flow.py       # Config flow (virtual + extended), reconfigure (re-pointing), settings (options)
+├── repairs.py           # Repairs: a gone relay or power sensor, its fix flow; renames followed
 ├── helpers.py           # Priority resolution, validation, utility functions
-├── balancer.py          # BalancingCoordinator — zone strategies and periodic jobs
+├── balancer.py          # BalancingCoordinator — the zone, subscriptions, periodic jobs
+├── strategies.py        # Strategies — green, red, overload, mode, "Allowed"
 ├── consumption.py       # Runs, stable power, memory eviction, estimate (no HA imports)
 ├── power_memory.py      # PowerMemory (Store), live run tracking, recorder import
 ├── entity.py            # BestiariumDeviceEntity — placement shared by all entities
 ├── switch.py            # AllowedSwitch — per-device "Allowed" switch
 ├── sensor.py            # ExpectedPowerSensor — "Expected power"
-├── number.py            # EstimatedPowerNumber — "Estimated power"
-├── button.py            # ResetPowerMemoryButton — "Reset power memory"
 ├── logbook.py           # Logbook descriptions of the balancer's bus events
 └── translations/
     ├── en.json           # English translations
@@ -124,7 +124,7 @@ Each device gets its own config entry. The data shape depends on device type:
 ```python
 {
     "allowed": bool,   # State of the "Allowed" switch (missing = True)
-    "estimated_power_w": int,  # "Estimated power" number; 0 or missing = not set
+    "estimated_power_w": int,  # "Estimated power" in the settings form; 0 or missing = not set
 }
 ```
 
@@ -234,6 +234,7 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 | `select_entities` | Shown only when device has multiple switches or sensors. Selects which to use |
 | `configure_priorities` | Form: default priority, optional per-mode priorities, overload_first_queue and thermostat_driven flags |
 | `reconfigure` | Loads existing data, routes to appropriate form based on device type |
+| `pick_device` | Reconfigure of an extended device: its device (another one re-points it) and "Reset the learned consumption" |
 
 ### Flow Logic for `extend_device`
 
@@ -248,8 +249,9 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 ### Reconfigure Flow
 
 - **Virtual devices**: routes to `create_virtual` form (can change name, switch, sensor)
-- **Extended devices with single entities**: routes directly to `configure_priorities`
-- **Extended devices with multiple entities**: routes through `select_entities`
+- **Extended devices**: `pick_device` first (default: the current device), then `select_entities` if the device has several switches or sensors, then `configure_priorities`
+
+**Re-pointing (DEV-008).** Picking another device moves the entry to it (SmartThings to Matter: the same appliance, a new device in HA). Only `device_id`, `switch_entity_id` and `power_sensor_entity_id` change in `entry.data`; priorities, "Allowed", the settings, the name and the learned consumption stay, because they belong to the entry, not to the device. The entities keep their `unique_id` and `entity_id` and move to the new device's page on the reload. The **response time is always forgotten** on another device (it belongs to the connection, cloud vs local); "Reset the learned consumption" (`reset_power_memory`, not stored) also empties the power memory. The checks are those of `extend_device` (`RelaySteps._use_device`): the device has a switch and a power sensor. `RelaySteps` (`pick_device`, `select_entities`) is shared with the Repairs fix flow.
 
 ### Helper Functions (in `config_flow.py`)
 
@@ -307,21 +309,22 @@ Class: `BalancingCoordinator`
 ### Lifecycle
 
 - **One coordinator** per HA instance, shared across all device config entries
-- Created on first device entry setup, stored in `hass.data[DOMAIN]["balancing_coordinator"]`
-- Stopped when last device entry is unloaded
+- Created in `async_setup`, stored in `hass.data[DOMAIN]["balancing_coordinator"]`, stopped with HA
+- The strategies live in `strategies.py` (`Strategies`); the coordinator decides when they run
 
 ### Active Zone Detection
 
 ```python
 class ActiveZone(StrEnum):
-    NONE = "none"
+    NO_DATA = "no_data"
+    PAUSE = "pause"
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"
     OVERLOAD = "overload"
 ```
 
-`_determine_active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN > NONE.
+`_determine_active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN. None on: **pause** (green on pause, the sensors available) or **no data** (unavailable). Neither runs a strategy. The zone itself is decided by `bestiarium_mode` ([its zone model](bestiarium_mode.md#zones)).
 
 Each read resolves the sensor's entity_id from the registry by unique_id at that moment (no cached entity_ids).
 
@@ -333,8 +336,8 @@ This relies only on the registry update event, so it works both with the HA 2026
 
 ### Startup Behavior
 
-1. Checks if power load binary sensors exist (at least one of the four has a state, looked up by unique_id)
-2. If missing: logs warning, sends persistent notification, stays running but inactive
+1. Listens to entity registry creations: zone sensors that appear later (AC load limits set on a running system) bring it alive without a restart; each new mode entity re-creates the listeners
+2. If no zone sensor exists yet (by unique_id): once HA has started, the Repairs issue `no_load_zones` (not fixable here: the text says where to set the limits); deleted when the zones appear. No notification
 3. Subscribes to 4 zone binary sensors + mode select entity, and to their registry updates (renames)
 4. Determines initial active zone
 5. If initial zone is OVERLOAD → executes overload strategy immediately
@@ -347,10 +350,12 @@ This relies only on the registry update event, so it works both with the HA 2026
 - If zone changed: cancels old periodic job, handles new zone
 
 **Mode changes** (`_on_mode_changed`):
-- Calls `_apply_mode_priorities()` which iterates all device entries:
-  - Priority `0` (OFF) → turns off the switch
+- `Strategies.async_apply_mode()` goes over the devices set up:
+  - Priority `0` (OFF) → turns off the switch; a device that is **on** gets the mode's **duty**: its turn-off is repeated like any balancer command (`async_mode_duties`, every 5 s while a duty is open: waits for the answer, attempts, deferral, again) until it is off or the mode no longer says off
   - Priority `9999` (ALWAYS_ON) → turns on the switch
-  - Other priorities → no immediate action (handled by zone strategies)
+  - Other priorities → no immediate action (handled by zone strategies); an open duty closes
+- **Off by mode, turned on by a person**: the duty closed when the device turned off, so this is a person's choice; green leaves it (it never turns on a device with priority `0`). In red it goes first (below)
+- **Out of attempts**: control state `mode_off_failed` and the control event `mode_off_failed` (see [Device control](#device-control-controlpy))
 
 ### Zone Strategies
 
@@ -379,10 +384,11 @@ Checked only where the balancer turns a device on by itself: the green strategy 
 #### Red Strategy (`_execute_red_strategy`)
 
 - **Trigger**: Periodic, every 5 seconds. Also runs once immediately on entering red zone.
+- **First**: every ON device whose priority in the current mode is `0` (off by mode, someone turned it on) gets its turn-off **at once**, in the same step; the queue goes on at the next step
 - **Action**: Turn OFF the **lowest-priority ON device** (one device per cycle)
 - **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON), deferred devices
 - **Sorting**: Candidates sorted by priority ascending
-- **Waiting**: while a device may still answer its turn-off command (its response time, at most `red_max_wait_seconds` for the whole series), the red strategy turns off no other device. Then it defers that device and turns off the next one in the same step
+- **Waiting**: while a device of the queue may still answer its turn-off command (its response time, at most `red_max_wait_seconds` for the whole series), the red strategy turns off no other device. Then it defers that device and turns off the next one in the same step. Devices off by mode do not hold the queue
 
 Green, red and "Allowed" fire their `device_turned_on/off` event from one place (`_fire_switched`, payload `DeviceSwitchedData`); the strategies, overload and mode application send relay commands through `_async_command`, which logs a command HA refused (`HomeAssistantError`) and goes on with the other devices. Overload and mode application send their command to deferred devices too, without waiting or counting attempts.
 
@@ -493,6 +499,7 @@ One `DeviceControl` per device entry (`BalancingCoordinator.control(entry)`), fo
 | State | Raw condition | Confirmed |
 |---|---|---|
 | `switch_unavailable` | relay `unavailable` / `unknown` / missing | after `tolerance_seconds` |
+| `mode_off_failed` | the mode's duty ran out of attempts, until the device is off or the mode no longer says off | at once; ends at once |
 | `unresponsive` | deferred, until the relay changes | at once |
 | `unstable` | `unstable_dropouts_per_hour` short dropouts (relay or power sensor gone for less than the tolerance) in the last hour | at once |
 | `no_power_data` | power sensor `unavailable` / `unknown` / missing | after `tolerance_seconds` |
@@ -502,11 +509,11 @@ The first confirmed state in this order is shown. A problem ends after `hysteres
 
 ### Control events (`ControlEventEntity`, diagnostic)
 
-Event types `deferred`, `retrying`, `recovered`, with `direction`, `failed_attempts`, `next_attempt`. They are device events for the home's automations; the bus events of [events.md](events.md) are unchanged.
+Event types `deferred`, `retrying`, `recovered`, `mode_off_failed` ("Could not turn off by mode": once a duty, instead of its first `deferred`), with `direction`, `failed_attempts`, `next_attempt`. They are device events for the home's automations; the bus events of [events.md](events.md) are unchanged.
 
 ### Settings (`ControlSettings`, options flow)
 
-Algorithm parameters, in the entry's options ([settings vs entities](concepts/settings-vs-entities.md)); a missing option is its default, so entries from before DEV-007 need no migration. "Configure" on the device entry opens the form (`ControlOptionsFlow`); it keeps the other options ("Allowed", estimated power), and the balancer reads the settings on every use (no reload).
+Algorithm parameters, in the entry's options ([settings vs entities](concepts/settings-vs-entities.md)); a missing option is its default, so entries from before DEV-007 need no migration. "Configure" on the device entry opens the form (`ControlOptionsFlow`); it keeps the other options ("Allowed"), and the balancer reads the settings on every use (no reload). The form also holds the **estimated power** (`estimated_power_w`, 0–100000 W, step 10; 0 = not set) and **"Reset the learned consumption"** (an action, not stored); a new estimated power shows in "Expected power" at once.
 
 | Option | Default | Range | |
 |---|---|---|---|
@@ -528,10 +535,9 @@ All entities of a device share `BestiariumDeviceEntity` (`entity.py`): `has_enti
 | Entity | Key | Category | What it does |
 |---|---|---|---|
 | sensor "Expected power" / «Очікуване споживання» | `expected_power` | diagnostic | state = expected power (W, `power`, `measurement`); attributes `estimate_source`, `runs` (start, duration_s, power_w, source), `manual_power_w`, `manual_power_note` (translated: the estimated power counts until 3 real runs) |
-| number "Estimated power" / «Орієнтовне споживання» | `estimated_power` | config | `entry.options["estimated_power_w"]`, 0–100000 W, step 10, box; 0 = not set |
-| button "Reset power memory" / «Скинути пам'ять споживання» | `reset_power_memory` | config | forgets the runs; history is not imported again |
+The estimated power and the reset were a number and a button until DEV-008; they are in the settings form now ([settings vs entities](concepts/settings-vs-entities.md)). Migration 1.3 removes their entities from the registry; the value already was in `entry.options`. Dashboards and automations that used `number.…_estimated_power` or `button.…_reset_power_memory` find no entity.
 
-The sensor updates on `SIGNAL_EXPECTED_POWER_CHANGED`, which the memory and the number send. It does not use an entry update listener: HA expects those to reload the entry.
+The sensor updates on `SIGNAL_EXPECTED_POWER_CHANGED`, which the memory and the settings form send. It does not use an entry update listener: HA expects those to reload the entry.
 
 ## "Allowed" Switch (`switch.py`)
 
@@ -561,7 +567,8 @@ Translation keys cover:
 - Validation errors: `no_bestiarium_mode`, `no_switch`, `no_power_sensor`, `invalid_switch`, `invalid_power_sensor`, `name_required`, `required`
 - Abort reasons: `not_implemented`, `already_configured`, `no_bestiarium_mode`, `no_devices_with_switch`, `reconfigure_successful`
 - Config flow field `thermostat_driven` (label + description)
-- Entity names: `Allowed`, `Expected power`, `Estimated power`, `Reset power memory` (each also as `{device_name} …`), `Default Load Priority`, `{mode_name} Load Priority`
+- Entity names: `Allowed`, `Expected power`, `Control state`, `Control events` (each also as `{device_name} …`), `Default Load Priority`, `{mode_name} Load Priority`
+- Repairs issues `missing_entity` (with its fix flow) and `no_load_zones`
 - Attribute names and values of "Expected power": `estimate_source` (`memory`, `history`, `manual`, `large_device_default`), `runs`, `manual_power_w`, `manual_power_note`
 
 ---
@@ -640,4 +647,6 @@ Translation keys cover:
 
 9. **Power sensor validation**: Must have `device_class=power` and `unit_of_measurement=W`. The validation runs at config flow time, not continuously.
 
-10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive. A persistent notification informs the user. Sensors that appear later (limits configured on a running system) are picked up after the devices integration reloads or HA restarts.
+10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive, with the Repairs issue `no_load_zones`. Sensors that appear later (limits configured on a running system) bring it alive at once.
+
+11. **Repairs of a device** (`repairs.py`): once HA has fully started, a relay or power sensor with no state at all (removed, disabled) is the issue `missing_entity_<entry_id>` ("Fix": the fields of the reconfigure form — device, or switch and sensor of a virtual device); it goes when the entity is back or another is picked. Unavailable is the control state "Switch unavailable", not an issue. A renamed relay or sensor is followed: the entry takes the new entity_id and reloads. Disabled entries are not set up, so not checked.

@@ -22,7 +22,9 @@ custom_components/bestiarium_mode/
 ├── data.py              # ConfigEntry type alias, power_load_monitoring_configured()
 ├── config_flow.py       # Multi-step config flow (user + reconfigure)
 ├── select.py            # BestiariumModeSelect entity
-├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones)
+├── zones.py             # ZoneTracker — the one current zone of the entry
+├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones, views of the zone)
+├── repairs.py           # Repairs: the zones' power sensor is gone, its fix flow
 ├── number.py            # PowerLoadLimitNumber entity (runtime load limit)
 └── translations/
     ├── en.json           # English translations
@@ -32,6 +34,7 @@ tests/custom_components/bestiarium_mode/
 ├── __init__.py
 ├── test_config_flow.py
 ├── test_binary_sensor.py
+├── test_zones.py
 ├── test_number.py
 └── test_select.py
 ```
@@ -69,7 +72,9 @@ The config entry stores two top-level keys in `entry.data`:
         "ac_load_limit_w": int,          # Maximum load in watts (1–100000)
         "ac_yellow_zone_percent": int,   # Yellow threshold as % of limit (default 75, min 50)
         "ac_red_zone_percent": int,      # Red threshold as % of limit (default 90, must > yellow)
-        "ac_overload_recovery_seconds": int  # Seconds before Green re-engages (default 30, range 1–300)
+        "ac_overload_recovery_seconds": int,  # The pause before green, s (default 30, range 1–300)
+        "ac_zone_hysteresis_percent": float,  # The margin of going down, % of the limit (default 3, 0–20)
+        "ac_power_tolerance_seconds": int,   # No power data longer than this: no data (default 60, 0–600)
     }
 }
 ```
@@ -166,16 +171,31 @@ Class: `BestiariumModeSelect(SelectEntity, RestoreEntity)`
 
 Class: `PowerLoadBinarySensor(BinarySensorEntity)`
 
-### Zone Model
+### Zones
 
-Four binary sensors implement a **traffic-light pattern** for AC power load monitoring:
+One `ZoneTracker` per entry (`zones.py`, in `entry.runtime_data`) decides **one** current zone; the four binary sensors only show it (`is_on` = their zone is the current one). Before DEV-008 each sensor computed its own state and only green had a delay: below the yellow threshold yellow went off at once while green waited 30 s, so no sensor was on and the balancer stopped — the flapping "yellow → none → yellow" on the stand.
 
-| Zone | `is_on` condition | Icon |
+| Zone | When | Sensors | Balancer |
+|---|---|---|---|
+| `green` | below the yellow threshold, the pause is over | green on | green strategy |
+| `pause` (green on pause) | below "yellow threshold − margin", for `ac_overload_recovery_seconds` (30 s) | all off; green's `recovery_pending` true | nothing |
+| `yellow` / `red` / `overload` | by the thresholds | that one on | as before |
+| `no_data` | the power sensor unavailable, unknown or not a number for longer than `ac_power_tolerance_seconds` (60 s) | all unavailable; one `warning` (and an `info` when data is back) | nothing |
+
+Rules (the owner's model, DEV-008):
+
+- **Up at once from any zone**, the pause and green too: `power >= threshold` → that zone.
+- **Down with a margin** (`ac_zone_hysteresis_percent`, 3 % of the limit, 150 W at 5000 W): a zone goes down only when `power < its threshold − margin`; red → yellow and overload → lower at once, to the zone of `power + margin`.
+- **The pause only before green**: yellow → pause → green after the pause continuously below "yellow threshold − margin"; a load within the margin restarts it, above the yellow threshold it is yellow at once (the next pause starts from zero).
+- **Lost data**: the zone stays as it was for the tolerance, then no data; data back → the zone by the load at once (green through the pause).
+- **A limit change** recalculates by the same rules.
+
+| Zone (sensor) | Threshold | Icon |
 |---|---|---|
-| `green` | `power < yellow_threshold` (with recovery delay) | `mdi:check-circle` |
-| `yellow` | `yellow_threshold <= power < red_threshold` | `mdi:alert-circle` |
-| `red` | `red_threshold <= power < limit_w` | `mdi:close-circle` |
-| `overload` | `power >= limit_w` | `mdi:flash-alert` |
+| `green` | below `yellow_threshold` | `mdi:check-circle` |
+| `yellow` | `yellow_threshold` | `mdi:alert-circle` |
+| `red` | `red_threshold` | `mdi:close-circle` |
+| `overload` | `limit_w` | `mdi:flash-alert` |
 
 Where thresholds are calculated:
 ```
@@ -191,7 +211,7 @@ red_threshold    = limit_w * red_zone_percent / 100
 | `yellow_threshold` | All zones | Calculated yellow threshold in watts |
 | `red_threshold` | All zones | Calculated red threshold in watts |
 | `limit_w` | All zones | Current watt limit (follows the limit entity) |
-| `recovery_pending` | Green only | Boolean — whether green zone is waiting for recovery timeout |
+| `recovery_pending` | Green only | Boolean — whether the zone is the pause before green |
 
 ### Unique IDs and Translation Keys
 
@@ -203,31 +223,12 @@ Binary sensors are **only created** if `ac_load_limits` is present in the config
 
 ### State Tracking
 
-- Subscribes to state changes of the configured power sensor via `async_track_state_change_event`
-- Listens to `bestiarium_mode_load_limit_changed`: rebuilds the thresholds from the entry data and recalculates the zone for the current power value (no power change needed)
-- Reads initial state on `async_added_to_hass`
-- Unsubscribes on `async_will_remove_from_hass`
+- The tracker follows the power sensor (`async_track_state_change_event`) and `bestiarium_mode_load_limit_changed` (rebuilds the thresholds, recalculates the zone)
+- It tells the sensors by the dispatcher signal `bestiarium_mode_zone_changed_<entry_id>`; they write their states in that one dispatch, so consumers such as `bestiarium_devices` never see two zones at once
 
-All four sensors recalculate inside the dispatch of a single bus event (a power sensor state change or the limit change event). HA queues the state changes they write until that dispatch ends, so consumers such as `bestiarium_devices` see only the final zone combination, never an intermediate one (for example "no zone" while one sensor has turned off and the next has not yet turned on).
+### Repairs
 
-### Availability
-
-`available` returns `True` only when `_is_on is not None`. When the power sensor is unavailable, unknown, or has an unparseable value, `_is_on` is set to `None`, making the binary sensor unavailable.
-
-### Green Zone Recovery Logic
-
-The Green zone has special **delayed ON** behavior to prevent rapid toggling:
-
-1. When power drops below yellow_threshold, Green does NOT immediately turn ON
-2. Instead: `_is_on = False`, `_recovery_pending = True`, a timer is started (`async_call_later`)
-3. After `recovery_seconds` elapse, `_async_recovery_complete` fires: `_is_on = True`, `_recovery_pending = False`
-4. If power rises above the threshold during recovery, the timer is cancelled (`_cancel_pending_recovery`)
-5. If power drops again after cancellation, a new recovery timer starts from scratch
-6. Unavailable/unknown sensor states also cancel recovery
-
-The OFF transition for Green is **immediate** (no delay).
-
-A limit change goes through the same logic: if raising the limit puts the current power below the yellow threshold, Green turns ON only after the recovery delay.
+Once HA has fully started, a power sensor of the zones with no state at all (removed, disabled) is the Repairs issue `missing_power_sensor`; "Fix" picks a sensor again and reloads the entry. Unavailable is "no data", not an issue.
 
 ---
 

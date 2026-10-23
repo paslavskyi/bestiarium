@@ -61,3 +61,7 @@ the first implementation, described in
 - **Unstable connection:** 3 short dropouts in an hour.
 - **Frugality:** the details are `_unrecorded_attributes`; the response memory
   holds 10 values per device; the deferral is not stored.
+
+The load zones of `bestiarium_mode` (DEV-008, [../bestiarium_mode.md](../bestiarium_mode.md#zones)):
+up at once, down only below the threshold minus a margin (3 % of the limit),
+green after a pause (30 s), "no data" only after a tolerance (60 s).
