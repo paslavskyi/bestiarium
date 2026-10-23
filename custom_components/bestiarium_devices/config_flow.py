@@ -57,12 +57,22 @@ def get_mode_names(hass: HomeAssistant) -> list[str]:
     return [opt["name"] for opt in get_bestiarium_modes(hass) if opt.get("name")]
 
 
-def own_entity_ids(hass: HomeAssistant) -> list[str]:
-    """Return this integration's entities (the 'Allowed' switches)."""
+def _may_be_relay_or_sensor(entity: er.RegistryEntry) -> bool:
+    """
+    Return whether an entity may be a device's relay or power sensor.
+
+    Not this integration's own entities, nor config or diagnostic ones: those
+    are settings of a device (such as the knobs of a test socket), not its relay.
+    """
+    return entity.platform != DOMAIN and entity.entity_category is None
+
+
+def non_candidate_entity_ids(hass: HomeAssistant) -> list[str]:
+    """Return the entities that may not be a device's relay or power sensor."""
     return [
         entity.entity_id
         for entity in er.async_get(hass).entities.values()
-        if entity.platform == DOMAIN
+        if not _may_be_relay_or_sensor(entity)
     ]
 
 
@@ -71,7 +81,7 @@ def _candidate_entities(hass: HomeAssistant, domain: str) -> Iterator[er.Registr
     return (
         entity
         for entity in er.async_get(hass).entities.values()
-        if entity.domain == domain and entity.platform != DOMAIN
+        if entity.domain == domain and _may_be_relay_or_sensor(entity)
     )
 
 
@@ -228,7 +238,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SWITCH,
-                        exclude_entities=own_entity_ids(self.hass),
+                        exclude_entities=non_candidate_entity_ids(self.hass),
                     ),
                 ),
                 vol.Required(
@@ -238,6 +248,7 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SENSOR,
                         device_class=DEVICE_CLASS_POWER,
+                        exclude_entities=non_candidate_entity_ids(self.hass),
                     ),
                 ),
             },
