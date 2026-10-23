@@ -29,27 +29,11 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_EXTENDED,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
-    DOMAIN_BESTIARIUM_MODE,
 )
 
+from .conftest import keep_device
+
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
-
-
-@pytest.fixture
-async def bestiarium_mode_entry(hass: HomeAssistant) -> MockConfigEntry:
-    """Create a Bestiarium Mode config entry for testing."""
-    entry = MockConfigEntry(
-        domain=DOMAIN_BESTIARIUM_MODE,
-        unique_id="bestiarium_mode",
-        data={
-            "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-                {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
-            ],
-        },
-    )
-    entry.add_to_hass(hass)
-    return entry
 
 
 async def test_config_flow_aborts_without_bestiarium_mode(
@@ -568,6 +552,23 @@ async def test_config_flow_reconfigure_virtual_device(
     assert updated_entry.data[CONF_OVERLOAD_FIRST_QUEUE] is False
 
 
+def _relay_and_power_on(hass: HomeAssistant, device_id: str, key: str) -> None:
+    """Give a device of another integration one switch and one power sensor."""
+    registry = er.async_get(hass)
+    registry.async_get_or_create("switch", "test", f"{key}_relay", device_id=device_id)
+    power = registry.async_get_or_create(
+        "sensor",
+        "test",
+        f"{key}_power",
+        device_id=device_id,
+        original_device_class="power",
+        unit_of_measurement="W",
+    )
+    hass.states.async_set(
+        power.entity_id, "100", {"device_class": "power", "unit_of_measurement": "W"}
+    )
+
+
 async def test_config_flow_reconfigure_extended_device(
     hass: HomeAssistant,
     bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
@@ -583,6 +584,7 @@ async def test_config_flow_reconfigure_extended_device(
         identifiers={("test", "device3")},
         name="Extended Device",
     )
+    _relay_and_power_on(hass, device.id, "device3")
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -603,6 +605,7 @@ async def test_config_flow_reconfigure_extended_device(
         DOMAIN,
         context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
     )
+    result = await keep_device(hass, result)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "configure_priorities"
 
@@ -639,6 +642,7 @@ async def test_reconfigure_preserves_overload_first_queue(
         identifiers={("test", "device_overload")},
         name="Overload Reconfig Device",
     )
+    _relay_and_power_on(hass, device.id, "device_overload")
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
@@ -657,6 +661,7 @@ async def test_reconfigure_preserves_overload_first_queue(
         DOMAIN,
         context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
     )
+    result = await keep_device(hass, result)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "configure_priorities"
 
@@ -1088,6 +1093,7 @@ async def test_config_flow_reconfigure_extended_device_with_multiple_entities(
         DOMAIN,
         context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
     )
+    result = await keep_device(hass, result)
     # Should show select_entities step since device has multiple switches/sensors
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "select_entities"
@@ -1272,6 +1278,7 @@ async def test_allowed_switch_is_not_a_relay_candidate_on_reconfigure(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
     )
+    result = await keep_device(hass, result)
 
     assert result["step_id"] == "configure_priorities"
     await hass.config_entries.async_unload(entry.entry_id)
@@ -1436,6 +1443,7 @@ async def test_reconfigure_abort_uses_integration_translation(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
     )
+    result = await keep_device(hass, result)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {CONF_DEFAULT_PRIORITY: 9000, CONF_OVERLOAD_FIRST_QUEUE: False},

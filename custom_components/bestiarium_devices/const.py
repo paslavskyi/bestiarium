@@ -28,6 +28,8 @@ CONF_THERMOSTAT_DRIVEN = "thermostat_driven"
 # Config entry options
 CONF_ALLOWED = "allowed"
 CONF_ESTIMATED_POWER = "estimated_power_w"  # 0 or missing = not set
+# An action of the forms, not stored: forget the learned consumption
+CONF_RESET_POWER_MEMORY = "reset_power_memory"
 
 # Expected power of a device (learned from its runs)
 MIN_CONSUMING_POWER_W = 10  # below this a switched-on device is idle (standby)

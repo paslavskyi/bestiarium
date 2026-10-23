@@ -40,12 +40,16 @@ if TYPE_CHECKING:
     from .data import BestiariumDevicesConfigEntry
 
 PLATFORMS: list[Platform] = [
-    Platform.BUTTON,
     Platform.EVENT,
-    Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
+
+# Entities that became settings of the entry (1.3): estimated power, reset
+ENTITIES_NOW_SETTINGS = (
+    (Platform.NUMBER, "estimated_power"),
+    (Platform.BUTTON, "reset_power_memory"),
+)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
@@ -76,16 +80,26 @@ async def async_migrate_entry(
     entry: BestiariumDevicesConfigEntry,
 ) -> bool:
     """
-    Migrate a device entry to version 1.2.
+    Migrate a device entry to version 1.3.
 
     1.2: an extended device whose device_id names no device any more (a
     pre-2026.8 composite id, or a deleted device) points to its relay's device.
+    1.3: the estimated power and the reset of the power memory are in the
+    options form; their entities go. The value already is in the options.
     """
     if entry.minor_version < 2:  # noqa: PLR2004
         data = dict(entry.data)
         if relay_device_id := _relay_device_to_migrate_to(hass, entry):
             data[CONF_DEVICE_ID] = relay_device_id
         hass.config_entries.async_update_entry(entry, data=data, minor_version=2)
+    if entry.minor_version < 3:  # noqa: PLR2004
+        entities = er.async_get(hass)
+        for platform, key in ENTITIES_NOW_SETTINGS:
+            if entity_id := entities.async_get_entity_id(
+                platform, DOMAIN, f"{entry.entry_id}_{key}"
+            ):
+                entities.async_remove(entity_id)
+        hass.config_entries.async_update_entry(entry, minor_version=3)
     return True
 
 
@@ -142,8 +156,8 @@ async def async_setup_entry(
             f"{DOMAIN} power history import {entry.entry_id}",
         )
 
-    # No update listener: the 'Allowed' switch updates the entry options at
-    # runtime without a reload; the reconfigure flow reloads explicitly.
+    # No update listener: options apply at once without a reload (the
+    # settings form tells the expected power itself); reconfigure reloads.
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True

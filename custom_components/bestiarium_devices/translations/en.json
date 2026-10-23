@@ -33,6 +33,18 @@
           "device_id": "Select a device with a switch to extend"
         }
       },
+      "pick_device": {
+        "title": "Device",
+        "description": "The device this Bestiarium device is on. Pick another one when the appliance moved to a new device in Home Assistant (for example from SmartThings to Matter): priorities, settings and the learned consumption stay, the response time is learned anew.",
+        "data": {
+          "device_id": "Device",
+          "reset_power_memory": "Reset the learned consumption"
+        },
+        "data_description": {
+          "device_id": "A device with a switch and a power sensor",
+          "reset_power_memory": "Only if the appliance itself is another one"
+        }
+      },
       "select_entities": {
         "title": "Select Entities",
         "description": "The device has multiple switches or power sensors. Select which ones to use.",
@@ -82,28 +94,6 @@
     }
   },
   "entity": {
-    "button": {
-      "reset_power_memory": {
-        "name": "Reset power memory"
-      },
-      "reset_power_memory_standalone": {
-        "name": "{device_name} Reset power memory"
-      }
-    },
-    "number": {
-      "default_priority": {
-        "name": "Default Load Priority"
-      },
-      "mode_priority": {
-        "name": "{mode_name} Load Priority"
-      },
-      "estimated_power": {
-        "name": "Estimated power"
-      },
-      "estimated_power_standalone": {
-        "name": "{device_name} Estimated power"
-      }
-    },
     "sensor": {
       "expected_power": {
         "name": "Expected power",
@@ -295,6 +285,8 @@
         "title": "Balancer control",
         "description": "How the balancer controls this device. Changes apply at once.",
         "data": {
+          "estimated_power_w": "Estimated power, W",
+          "reset_power_memory": "Reset the learned consumption",
           "attempts": "Attempts before deferring",
           "defer_minutes": "Deferral, minutes",
           "tolerance_seconds": "Tolerance, seconds",
@@ -302,6 +294,8 @@
           "unstable_dropouts_per_hour": "Dropouts an hour for an unstable connection"
         },
         "data_description": {
+          "estimated_power_w": "What the device draws when on, if you know it; 0 means not set. It counts until the device has 3 real runs",
+          "reset_power_memory": "Forget the device's runs; its history is not imported again",
           "attempts": "Failed commands in a row after which the balancer defers the device and goes on with the next one",
           "defer_minutes": "How long a device that does not respond waits before it is tried again",
           "tolerance_seconds": "A switch or power sensor gone for less than this is a short dropout, not a problem",
