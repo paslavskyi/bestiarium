@@ -106,12 +106,13 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
 
     # Start the balancing coordinator if not already running
-    # The coordinator is shared across all device entries
+    # The coordinator is shared across all device entries. It is stored before
+    # it starts: HA sets up the entries concurrently, and while it starts the
+    # other entries must find it instead of starting their own.
     if DATA_COORDINATOR not in hass.data[DOMAIN]:
         LOGGER.debug("Creating and starting BalancingCoordinator")
-        coordinator = BalancingCoordinator(hass)
+        coordinator = hass.data[DOMAIN][DATA_COORDINATOR] = BalancingCoordinator(hass)
         await coordinator.async_start()
-        hass.data[DOMAIN][DATA_COORDINATOR] = coordinator
 
     memory = await async_get_power_memory(hass)
     entry.async_on_unload(async_track_runs(hass, memory, entry))
