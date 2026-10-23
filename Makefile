@@ -22,6 +22,7 @@ develop:
 		mkdir -p config; \
 		hass --config config --script ensure_config; \
 	fi
+	touch config/automations.yaml config/scripts.yaml
 	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" hass --config config --debug
 
 # Start Home Assistant in remote debug mode (debugpy)
@@ -31,6 +32,7 @@ debug:
 		mkdir -p config; \
 		hass --config config --script ensure_config; \
 	fi
+	touch config/automations.yaml config/scripts.yaml
 	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client -m homeassistant --config config --debug
 
 # Format and fix code with ruff

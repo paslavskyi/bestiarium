@@ -97,7 +97,7 @@ class MockGridPowerSensor(SensorEntity):
         # Device info for grid
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"mock_{MOCK_GRID.device_id}")},
-            name=MOCK_GRID.name,
+            translation_key=MOCK_GRID.device_id,
             manufacturer="Bestiarium",
             model="Mock Grid Monitor",
         )
@@ -134,7 +134,7 @@ class MockThermometerTemperatureSensor(SensorEntity):
         # Device info - group under same device
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"mock_{thermo_spec.device_id}")},
-            name=thermo_spec.name,
+            translation_key=thermo_spec.device_id,
             manufacturer="Bestiarium",
             model="Mock Thermometer",
         )

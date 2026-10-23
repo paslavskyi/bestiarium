@@ -53,6 +53,10 @@ tests/stand/test_stand_setup.py   # the stand script against a test HA
 
 ## The device set
 
+Device names are translated (`device` in the translations, `translation_key`
+= `device_id`): English below, Ukrainian on a Ukrainian HA ("Нічник",
+"Бойлер", "Розетка за комодом (SmartThings)", …).
+
 | device_id | Name | Power | Default profile | Scenario |
 |---|---|---|---|---|
 | `night_light` | Mock Night Light | 15 W | Reliable | control: how it should work |
@@ -154,11 +158,20 @@ REST and websocket APIs, using the real config flows. It needs a long-lived
 access token of that HA in `HA_TEST_ENV_TOKEN` and refuses any HA that is not
 on this machine. The token is a Windows user environment variable;
 `.devcontainer.json` passes it into the devcontainer (`remoteEnv`), so VS Code
-must be restarted once after the variable is set. The script never prints it. Running it again gives the same stand.
+must be restarted once after the variable is set. The script never prints it.
+Running it again gives the same stand. The scenario scripts load only because
+`config/configuration.yaml` has `script: !include scripts.yaml` (`make
+develop` creates an empty `scripts.yaml` and `automations.yaml` if missing);
+the script fails if HA did not load them.
 
 1. Adds Bestiarium Mock and Bestiarium Mode (modes "Grid on" and "Night",
    limit 5000 W on the mock grid, yellow 75 %, red 90 %) if they are missing.
-   An existing Bestiarium Mode is kept as it is.
+   An existing Bestiarium Mode is kept as it is. Every test device gets back
+   its own name (no `name_by_user`, no area) and every test entity the
+   entity_id `<domain>.<unique_id>` (for example `sensor.mock_boiler_power`,
+   `select.mock_boiler_fault_profile`), whatever HA generated from old names
+   or areas. Automations that no longer load (unavailable, such as those of
+   old test devices) are removed.
 2. Removes the Bestiarium Devices entries of test devices (and those whose
    device is gone) and adds one per socket:
 
@@ -179,7 +192,7 @@ must be restarted once after the variable is set. The script never prints it. Ru
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable, every socket off, cooker at 400 W |
+   | `reset` | every profile Reliable, cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |

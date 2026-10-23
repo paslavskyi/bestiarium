@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from custom_components.bestiarium_devices.const import LOAD_PRIORITY_ALWAYS_ON
 from custom_components.bestiarium_mock.const import (
     MOCK_DEVICES,
     FaultProfile,
@@ -67,8 +68,8 @@ STAND_DEVICES = (
     StandDevice("tuya_socket", 3500),
     StandDevice("night_light", 3000),
     StandDevice("dead_socket", 1000),
-    StandDevice("cooker", 9999),
-    StandDevice("fridge", 9999),
+    StandDevice("cooker", LOAD_PRIORITY_ALWAYS_ON),
+    StandDevice("fridge", LOAD_PRIORITY_ALWAYS_ON),
     StandDevice("floor_heating_1", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_2", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_3", 2000, first_queue=True, thermostat_driven=True),
@@ -214,6 +215,62 @@ async def ensure_mock(ha: HomeAssistant) -> None:
     print("  added Bestiarium Mock")
 
 
+async def normalize_mock(ha: HomeAssistant, reg: Registry) -> None:
+    """
+    Give every test device its own name and every test entity `<domain>.<unique_id>`.
+
+    Otherwise entity_ids built from a renamed device or its area (such as
+    `sensor.none_power` or `select.kukhnia_mock_boiler_1_fault_profile`) make
+    one stand differ from another.
+    """
+    for device in reg.devices:
+        if any(i[0] == MOCK for i in device["identifiers"]) and (
+            device["name_by_user"] or device["area_id"]
+        ):
+            await ha.ws(
+                "config/device_registry/update",
+                device_id=device["id"],
+                name_by_user=None,
+                area_id=None,
+            )
+    renamed = 0
+    for entity in reg.entities:
+        if entity["platform"] != MOCK:
+            continue
+        domain = entity["entity_id"].split(".")[0]
+        changes: dict[str, Any] = {"name": None} if entity.get("name") else {}
+        if entity["entity_id"] != (wanted := f"{domain}.{entity['unique_id']}"):
+            changes["new_entity_id"] = wanted
+        if changes:
+            await ha.ws(
+                "config/entity_registry/update",
+                entity_id=entity["entity_id"],
+                **changes,
+            )
+            renamed += 1
+    if renamed:
+        print(f"  renamed {renamed} test entities to <domain>.<unique_id>")
+
+
+async def remove_broken_automations(ha: HomeAssistant, reg: Registry) -> None:
+    """
+    Remove automations that no longer load, such as those of old test devices.
+
+    An automation that fails to validate is unavailable; its id is the
+    unique_id of its entity.
+    """
+    unavailable = {
+        state["entity_id"]
+        for state in await ha.rest("GET", "states")
+        if state["entity_id"].startswith("automation.")
+        and state["state"] == "unavailable"
+    }
+    for entity in reg.entities:
+        if entity["entity_id"] in unavailable and entity["platform"] == "automation":
+            await ha.rest("DELETE", f"config/automation/config/{entity['unique_id']}")
+            print(f"  removed the broken automation {entity['entity_id']}")
+
+
 async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
     """Add Bestiarium Mode on the test grid if it is missing."""
     if await ha.entries(MODE):
@@ -343,6 +400,12 @@ def _scripts(reg: Registry) -> dict[str, dict[str, Any]]:
 
     reset = {"action": f"script.{SCRIPT_PREFIX}reset"}
     all_sockets = [spec.device_id for spec in MOCK_DEVICES]
+    # The balancer keeps 'always on' devices on, so the reset leaves them on
+    always_on = [
+        device.mock_id
+        for device in STAND_DEVICES
+        if device.priority == LOAD_PRIORITY_ALWAYS_ON
+    ]
     return {
         "reset": {
             "alias": "Стенд: скинути",
@@ -350,7 +413,8 @@ def _scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "sequence": [
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
                 cooker(400),
-                turn("turn_off", *all_sockets),
+                turn("turn_off", *(s for s in all_sockets if s not in always_on)),
+                turn("turn_on", *always_on),
                 wait(2),
             ],
         },
@@ -373,7 +437,6 @@ def _scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 profile("slow_cloud_socket", FaultProfile.SLOW_CLOUD),
                 profile("dead_socket", FaultProfile.UNRESPONSIVE),
                 cooker(3100),
-                turn("turn_on", "cooker", "fridge"),
             ],
         },
         "slow_cloud": {
@@ -402,8 +465,16 @@ async def write_scripts(ha: HomeAssistant, reg: Registry) -> list[str]:
     scripts = _scripts(reg)
     for name, config in scripts.items():
         await ha.rest("POST", f"config/script/config/{SCRIPT_PREFIX}{name}", config)
+    entity_ids = [f"script.{SCRIPT_PREFIX}{name}" for name in scripts]
+    loaded = {state["entity_id"] for state in await ha.rest("GET", "states")}
+    if not loaded.issuperset(entity_ids):
+        msg = (
+            "The scenario scripts were written but HA did not load them: "
+            "configuration.yaml needs `script: !include scripts.yaml`"
+        )
+        raise StandError(msg)
     print(f"  wrote {len(scripts)} scenario scripts")
-    return [f"script.{SCRIPT_PREFIX}{name}" for name in scripts]
+    return entity_ids
 
 
 def _tile(entity_id: str, **options: Any) -> dict[str, Any]:
@@ -459,7 +530,11 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
             {
                 "type": "grid",
                 "cards": [
-                    {"type": "heading", "heading": spec.name, "tap_action": open_page},
+                    {
+                        "type": "heading",
+                        "heading": device["name"],
+                        "tap_action": open_page,
+                    },
                     _tile(switch, tap_action=open_page),
                     _tile(reg.mock("sensor", f"mock_{spec.device_id}_power")),
                     _tile(reg.mock("select", f"mock_{spec.device_id}_fault_profile")),
@@ -520,6 +595,9 @@ async def setup_stand(url: str, token: str) -> None:
         await ha.connect()
         try:
             await ensure_mock(ha)
+            reg = await registry(ha)
+            await normalize_mock(ha, reg)
+            await remove_broken_automations(ha, reg)
             reg = await registry(ha)
             await ensure_mode(ha, reg)
             await recreate_devices(ha, reg)

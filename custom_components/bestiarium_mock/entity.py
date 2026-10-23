@@ -26,7 +26,7 @@ class MockSocketEntity(Entity):
         self._attr_unique_id = f"mock_{device_id}_{key}" if key else f"mock_{device_id}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"mock_{device_id}")},
-            name=socket.spec.name,
+            translation_key=device_id,
             manufacturer="Bestiarium",
             model="Mock Smart Socket",
         )

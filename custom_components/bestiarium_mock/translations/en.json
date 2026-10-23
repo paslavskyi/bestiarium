@@ -83,5 +83,58 @@
     "custom_profile_required": {
       "message": "To change this parameter, select the Custom fault profile"
     }
+  },
+  "device": {
+    "night_light": {
+      "name": "Mock Night Light"
+    },
+    "boiler": {
+      "name": "Mock Boiler"
+    },
+    "slow_cloud_socket": {
+      "name": "Mock Slow Cloud Socket"
+    },
+    "tuya_socket": {
+      "name": "Mock Tuya Socket"
+    },
+    "commode_socket": {
+      "name": "Mock Commode Socket (SmartThings)"
+    },
+    "bedside_socket": {
+      "name": "Mock Bedside Socket"
+    },
+    "dead_socket": {
+      "name": "Mock Dead Socket"
+    },
+    "cooker": {
+      "name": "Mock Cooker"
+    },
+    "fridge": {
+      "name": "Mock Fridge"
+    },
+    "floor_heating_1": {
+      "name": "Mock Floor Heating 1"
+    },
+    "floor_heating_2": {
+      "name": "Mock Floor Heating 2"
+    },
+    "floor_heating_3": {
+      "name": "Mock Floor Heating 3"
+    },
+    "thermo_1": {
+      "name": "Mock Thermometer 1"
+    },
+    "thermo_2": {
+      "name": "Mock Thermometer 2"
+    },
+    "thermo_3": {
+      "name": "Mock Thermometer 3"
+    },
+    "thermo_4": {
+      "name": "Mock Thermometer 4"
+    },
+    "grid": {
+      "name": "Mock Grid"
+    }
   }
 }

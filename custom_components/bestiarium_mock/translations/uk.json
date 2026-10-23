@@ -83,5 +83,58 @@
     "custom_profile_required": {
       "message": "Щоб змінити параметр, виберіть профіль збоїв «Власний»"
     }
+  },
+  "device": {
+    "night_light": {
+      "name": "Нічник"
+    },
+    "boiler": {
+      "name": "Бойлер"
+    },
+    "slow_cloud_socket": {
+      "name": "Повільна хмарна розетка"
+    },
+    "tuya_socket": {
+      "name": "Нестабільна розетка Tuya"
+    },
+    "commode_socket": {
+      "name": "Розетка за комодом (SmartThings)"
+    },
+    "bedside_socket": {
+      "name": "Розетка біля ліжка"
+    },
+    "dead_socket": {
+      "name": "Мертва розетка"
+    },
+    "cooker": {
+      "name": "Плита"
+    },
+    "fridge": {
+      "name": "Холодильник"
+    },
+    "floor_heating_1": {
+      "name": "Тепла підлога 1"
+    },
+    "floor_heating_2": {
+      "name": "Тепла підлога 2"
+    },
+    "floor_heating_3": {
+      "name": "Тепла підлога 3"
+    },
+    "thermo_1": {
+      "name": "Термометр 1"
+    },
+    "thermo_2": {
+      "name": "Термометр 2"
+    },
+    "thermo_3": {
+      "name": "Термометр 3"
+    },
+    "thermo_4": {
+      "name": "Термометр 4"
+    },
+    "grid": {
+      "name": "Мережа"
+    }
   }
 }
