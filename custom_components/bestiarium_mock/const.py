@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import Field, dataclass, field, fields
 from enum import StrEnum
 from logging import Logger, getLogger
 
@@ -29,6 +29,11 @@ class FaultProfile(StrEnum):
     CUSTOM = "custom"
 
 
+def _param(default: float, low: float, high: float, unit: str) -> float:
+    """Return a fault parameter with the range and unit of its number entity."""
+    return field(default=default, metadata={"min": low, "max": high, "unit": unit})
+
+
 @dataclass(frozen=True)
 class FaultParams:
     """
@@ -40,13 +45,17 @@ class FaultParams:
     socket is unavailable for a duration from the range.
     """
 
-    ignore_percent: float = 0
-    delay_min_s: float = 0
-    delay_max_s: float = 0
-    stuck_percent: float = 0
-    dropouts_per_hour: float = 0
-    dropout_min_s: float = 5
-    dropout_max_s: float = 5
+    ignore_percent: float = _param(0, 0, 100, "%")
+    delay_min_s: float = _param(0, 0, 120, "s")
+    delay_max_s: float = _param(0, 0, 120, "s")
+    stuck_percent: float = _param(0, 0, 100, "%")
+    dropouts_per_hour: float = _param(0, 0, 60, "/h")
+    dropout_min_s: float = _param(5, 1, 600, "s")
+    dropout_max_s: float = _param(5, 1, 600, "s")
+
+
+# One number entity per fault parameter
+FAULT_PARAMS: tuple[Field, ...] = fields(FaultParams)
 
 
 PROFILE_PARAMS: dict[FaultProfile, FaultParams] = {
@@ -68,32 +77,10 @@ PROFILE_PARAMS: dict[FaultProfile, FaultParams] = {
 
 
 @dataclass(frozen=True)
-class FaultParamSpec:
-    """Range and unit of a fault parameter's number entity."""
-
-    key: str
-    min_value: float
-    max_value: float
-    unit: str
-
-
-FAULT_PARAMS: tuple[FaultParamSpec, ...] = (
-    FaultParamSpec("ignore_percent", 0, 100, "%"),
-    FaultParamSpec("delay_min_s", 0, 120, "s"),
-    FaultParamSpec("delay_max_s", 0, 120, "s"),
-    FaultParamSpec("stuck_percent", 0, 100, "%"),
-    FaultParamSpec("dropouts_per_hour", 0, 60, "/h"),
-    FaultParamSpec("dropout_min_s", 1, 600, "s"),
-    FaultParamSpec("dropout_max_s", 1, 600, "s"),
-)
-
-
-@dataclass(frozen=True)
 class MockDeviceSpec:
     """Specification for a mock device."""
 
     device_id: str
-    name: str
     power_w: int
     power_min_w: int | None = None
     power_max_w: int | None = None
@@ -110,7 +97,6 @@ class MockThermometerSpec:
     """Specification for a mock thermometer device."""
 
     device_id: str
-    name: str
     default_temp_c: float = 20.0
     temp_min_c: float = -20.0
     temp_max_c: float = 50.0
@@ -118,17 +104,15 @@ class MockThermometerSpec:
 
 # Smart sockets with power monitoring, one per test scenario
 MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
-    MockDeviceSpec(device_id="night_light", name="Mock Night Light", power_w=15),
-    MockDeviceSpec(device_id="boiler", name="Mock Boiler", power_w=2000),
+    MockDeviceSpec(device_id="night_light", power_w=15),
+    MockDeviceSpec(device_id="boiler", power_w=2000),
     MockDeviceSpec(
         device_id="slow_cloud_socket",
-        name="Mock Slow Cloud Socket",
         power_w=800,
         profile=FaultProfile.SLOW_CLOUD,
     ),
     MockDeviceSpec(
         device_id="tuya_socket",
-        name="Mock Tuya Socket",
         power_w=300,
         profile=FaultProfile.UNSTABLE,
     ),
@@ -136,47 +120,37 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     # while its neighbour of the same priority waited for its turn
     MockDeviceSpec(
         device_id="commode_socket",
-        name="Mock Commode Socket (SmartThings)",
         power_w=8,
         profile=FaultProfile.STUCK_STATE,
     ),
-    MockDeviceSpec(device_id="bedside_socket", name="Mock Bedside Socket", power_w=8),
+    MockDeviceSpec(device_id="bedside_socket", power_w=8),
     MockDeviceSpec(
         device_id="dead_socket",
-        name="Mock Dead Socket",
         power_w=500,
         profile=FaultProfile.UNRESPONSIVE,
     ),
     MockDeviceSpec(
         device_id="cooker",
-        name="Mock Cooker",
         power_w=400,
         power_min_w=400,
         power_max_w=4200,
     ),
-    MockDeviceSpec(device_id="fridge", name="Mock Fridge", power_w=100),
-    MockDeviceSpec(
-        device_id="floor_heating_1", name="Mock Floor Heating 1", power_w=1200
-    ),
-    MockDeviceSpec(
-        device_id="floor_heating_2", name="Mock Floor Heating 2", power_w=1200
-    ),
-    MockDeviceSpec(
-        device_id="floor_heating_3", name="Mock Floor Heating 3", power_w=1200
-    ),
+    MockDeviceSpec(device_id="fridge", power_w=100),
+    MockDeviceSpec(device_id="floor_heating_1", power_w=1200),
+    MockDeviceSpec(device_id="floor_heating_2", power_w=1200),
+    MockDeviceSpec(device_id="floor_heating_3", power_w=1200),
 )
 
 # Thermometer specifications (passive temperature sensors)
 MOCK_THERMOMETERS: tuple[MockThermometerSpec, ...] = (
-    MockThermometerSpec(device_id="thermo_1", name="Mock Thermometer 1"),
-    MockThermometerSpec(device_id="thermo_2", name="Mock Thermometer 2"),
-    MockThermometerSpec(device_id="thermo_3", name="Mock Thermometer 3"),
-    MockThermometerSpec(device_id="thermo_4", name="Mock Thermometer 4"),
+    MockThermometerSpec(device_id="thermo_1"),
+    MockThermometerSpec(device_id="thermo_2"),
+    MockThermometerSpec(device_id="thermo_3"),
+    MockThermometerSpec(device_id="thermo_4"),
 )
 
 # Grid device (special - not a smart socket)
 MOCK_GRID = MockDeviceSpec(
     device_id="grid",
-    name="Mock Grid",
     power_w=GRID_MAX_POWER_W,
 )

@@ -14,12 +14,13 @@ from .const import (
     FAULT_PARAMS,
     LOGGER,
     MOCK_THERMOMETERS,
-    FaultParamSpec,
     MockThermometerSpec,
 )
 from .entity import MockSocketEntity
 
 if TYPE_CHECKING:
+    from dataclasses import Field
+
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -92,14 +93,14 @@ class MockFaultParamNumber(MockSocketEntity, RestoreNumber):
     _attr_mode = NumberMode.BOX
     _attr_native_step = 1
 
-    def __init__(self, socket: MockSocket, param: FaultParamSpec) -> None:
+    def __init__(self, socket: MockSocket, param: Field) -> None:
         """Show the parameter with its range and unit."""
-        super().__init__(socket, param.key)
-        self._key = param.key
-        self._attr_translation_key = param.key
-        self._attr_native_min_value = param.min_value
-        self._attr_native_max_value = param.max_value
-        self._attr_native_unit_of_measurement = param.unit
+        super().__init__(socket, param.name)
+        self._key = param.name
+        self._attr_translation_key = param.name
+        self._attr_native_min_value = param.metadata["min"]
+        self._attr_native_max_value = param.metadata["max"]
+        self._attr_native_unit_of_measurement = param.metadata["unit"]
 
     @property
     def native_value(self) -> float:

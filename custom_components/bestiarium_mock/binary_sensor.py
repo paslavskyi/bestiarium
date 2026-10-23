@@ -44,19 +44,19 @@ async def async_setup_entry(
 
 
 class MockDeviceStateSensor(MockSocketEntity, BinarySensorEntity):
-    """Whether the load of a mock socket draws power, whatever its switch shows."""
+    """
+    Whether the load of a mock socket draws power, whatever its switch shows.
+
+    The tester's view of the truth: unlike the switch and the power sensor it
+    stays available during a dropout.
+    """
 
     _attr_translation_key = "state"
     _attr_device_class = BinarySensorDeviceClass.POWER
 
     @property
-    def available(self) -> bool:
-        """Return whether the socket is reachable."""
-        return self._socket.available
-
-    @property
     def is_on(self) -> bool:
-        """Return whether the load draws power."""
+        """Return whether the load draws power; it stays known during a dropout."""
         return self._socket.power > 0
 
 

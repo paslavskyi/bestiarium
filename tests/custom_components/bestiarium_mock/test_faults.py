@@ -132,6 +132,9 @@ async def test_dropout_makes_switch_and_power_unavailable(
         if _state(hass, entity_id, "boiler") == STATE_UNAVAILABLE:
             break
     assert _power(hass, entity_id, "boiler") == STATE_UNAVAILABLE
+    # The tester still sees that the load works
+    state = hass.states.get(entity_id("binary_sensor", "mock_boiler_state"))
+    assert state.state == STATE_ON
     assert socket.physical_on
 
     await advance(10)

@@ -14,6 +14,7 @@ from custom_components.bestiarium_mock.const import (
     DOMAIN,
     FAULT_PARAMS,
     MOCK_DEVICES,
+    MOCK_GRID,
     MOCK_THERMOMETERS,
     FaultProfile,
 )
@@ -39,7 +40,7 @@ async def test_socket_entities(hass: HomeAssistant, entity_id: EntityId) -> None
         ):
             assert _category(hass, entity_id(domain, unique_id)) is None
         knobs = [("select", f"{mock_id}_fault_profile")] + [
-            ("number", f"{mock_id}_{param.key}") for param in FAULT_PARAMS
+            ("number", f"{mock_id}_{param.name}") for param in FAULT_PARAMS
         ]
         if spec.has_variable_power:
             knobs.append(("number", f"{mock_id}_mock_power"))
@@ -123,8 +124,8 @@ async def test_cooker_power_number(
     assert float(power.state) == 3000  # noqa: PLR2004
 
 
-async def test_fault_profiles_are_translated() -> None:
-    """Every profile has a state translation in both languages."""
+async def test_names_are_translated() -> None:
+    """Every device, profile and fault parameter has a name in both languages."""
     import json  # noqa: PLC0415
     from pathlib import Path  # noqa: PLC0415
 
@@ -138,7 +139,10 @@ async def test_fault_profiles_are_translated() -> None:
         )
         states = translations["entity"]["select"]["fault_profile"]["state"]
         assert set(states) == set(FaultProfile)
-        assert set(translations["entity"]["number"]) >= {p.key for p in FAULT_PARAMS}
+        assert set(translations["entity"]["number"]) >= {p.name for p in FAULT_PARAMS}
+        assert set(translations["device"]) == {
+            spec.device_id for spec in (*MOCK_DEVICES, *MOCK_THERMOMETERS, MOCK_GRID)
+        }
 
 
 async def test_unload_entry(hass: HomeAssistant, stand: MockDevicesCoordinator) -> None:

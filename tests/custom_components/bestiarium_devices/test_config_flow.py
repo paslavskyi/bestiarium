@@ -1417,6 +1417,9 @@ async def test_virtual_device_selectors_exclude_config_knobs(
     assert knob_switch in relay_excluded
     assert relay not in relay_excluded
     assert knob_power in power_excluded
+    # Each selector lists only its own domain
+    assert knob_power not in relay_excluded
+    assert knob_switch not in power_excluded
 
 
 async def test_reconfigure_abort_uses_integration_translation(

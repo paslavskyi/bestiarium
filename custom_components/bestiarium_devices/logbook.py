@@ -25,6 +25,12 @@ from .const import (
     EVENT_OVERLOAD_FIRST_QUEUE,
     EVENT_OVERLOAD_SECOND_QUEUE,
     EVENT_ZONE_CHANGED,
+    DeviceSwitchedData,
+    ModeAppliedData,
+    OverloadClearedData,
+    OverloadFirstQueueData,
+    OverloadSecondQueueData,
+    ZoneChangedData,
 )
 
 if TYPE_CHECKING:
@@ -36,7 +42,7 @@ if TYPE_CHECKING:
 BALANCER = "Bestiarium balancer"
 
 
-def _zone_changed(data: dict[str, Any]) -> dict[str, Any]:
+def _zone_changed(data: ZoneChangedData) -> dict[str, Any]:
     return {
         LOGBOOK_ENTRY_NAME: BALANCER,
         LOGBOOK_ENTRY_MESSAGE: (
@@ -45,8 +51,8 @@ def _zone_changed(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _device_switched(action: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    def describe(data: dict[str, Any]) -> dict[str, Any]:
+def _device_switched(action: str) -> Callable[[DeviceSwitchedData], dict[str, Any]]:
+    def describe(data: DeviceSwitchedData) -> dict[str, Any]:
         return {
             LOGBOOK_ENTRY_NAME: data["device_name"],
             LOGBOOK_ENTRY_MESSAGE: (
@@ -59,7 +65,7 @@ def _device_switched(action: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
     return describe
 
 
-def _overload_first_queue(data: dict[str, Any]) -> dict[str, Any]:
+def _overload_first_queue(data: OverloadFirstQueueData) -> dict[str, Any]:
     names = ", ".join(data["device_names"])
     return {
         LOGBOOK_ENTRY_NAME: BALANCER,
@@ -70,7 +76,7 @@ def _overload_first_queue(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _overload_second_queue(data: dict[str, Any]) -> dict[str, Any]:
+def _overload_second_queue(data: OverloadSecondQueueData) -> dict[str, Any]:
     names = ", ".join(data["device_names"])
     return {
         LOGBOOK_ENTRY_NAME: BALANCER,
@@ -81,7 +87,7 @@ def _overload_second_queue(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _overload_cleared(data: dict[str, Any]) -> dict[str, Any]:
+def _overload_cleared(data: OverloadClearedData) -> dict[str, Any]:
     after = data["cleared_after"].replace("_", " ")
     return {
         LOGBOOK_ENTRY_NAME: BALANCER,
@@ -89,7 +95,7 @@ def _overload_cleared(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mode_applied(data: dict[str, Any]) -> dict[str, Any]:
+def _mode_applied(data: ModeAppliedData) -> dict[str, Any]:
     return {
         LOGBOOK_ENTRY_NAME: BALANCER,
         LOGBOOK_ENTRY_MESSAGE: (
@@ -100,7 +106,7 @@ def _mode_applied(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-DESCRIBERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+DESCRIBERS: dict[str, Callable[[Any], dict[str, Any]]] = {
     EVENT_ZONE_CHANGED: _zone_changed,
     EVENT_DEVICE_TURNED_ON: _device_switched("turned on"),
     EVENT_DEVICE_TURNED_OFF: _device_switched("turned off"),

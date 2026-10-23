@@ -67,12 +67,12 @@ def _may_be_relay_or_sensor(entity: er.RegistryEntry) -> bool:
     return entity.platform != DOMAIN and entity.entity_category is None
 
 
-def non_candidate_entity_ids(hass: HomeAssistant) -> list[str]:
-    """Return the entities that may not be a device's relay or power sensor."""
+def non_candidate_entity_ids(hass: HomeAssistant, domain: str) -> list[str]:
+    """Return the entities of `domain` that may not be a relay or power sensor."""
     return [
         entity.entity_id
         for entity in er.async_get(hass).entities.values()
-        if not _may_be_relay_or_sensor(entity)
+        if entity.domain == domain and not _may_be_relay_or_sensor(entity)
     ]
 
 
@@ -238,7 +238,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SWITCH,
-                        exclude_entities=non_candidate_entity_ids(self.hass),
+                        exclude_entities=non_candidate_entity_ids(
+                            self.hass, DOMAIN_SWITCH
+                        ),
                     ),
                 ),
                 vol.Required(
@@ -248,7 +250,9 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.EntitySelectorConfig(
                         domain=DOMAIN_SENSOR,
                         device_class=DEVICE_CLASS_POWER,
-                        exclude_entities=non_candidate_entity_ids(self.hass),
+                        exclude_entities=non_candidate_entity_ids(
+                            self.hass, DOMAIN_SENSOR
+                        ),
                     ),
                 ),
             },

@@ -34,7 +34,7 @@ custom_components/bestiarium_mock/
 ├── binary_sensor.py     # Socket "State" (draws power), grid overload alarm
 ├── number.py            # Fault parameters, cooker power, thermometer temperature
 ├── select.py            # Fault profile
-├── config_flow.py       # Confirmation form listing the device set (VERSION 2)
+├── config_flow.py       # Confirmation form counting the device set (VERSION 2)
 └── translations/        # en, uk
 
 tests/custom_components/bestiarium_mock/
@@ -89,7 +89,7 @@ They are equal unless the fault model separates them.
 | `delay_min_s`, `delay_max_s` | 0–120 s | the command takes effect after a random delay from the range (the latest command wins) |
 | `stuck_percent` | 0–100 % | the load switches but HA keeps the old state, until a later command goes through without sticking (like SmartThings until its next poll) |
 | `dropouts_per_hour` | 0–60 | on average this many dropouts an hour (exponential gaps) |
-| `dropout_min_s`, `dropout_max_s` | 1–600 s | a dropout makes the switch **and** the power sensor `unavailable` for a random time; the load keeps its state |
+| `dropout_min_s`, `dropout_max_s` | 1–600 s | a dropout makes the switch **and** the power sensor `unavailable` for a random time; the load keeps its state, and the "State" binary sensor keeps showing it |
 
 Each socket has its own `random.Random` (`socket.rng`); the grid noise has the
 coordinator's (`coordinator.rng`). Tests seed them (the `stand` fixture) and
@@ -124,7 +124,7 @@ Per socket (device `mock_<device_id>`, model "Mock Smart Socket"):
 |---|---|---|---|
 | `switch` "Switch" | `mock_<id>` | — | shows the reported state; commands go to the fault model; unavailable during a dropout |
 | `sensor` "Power" | `mock_<id>_power` | — | what the load draws; unavailable during a dropout |
-| `binary_sensor` "State" | `mock_<id>_state` | — | whether the load draws power, whatever the switch shows |
+| `binary_sensor` "State" | `mock_<id>_state` | — | whether the load draws power, whatever the switch shows; stays available during a dropout (the tester's view of the truth) |
 | `select` "Fault profile" | `mock_<id>_fault_profile` | config | |
 | 7 × `number` fault parameters | `mock_<id>_<parameter>` | config | editable in Custom only |
 | `number` "Mock Power" | `mock_cooker_mock_power` | config | cooker only, 400–4200 W |
@@ -149,6 +149,11 @@ Router, Heating, Washing Machine, Dishwasher, Socket 1–4 — and the "Mock
 Enabled" switches of the kept ones (the fault profile replaced them).
 Unique IDs of the kept devices do not change.
 
+The entities other integrations placed on a removed device go with it: the
+"Allowed" switch and power entities of a Bestiarium Devices entry on Mock AC,
+for example. Such an entry stays, without entities, until `make stand`
+removes it (it is named after a retired test socket) and adds the new set.
+
 ---
 
 ## The stand (`make stand`)
@@ -166,14 +171,18 @@ the script fails if HA did not load them.
 
 1. Adds Bestiarium Mock and Bestiarium Mode (modes "Grid on" and "Night",
    limit 5000 W on the mock grid, yellow 75 %, red 90 %) if they are missing.
-   An existing Bestiarium Mode is kept as it is. Every test device gets back
-   its own name (no `name_by_user`, no area) and every test entity the
-   entity_id `<domain>.<unique_id>` (for example `sensor.mock_boiler_power`,
-   `select.mock_boiler_fault_profile`), whatever HA generated from old names
-   or areas. Automations that no longer load (unavailable, such as those of
-   old test devices) are removed.
-2. Removes the Bestiarium Devices entries of test devices (and those whose
-   device is gone) and adds one per socket:
+   An existing Bestiarium Mode keeps its modes and limits; its power sensor is
+   set (reconfigure flow) to the test grid's current entity_id. Every test
+   device gets back its own name (no `name_by_user`, no area) and every test
+   entity the entity_id `<domain>.<unique_id>` (for example
+   `sensor.mock_boiler_power`, `select.mock_boiler_fault_profile`), whatever HA
+   generated from old names or areas. An automation that no longer loads is
+   removed only if it refers to a test entity that is gone; any other broken
+   automation is reported and kept.
+2. Removes the Bestiarium Devices entries of the stand — those with an entity
+   on a test device, and those without entities named after a retired test
+   socket — and adds one per socket. Entries of other devices, standalone and
+   disabled ones are kept.
 
    | Socket | Priority | Overload first queue | Thermostat-driven |
    |---|---|---|---|
@@ -186,8 +195,9 @@ the script fails if HA did not load them.
    | cooker, fridge | 9999 (always on) | | |
    | floor heating 1–3 | 2000 | yes | yes |
 
-3. Replaces Bestiarium Climate with one entry (capacity 2) and thermostats
-   "Stand floor 1–3" on thermometers 1–3 and floor heating 1–3.
+3. Replaces the stand's Bestiarium Climate entry (the one with the "Stand
+   floor" thermostats; others are kept) with one entry (capacity 2) and
+   thermostats "Stand floor 1–3" on thermometers 1–3 and floor heating 1–3.
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
@@ -202,6 +212,9 @@ the script fails if HA did not load them.
    and zones; the scenario buttons; a section per socket (switch, power,
    profile; the heading and the switch tile open the device page with its
    knobs); a logbook of the sockets, zones and mode.
+
+6. Checks that the load zones of Bestiarium Mode are available, and fails
+   instead of printing "Done." if they are not.
 
 The scenarios assume the stand's Bestiarium Mode thresholds above; with other
 limits the cooker power in `red_zone_dead_socket` must change.

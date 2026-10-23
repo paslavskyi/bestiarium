@@ -235,7 +235,7 @@ The flow aborts with `"no_bestiarium_mode"` if no `bestiarium_mode` config entry
 4. If multiple of either → route through `select_entities`
 5. If no switch → error `"no_switch"`; no power sensor → error `"no_power_sensor"`
 
-Entities of this integration (the "Allowed" switches, which sit on the relay's device) and entities with an `entity_category` (`config` / `diagnostic`: settings of a device, such as the knobs of a test socket) are never relay or power-sensor candidates: one predicate, `_may_be_relay_or_sensor(entity)`, decides. The device lookups (`find_switches_for_device`, `find_power_sensors_for_device`, `find_devices_with_switch`) go through `_candidate_entities(hass, domain)`; `select_entities` offers only the device's own candidates (`include_entities`), and the virtual-device relay and power selectors exclude the rest (`exclude_entities=non_candidate_entity_ids(hass)`).
+Entities of this integration (the "Allowed" switches, which sit on the relay's device) and entities with an `entity_category` (`config` / `diagnostic`: settings of a device, such as the knobs of a test socket) are never relay or power-sensor candidates: one predicate, `_may_be_relay_or_sensor(entity)`, decides. The device lookups (`find_switches_for_device`, `find_power_sensors_for_device`, `find_devices_with_switch`) go through `_candidate_entities(hass, domain)`; `select_entities` offers only the device's own candidates (`include_entities`), and the virtual-device relay and power selectors exclude the rest (`exclude_entities=non_candidate_entity_ids(hass, domain)`).
 
 ### Reconfigure Flow
 
@@ -252,7 +252,7 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 | `find_power_sensors_for_device(hass, device_id)` | Finds validated power sensors on a device |
 | `find_devices_with_switch(hass)` | Returns device IDs that have switch entities |
 | `find_switches_for_device(hass, device_id)` | Returns enabled switch entity IDs for a device (not this integration's own) |
-| `non_candidate_entity_ids(hass)` | Returns entity IDs that may not be a relay or power sensor (this integration's own, and those with an `entity_category`) |
+| `non_candidate_entity_ids(hass, domain)` | Returns the entity IDs of a domain that may not be a relay or power sensor (this integration's own, and those with an `entity_category`) |
 | `is_virtual_device(hass, device_id)` | Checks if device was created by this integration |
 | `find_config_entry_for_device(hass, device_id)` | Finds config entry for a virtual device |
 

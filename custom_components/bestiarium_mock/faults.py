@@ -95,7 +95,7 @@ class MockSocket:
         """Receive a turn on/off command; the fault model decides what follows."""
         params = self.params
         if self.rng.random() * 100 < params.ignore_percent:
-            LOGGER.debug("%s ignores the command", self.spec.name)
+            LOGGER.debug("%s ignores the command", self.spec.device_id)
             return
         if self._cancel_command:
             self._cancel_command()
@@ -117,7 +117,7 @@ class MockSocket:
         self.physical_on = on
         if self.rng.random() * 100 < self.params.stuck_percent:
             LOGGER.debug(
-                "%s switched but keeps reporting its old state", self.spec.name
+                "%s switched but keeps reporting its old state", self.spec.device_id
             )
         else:
             self.reported_on = on

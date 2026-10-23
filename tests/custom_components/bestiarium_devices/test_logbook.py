@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.bestiarium_devices.const import (
     DOMAIN,
+    EVENT_DATA,
     EVENT_DEVICE_TURNED_OFF,
     EVENT_DEVICE_TURNED_ON,
     EVENT_MODE_APPLIED,
@@ -22,22 +23,31 @@ from custom_components.bestiarium_devices.const import (
     EVENT_OVERLOAD_FIRST_QUEUE,
     EVENT_OVERLOAD_SECOND_QUEUE,
     EVENT_ZONE_CHANGED,
+    DeviceSwitchedData,
+    ModeAppliedData,
+    OverloadClearedData,
+    OverloadFirstQueueData,
+    OverloadSecondQueueData,
+    ZoneChangedData,
 )
-from custom_components.bestiarium_devices.logbook import async_describe_events
+from custom_components.bestiarium_devices.logbook import (
+    DESCRIBERS,
+    async_describe_events,
+)
 
-Describe = Callable[[str, dict[str, Any]], dict[str, Any]]
+Describe = Callable[[str, Any], dict[str, Any]]
 
-TURNED = {
-    "strategy": "green",
-    "device_id": "dev1",
-    "device_name": "Mock Boiler",
-    "switch_entity_id": "switch.mock_boiler",
-    "priority": 5200,
-}
+TURNED = DeviceSwitchedData(
+    strategy="green",
+    device_id="dev1",
+    device_name="Mock Boiler",
+    switch_entity_id="switch.mock_boiler",
+    priority=5200,
+)
 
 
 class _Event:
-    def __init__(self, data: dict[str, Any]) -> None:
+    def __init__(self, data: Any) -> None:
         self.data = data
 
 
@@ -54,12 +64,17 @@ def describe(hass: HomeAssistant) -> Describe:
     return lambda event_type, data: describers[event_type](_Event(data))
 
 
+def test_every_event_of_the_contract_is_described() -> None:
+    """Each event with a payload contract has a logbook description."""
+    assert set(DESCRIBERS) == set(EVENT_DATA)
+
+
 @pytest.mark.parametrize(
     ("event_type", "data", "message"),
     [
         (
             EVENT_ZONE_CHANGED,
-            {"previous_zone": "none", "zone": "green"},
+            ZoneChangedData(previous_zone="none", zone="green"),
             "zone changed from none to green",
         ),
         (
@@ -69,43 +84,45 @@ def describe(hass: HomeAssistant) -> Describe:
         ),
         (
             EVENT_DEVICE_TURNED_OFF,
-            {**TURNED, "strategy": "red"},
+            DeviceSwitchedData(**{**TURNED, "strategy": "red"}),
             "turned off by the balancer (red strategy, priority 5200)",
         ),
         (
             EVENT_OVERLOAD_FIRST_QUEUE,
-            {
-                "devices_turned_off": 2,
-                "device_ids": ["a", "b"],
-                "device_names": ["Mock Boiler", "Mock Cooker"],
-                "overload_cleared": False,
-            },
+            OverloadFirstQueueData(
+                devices_turned_off=2,
+                device_ids=["a", "b"],
+                device_names=["Mock Boiler", "Mock Cooker"],
+                overload_cleared=False,
+            ),
             "overload: first queue turned off 2 devices (Mock Boiler, Mock Cooker)",
         ),
         (
             EVENT_OVERLOAD_SECOND_QUEUE,
-            {
-                "first_queue_count": 2,
-                "second_queue_count": 1,
-                "device_ids": ["c"],
-                "device_names": ["Mock Fridge"],
-            },
+            OverloadSecondQueueData(
+                first_queue_count=2,
+                second_queue_count=1,
+                device_ids=["c"],
+                device_names=["Mock Fridge"],
+            ),
             "overload: second queue turned off 1 devices (Mock Fridge)",
         ),
         (
             EVENT_OVERLOAD_CLEARED,
-            {"cleared_after": "wait_period", "first_queue_count": 2},
+            OverloadClearedData(cleared_after="wait_period", first_queue_count=2),
             "overload cleared after the wait period",
         ),
         (
             EVENT_MODE_APPLIED,
-            {"mode": "Night", "devices_turned_off": ["a"], "devices_turned_on": []},
+            ModeAppliedData(
+                mode="Night", devices_turned_off=["a"], devices_turned_on=[]
+            ),
             "mode Night applied: turned off 1, turned on 0 devices",
         ),
     ],
 )
 def test_every_balancer_event_is_described(
-    describe: Describe, event_type: str, data: dict[str, Any], message: str
+    describe: Describe, event_type: str, data: Any, message: str
 ) -> None:
     """Each event of the bus contract gets a readable logbook line."""
     assert describe(event_type, data)[LOGBOOK_ENTRY_MESSAGE] == message

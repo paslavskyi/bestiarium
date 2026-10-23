@@ -31,6 +31,7 @@ from custom_components.bestiarium_devices.const import (
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
     DOMAIN_BESTIARIUM_MODE,
+    EVENT_DATA,
     EVENT_DEVICE_TURNED_OFF,
     EVENT_DEVICE_TURNED_ON,
     EVENT_MODE_APPLIED,
@@ -1166,6 +1167,14 @@ class TestZoneTransitions:
             await coordinator.async_stop()
 
 
+def _assert_contract(events: list[dict]) -> None:
+    """Each payload has exactly the fields of its event's TypedDict."""
+    for event in events:
+        assert set(event["data"]) == set(
+            EVENT_DATA[event["event_type"]].__annotations__
+        )
+
+
 class TestEventFiring:
     """Tests for automation event firing."""
 
@@ -1195,6 +1204,7 @@ class TestEventFiring:
             assert events[0]["event_type"] == EVENT_ZONE_CHANGED
             assert events[0]["data"]["previous_zone"] == "green"
             assert events[0]["data"]["zone"] == "red"
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1240,6 +1250,7 @@ class TestEventFiring:
             assert events[0]["data"]["device_name"] == "Test Device"
             assert events[0]["data"]["switch_entity_id"] == "switch.test"
             assert events[0]["data"]["priority"] == 6000  # noqa: PLR2004
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1285,6 +1296,7 @@ class TestEventFiring:
             assert events[0]["data"]["device_name"] == "Low Priority"
             assert events[0]["data"]["switch_entity_id"] == "switch.low"
             assert events[0]["data"]["priority"] == 2000  # noqa: PLR2004
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 
@@ -1360,6 +1372,7 @@ class TestEventFiring:
         assert len(cleared_events) == 1
         assert cleared_events[0]["data"]["cleared_after"] == "first_queue"
         assert cleared_events[0]["data"]["first_queue_count"] == 1
+        _assert_contract(events)
 
     async def test_overload_second_queue_event(
         self,
@@ -1422,6 +1435,7 @@ class TestEventFiring:
         assert second_queue_events[0]["data"]["first_queue_count"] == 1
         assert second_queue_events[0]["data"]["second_queue_count"] == 1
         assert "Second" in second_queue_events[0]["data"]["device_names"]
+        _assert_contract(events)
 
     async def test_mode_applied_event(
         self,
@@ -1482,6 +1496,7 @@ class TestEventFiring:
             assert events[0]["data"]["mode"] == "Eco"
             assert len(events[0]["data"]["devices_turned_off"]) == 1
             assert len(events[0]["data"]["devices_turned_on"]) == 1
+            _assert_contract(events)
         finally:
             await coordinator.async_stop()
 

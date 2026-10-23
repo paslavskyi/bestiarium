@@ -1,6 +1,7 @@
 """Constants for bestiarium_devices."""
 
 from logging import Logger, getLogger
+from typing import TypedDict
 
 LOGGER: Logger = getLogger(__package__)
 
@@ -79,3 +80,65 @@ EVENT_OVERLOAD_FIRST_QUEUE = "bestiarium_devices_overload_first_queue"
 EVENT_OVERLOAD_SECOND_QUEUE = "bestiarium_devices_overload_second_queue"
 EVENT_OVERLOAD_CLEARED = "bestiarium_devices_overload_cleared"
 EVENT_MODE_APPLIED = "bestiarium_devices_mode_applied"
+
+
+# Payloads of the events: a contract with the owner's automations (docs/events.md)
+class ZoneChangedData(TypedDict):
+    """Payload of EVENT_ZONE_CHANGED."""
+
+    previous_zone: str
+    zone: str
+
+
+class DeviceSwitchedData(TypedDict):
+    """Payload of EVENT_DEVICE_TURNED_ON and EVENT_DEVICE_TURNED_OFF."""
+
+    strategy: str
+    device_id: str
+    device_name: str
+    switch_entity_id: str
+    priority: int
+
+
+class OverloadFirstQueueData(TypedDict):
+    """Payload of EVENT_OVERLOAD_FIRST_QUEUE."""
+
+    devices_turned_off: int
+    device_ids: list[str]
+    device_names: list[str]
+    overload_cleared: bool
+
+
+class OverloadSecondQueueData(TypedDict):
+    """Payload of EVENT_OVERLOAD_SECOND_QUEUE."""
+
+    first_queue_count: int
+    second_queue_count: int
+    device_ids: list[str]
+    device_names: list[str]
+
+
+class OverloadClearedData(TypedDict):
+    """Payload of EVENT_OVERLOAD_CLEARED."""
+
+    cleared_after: str
+    first_queue_count: int
+
+
+class ModeAppliedData(TypedDict):
+    """Payload of EVENT_MODE_APPLIED."""
+
+    mode: str
+    devices_turned_off: list[str]
+    devices_turned_on: list[str]
+
+
+EVENT_DATA: dict[str, type] = {
+    EVENT_ZONE_CHANGED: ZoneChangedData,
+    EVENT_DEVICE_TURNED_ON: DeviceSwitchedData,
+    EVENT_DEVICE_TURNED_OFF: DeviceSwitchedData,
+    EVENT_OVERLOAD_FIRST_QUEUE: OverloadFirstQueueData,
+    EVENT_OVERLOAD_SECOND_QUEUE: OverloadSecondQueueData,
+    EVENT_OVERLOAD_CLEARED: OverloadClearedData,
+    EVENT_MODE_APPLIED: ModeAppliedData,
+}

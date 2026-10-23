@@ -58,8 +58,8 @@ async def test_profile_sets_all_parameters(
     await _select(hass, entity_id, profile)
 
     for param in FAULT_PARAMS:
-        expected = getattr(PROFILE_PARAMS[profile], param.key)
-        assert _param(hass, entity_id, param.key) == expected
+        expected = getattr(PROFILE_PARAMS[profile], param.name)
+        assert _param(hass, entity_id, param.name) == expected
 
 
 @pytest.mark.usefixtures("stand")

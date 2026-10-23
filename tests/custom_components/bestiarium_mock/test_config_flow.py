@@ -18,7 +18,7 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 
 async def test_config_flow_shows_form(hass: HomeAssistant) -> None:
-    """The form lists the stand's sockets and counts them right."""
+    """The form counts the stand's sockets and thermometers."""
     result = await hass.config_entries.flow.async_init(
         DOMAIN,
         context={"source": SOURCE_USER},
@@ -29,9 +29,6 @@ async def test_config_flow_shows_form(hass: HomeAssistant) -> None:
     placeholders = result["description_placeholders"]
     assert placeholders["device_count"] == str(len(MOCK_DEVICES))
     assert placeholders["thermometer_count"] == str(len(MOCK_THERMOMETERS))
-    assert placeholders["devices"].splitlines() == [
-        f"- {spec.name}, {spec.power_w} W" for spec in MOCK_DEVICES
-    ]
 
 
 async def test_config_flow_creates_entry(hass: HomeAssistant) -> None:

@@ -12,11 +12,11 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from homeassistant.util.yaml import dump
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_devices.const import DOMAIN as DEVICES
 from custom_components.bestiarium_mock.const import DOMAIN as MOCK
-from custom_components.bestiarium_mock.const import MOCK_DEVICES
 from scripts.stand_setup import (
     DASHBOARD,
     SCRIPT_PREFIX,
@@ -46,6 +46,25 @@ BROKEN_AUTOMATION = {
     ],
     "actions": [],
 }
+# A broken automation of something else: the stand script leaves it alone
+FOREIGN_AUTOMATION = {
+    **BROKEN_AUTOMATION,
+    "id": "kitchen_click",
+    "alias": "Kitchen light on click",
+    "triggers": [
+        {**BROKEN_AUTOMATION["triggers"][0], "entity_id": "switch.kitchen_light"}
+    ],
+}
+MODE_ON_OLD_GRID_ID = {
+    "options": [{"name": "Grid on", "icon": "mdi:home"}],
+    "ac_load_limits": {
+        "ac_power_sensor": "sensor.mock_grid_grid_power",
+        "ac_load_limit_w": 5000,
+        "ac_yellow_zone_percent": 75,
+        "ac_red_zone_percent": 90,
+        "ac_overload_recovery_seconds": 30,
+    },
+}
 
 
 async def _dev_ha(
@@ -54,13 +73,12 @@ async def _dev_ha(
     """Run HA on the development configuration; return its URL."""
     hass.config.config_dir = str(config_dir)
     shutil.copy(DEV_CONFIG, config_dir / "configuration.yaml")
-    (config_dir / "automations.yaml").write_text(dump([BROKEN_AUTOMATION]))
+    automations = [BROKEN_AUTOMATION, FOREIGN_AUTOMATION]
+    (config_dir / "automations.yaml").write_text(dump(automations))
     (config_dir / "scripts.yaml").write_text("")
     for component in ("api", "config", "lovelace", "script", "logbook"):
         assert await async_setup_component(hass, component, {})
-    assert await async_setup_component(
-        hass, "automation", {"automation": [BROKEN_AUTOMATION]}
-    )
+    assert await async_setup_component(hass, "automation", {"automation": automations})
     client = await hass_client()
     return str(client.make_url("")).rstrip("/")
 
@@ -82,6 +100,25 @@ async def _rename_a_test_device(hass: HomeAssistant, url: str, token: str) -> No
     await hass.async_block_till_done()
 
 
+def _device_name(hass: HomeAssistant, mock_id: str) -> str:
+    device = dr.async_get(hass).async_get_device_by_identifier(
+        (MOCK, f"mock_{mock_id}"), hass.config_entries.async_entries(MOCK)[0].entry_id
+    )
+    return device.name
+
+
+def _zone_states(hass: HomeAssistant) -> set[str]:
+    entities = er.async_get(hass)
+    return {
+        hass.states.get(
+            entities.async_get_entity_id(
+                "binary_sensor", "bestiarium_mode", f"power_load_{zone}"
+            )
+        ).state
+        for zone in ("green", "yellow", "red", "overload")
+    }
+
+
 async def test_stand_setup_is_repeatable(
     hass: HomeAssistant,
     hass_client: ClientSessionGenerator,
@@ -95,9 +132,8 @@ async def test_stand_setup_is_repeatable(
     await setup_stand(url, hass_access_token)
     await hass.async_block_till_done()
 
-    names = {spec.device_id: spec.name for spec in MOCK_DEVICES}
     assert [entry.title for entry in hass.config_entries.async_entries(DEVICES)] == [
-        names[device.mock_id] for device in STAND_DEVICES
+        _device_name(hass, device.mock_id) for device in STAND_DEVICES
     ]
     climate = hass.config_entries.async_entries("bestiarium_climate")
     assert len(climate) == 1
@@ -105,6 +141,59 @@ async def test_stand_setup_is_repeatable(
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
+    assert _zone_states(hass) <= {"on", "off"}
+
+
+async def test_existing_mode_follows_the_renamed_grid(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    hass_access_token: str,
+    tmp_path: Path,
+) -> None:
+    """A Mode on the old grid entity_id watches the renamed one; zones work."""
+    url = await _dev_ha(hass, hass_client, tmp_path)
+    mode = MockConfigEntry(
+        domain="bestiarium_mode", unique_id="bestiarium_mode", data=MODE_ON_OLD_GRID_ID
+    )
+    mode.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mode.entry_id)
+
+    await setup_stand(url, hass_access_token)
+    await hass.async_block_till_done()
+
+    limits = mode.data["ac_load_limits"]
+    assert limits["ac_power_sensor"] == "sensor.mock_grid_power"
+    assert (
+        limits["ac_load_limit_w"]
+        == MODE_ON_OLD_GRID_ID["ac_load_limits"]["ac_load_limit_w"]
+    )
+    assert _zone_states(hass) <= {"on", "off"}
+
+
+async def test_only_stand_things_are_removed(
+    hass: HomeAssistant,
+    hass_client: ClientSessionGenerator,
+    hass_access_token: str,
+    tmp_path: Path,
+) -> None:
+    """Entries and automations that are not the stand's stay."""
+    url = await _dev_ha(hass, hass_client, tmp_path)
+    standalone = MockConfigEntry(domain=DEVICES, title="Standalone floor", data={})
+    retired = MockConfigEntry(domain=DEVICES, title="Mock Kettle", data={})
+    own_climate = MockConfigEntry(
+        domain="bestiarium_climate", title="Bestiarium Climate", data={}
+    )
+    for entry in (standalone, retired, own_climate):
+        entry.add_to_hass(hass)
+
+    await setup_stand(url, hass_access_token)
+    await hass.async_block_till_done()
+
+    assert hass.config_entries.async_get_entry(standalone.entry_id)
+    assert hass.config_entries.async_get_entry(retired.entry_id) is None
+    assert hass.config_entries.async_get_entry(own_climate.entry_id)
+    assert hass.states.get("automation.kitchen_light_on_click")
+    assert "kitchen_click" in (tmp_path / "automations.yaml").read_text()
 
 
 async def test_scenario_scripts_are_loaded(

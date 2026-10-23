@@ -34,8 +34,10 @@ this value?**
 
 The knobs of the test stand (`bestiarium_mock`: fault profile, fault
 parameters, power, temperature) are entities, because a tester changes them
-during a test. They are `entity_category: config`, on the device page, not on
-the stand dashboard. `bestiarium_devices` never offers a `config` or
+during a test. They are `entity_category: config` and live on the device
+page; of them only the fault profile is also on the stand dashboard (the
+owner's choice: one knob per device there, the detailed fault parameters on
+the device page only). `bestiarium_devices` never offers a `config` or
 `diagnostic` entity as a device's relay or power sensor.
 
 ## Examples in Bestiarium

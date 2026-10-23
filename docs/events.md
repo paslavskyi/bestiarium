@@ -50,7 +50,7 @@ The values and the relay entity above are examples of a user's automation; Besti
 
 ## bestiarium_devices Events
 
-All events are fired from `custom_components/bestiarium_devices/balancer.py`.
+All events are fired from `custom_components/bestiarium_devices/balancer.py`. Their payloads are a contract: each has a `TypedDict` in `const.py` (`EVENT_DATA` maps an event to it), the logbook descriptions are typed with them, and the balancer tests check every fired payload against them.
 
 ### `bestiarium_devices_zone_changed`
 

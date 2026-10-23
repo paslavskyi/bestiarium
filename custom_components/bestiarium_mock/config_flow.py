@@ -36,9 +36,6 @@ class BestiariumMockFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=None,
             description_placeholders={
                 "device_count": str(len(MOCK_DEVICES)),
-                "devices": "\n".join(
-                    f"- {spec.name}, {spec.power_w} W" for spec in MOCK_DEVICES
-                ),
                 "thermometer_count": str(len(MOCK_THERMOMETERS)),
             },
         )

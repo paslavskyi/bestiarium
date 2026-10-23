@@ -21,7 +21,9 @@ Assistant that does not run on this machine.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -46,6 +48,23 @@ CLIMATE = "bestiarium_climate"
 
 DASHBOARD = "bestiarium-stand"
 SCRIPT_PREFIX = "bestiarium_stand_"
+ZONES = ("green", "yellow", "red", "overload")
+ZONE_CHECK_SECONDS = 15
+# Bestiarium Devices entries of the test sockets removed in DEV-007: without
+# their devices they have no entities left to recognise them by
+RETIRED_TEST_DEVICES = frozenset(
+    {
+        "Mock AC",
+        "Mock Kettle",
+        "Mock Router",
+        "Mock Heating",
+        "Mock Washing Machine",
+        "Mock Dishwasher",
+        *(f"Mock Socket {number}" for number in range(1, 5)),
+    }
+)
+# A test entity_id in an automation, such as switch.mock_socket_3_switch
+TEST_ENTITY_ID = re.compile(r"\b[a-z_]+\.mock_\w+")
 
 
 @dataclass(frozen=True)
@@ -141,21 +160,35 @@ class HomeAssistant:
                 raise StandError(msg)
             return await response.json()
 
+    async def _run_flow(
+        self, kind: str, start: dict[str, Any], steps: tuple[dict[str, Any], ...]
+    ) -> dict[str, Any]:
+        path = f"config/config_entries/{kind}"
+        result = await self.rest("POST", path, start)
+        for step in steps:
+            result = await self.rest("POST", f"{path}/{result['flow_id']}", step)
+            if result.get("errors"):
+                msg = f"{start['handler']} {result['step_id']}: {result['errors']}"
+                raise StandError(msg)
+        return result
+
     async def flow(
         self, kind: str, handler: str | list[str], *steps: dict[str, Any]
     ) -> dict[str, Any]:
         """Run a config (or subentry) flow through its steps; return the result."""
-        path = f"config/config_entries/{kind}"
-        result = await self.rest("POST", path, {"handler": handler})
-        for step in steps:
-            result = await self.rest("POST", f"{path}/{result['flow_id']}", step)
-            if result.get("errors"):
-                msg = f"{handler} {result['step_id']}: {result['errors']}"
-                raise StandError(msg)
+        result = await self._run_flow(kind, {"handler": handler}, steps)
         if result["type"] != "create_entry":
             msg = f"{handler}: the flow ended with {result['type']}, not an entry"
             raise StandError(msg)
         return result
+
+    async def reconfigure(self, entry: dict[str, Any], *steps: dict[str, Any]) -> None:
+        """Run the reconfigure flow of an entry through its steps."""
+        start = {"handler": entry["domain"], "entry_id": entry["entry_id"]}
+        result = await self._run_flow("flow", start, steps)
+        if result.get("reason") != "reconfigure_successful":
+            msg = f"{entry['domain']}: reconfigure ended with {result['type']}"
+            raise StandError(msg)
 
     async def entries(self, domain: str) -> list[dict[str, Any]]:
         """Return the config entries of a domain."""
@@ -254,27 +287,43 @@ async def normalize_mock(ha: HomeAssistant, reg: Registry) -> None:
 
 async def remove_broken_automations(ha: HomeAssistant, reg: Registry) -> None:
     """
-    Remove automations that no longer load, such as those of old test devices.
+    Remove the automations that broke because test entities are gone.
 
     An automation that fails to validate is unavailable; its id is the
-    unique_id of its entity.
+    unique_id of its entity. Only one that refers to a test entity that no
+    longer exists is removed; any other broken automation is left as it is.
     """
-    unavailable = {
-        state["entity_id"]
-        for state in await ha.rest("GET", "states")
-        if state["entity_id"].startswith("automation.")
-        and state["state"] == "unavailable"
-    }
+    states = {state["entity_id"]: state for state in await ha.rest("GET", "states")}
     for entity in reg.entities:
-        if entity["entity_id"] in unavailable and entity["platform"] == "automation":
-            await ha.rest("DELETE", f"config/automation/config/{entity['unique_id']}")
-            print(f"  removed the broken automation {entity['entity_id']}")
+        if entity["platform"] != "automation" or (
+            states.get(entity["entity_id"], {}).get("state") != "unavailable"
+        ):
+            continue
+        path = f"config/automation/config/{entity['unique_id']}"
+        config = json.dumps(await ha.rest("GET", path))
+        if any(ref not in states for ref in TEST_ENTITY_ID.findall(config)):
+            await ha.rest("DELETE", path)
+            print(f"  removed the automation of old test devices {entity['entity_id']}")
+        else:
+            print(f"  kept the broken automation {entity['entity_id']}: not a test one")
 
 
 async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
-    """Add Bestiarium Mode on the test grid if it is missing."""
-    if await ha.entries(MODE):
-        print("  Bestiarium Mode kept as it is")
+    """
+    Add Bestiarium Mode on the test grid if it is missing.
+
+    An existing one keeps its modes and limits but watches the test grid by its
+    current entity_id, which normalize_mock may just have changed.
+    """
+    grid = reg.mock("sensor", "mock_grid_power")
+    if entries := await ha.entries(MODE):
+        await ha.reconfigure(
+            entries[0],
+            {"next_step_id": "configure_ac_load_limits"},
+            {"ac_power_sensor": grid},
+            {"next_step_id": "complete"},
+        )
+        print(f"  Bestiarium Mode kept, watching {grid}")
         return
     steps: list[dict[str, Any]] = []
     for mode in MODES:
@@ -282,7 +331,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
     steps += [
         {"next_step_id": "configure_ac_load_limits"},
         {
-            "ac_power_sensor": reg.mock("sensor", "mock_grid_power"),
+            "ac_power_sensor": grid,
             "ac_load_limit_w": LOAD_LIMIT_W,
             "ac_yellow_zone_percent": YELLOW_PERCENT,
             "ac_red_zone_percent": RED_PERCENT,
@@ -294,30 +343,30 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
     print("  added Bestiarium Mode")
 
 
-def _belongs_to_stand(entry_id: str, reg: Registry) -> bool:
+def _belongs_to_stand(entry: dict[str, Any], reg: Registry) -> bool:
     """
-    Return whether a loaded Bestiarium Devices entry is a stand device or dangling.
+    Return whether a Bestiarium Devices entry is a stand device.
 
-    A stand entry has its entities on a test device; a dangling one lost its
-    device with an old test socket. Entries of other devices are kept, and so
-    are disabled ones (they have no entities to tell).
+    It is one if an entity of it sits on a test device, or if it has no
+    entities at all and is named after a retired test socket (its device went
+    with the DEV-007 migration). Anything else is kept: entries of other
+    devices, standalone ones, disabled ones.
     """
-    devices = {device["id"]: device for device in reg.devices}
-    on_devices = [
-        devices.get(entity["device_id"])
-        for entity in reg.entities
-        if entity["config_entry_id"] == entry_id
-    ]
-    return not any(
-        device and not any(i[0] == MOCK for i in device["identifiers"])
-        for device in on_devices
-    )
+    test_devices = {
+        device["id"]
+        for device in reg.devices
+        if any(i[0] == MOCK for i in device["identifiers"])
+    }
+    entities = [e for e in reg.entities if e["config_entry_id"] == entry["entry_id"]]
+    if entities:
+        return any(entity["device_id"] in test_devices for entity in entities)
+    return entry["disabled_by"] is None and entry["title"] in RETIRED_TEST_DEVICES
 
 
 async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
     """Replace the Bestiarium Devices entries of the stand with fresh ones."""
     for entry in await ha.entries(DEVICES):
-        if entry["disabled_by"] is None and _belongs_to_stand(entry["entry_id"], reg):
+        if _belongs_to_stand(entry, reg):
             await ha.remove_entry(entry)
     for device in STAND_DEVICES:
         await ha.flow(
@@ -335,9 +384,18 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
 
 
 async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
-    """Replace Bestiarium Climate with one entry and the stand thermostats."""
+    """
+    Replace the stand's Bestiarium Climate entry and its thermostats.
+
+    The stand's entry is the one with the stand thermostats; others are kept.
+    """
+    stand_thermostats = {name for name, _, _ in THERMOSTATS}
     for entry in await ha.entries(CLIMATE):
-        await ha.remove_entry(entry)
+        subentries = await ha.ws(
+            "config_entries/subentries/list", entry_id=entry["entry_id"]
+        )
+        if stand_thermostats & {subentry["title"] for subentry in subentries}:
+            await ha.remove_entry(entry)
     result = await ha.flow(
         "flow",
         CLIMATE,
@@ -483,8 +541,7 @@ def _tile(entity_id: str, **options: Any) -> dict[str, Any]:
 
 def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
     zones = [
-        reg.entity_id("binary_sensor", MODE, f"power_load_{zone}")
-        for zone in ("green", "yellow", "red", "overload")
+        reg.entity_id("binary_sensor", MODE, f"power_load_{zone}") for zone in ZONES
     ]
     grid = [
         reg.mock("sensor", "mock_grid_power"),
@@ -588,6 +645,22 @@ async def write_dashboard(ha: HomeAssistant, reg: Registry, scripts: list[str]) 
     print(f"  wrote the dashboard {ha.url}/{DASHBOARD}")
 
 
+async def check_zones(ha: HomeAssistant, reg: Registry) -> None:
+    """Fail unless the zone sensors of Bestiarium Mode have a state."""
+    zones = [reg.entity_id("binary_sensor", MODE, f"power_load_{z}") for z in ZONES]
+    for _ in range(ZONE_CHECK_SECONDS):
+        states = [await ha.rest("GET", f"states/{zone}") for zone in zones]
+        if all(state["state"] in ("on", "off") for state in states):
+            print("  the load zones of Bestiarium Mode are available")
+            return
+        await asyncio.sleep(1)
+    msg = (
+        "The load zones of Bestiarium Mode are unavailable: it does not read "
+        f"the test grid {reg.mock('sensor', 'mock_grid_power')}"
+    )
+    raise StandError(msg)
+
+
 async def setup_stand(url: str, token: str) -> None:
     """Set up the whole stand."""
     async with aiohttp.ClientSession() as session:
@@ -604,6 +677,7 @@ async def setup_stand(url: str, token: str) -> None:
             await recreate_climate(ha, reg)
             reg = await registry(ha)
             await write_dashboard(ha, reg, await write_scripts(ha, reg))
+            await check_zones(ha, reg)
         finally:
             await ha.close()
 
