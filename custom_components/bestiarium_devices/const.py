@@ -141,6 +141,10 @@ EVENT_OVERLOAD_SECOND_QUEUE = "bestiarium_devices_overload_second_queue"
 EVENT_OVERLOAD_CLEARED = "bestiarium_devices_overload_cleared"
 EVENT_MODE_APPLIED = "bestiarium_devices_mode_applied"
 
+# Repairs issues (docs/concepts/problem-reporting.md)
+ISSUE_NO_LOAD_ZONES = "no_load_zones"
+ISSUE_MISSING_ENTITY = "missing_entity"
+
 
 # Payloads of the events: a contract with the owner's automations (docs/events.md)
 class ZoneChangedData(TypedDict):

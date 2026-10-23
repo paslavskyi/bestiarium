@@ -8,15 +8,20 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, callback
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 from homeassistant.helpers.event import (
     async_track_entity_registry_updated_event,
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.start import async_at_started
 
 from .const import (
+    DOMAIN,
     EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
+    ISSUE_NO_LOAD_ZONES,
     LOGGER,
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
@@ -33,9 +38,6 @@ if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State
     from homeassistant.helpers.entity_registry import EventEntityRegistryUpdatedData
-
-# Notification ID for missing sensors warning
-NOTIFICATION_ID_MISSING_SENSORS = "bestiarium_devices_missing_sensors"
 
 
 class ActiveZone(StrEnum):
@@ -74,6 +76,9 @@ class BalancingCoordinator:
 
         # Flag to track if coordinator is running
         self._running: bool = False
+        # Whether it follows the zone sensors (they exist)
+        self._active = False
+        self._unsubscribe_start: list[Callable[[], None]] = []
 
         self._response_memory: ResponseMemory  # loaded by async_start
         self._strategies: Strategies  # made by async_start
@@ -107,17 +112,53 @@ class BalancingCoordinator:
             self._overload_cleared,
         )
 
-        # Check if binary sensors exist before subscribing
-        if not self._check_binary_sensors_exist():
-            LOGGER.warning(
-                "Power load binary sensors not found. "
-                "Balancing functionality will be disabled. "
-                "Ensure bestiarium_mode is configured with AC load limits."
-            )
-            await self._send_missing_sensors_notification()
-            # Keep running but without subscriptions - will just be inactive
-            return
+        # The zone sensors may come later: when the AC load limits are set
+        self._unsubscribe_start = [
+            self._hass.bus.async_listen(
+                EVENT_ENTITY_REGISTRY_UPDATED, self._on_entity_registry_updated
+            ),
+            async_at_started(self._hass, self._on_started),
+        ]
+        if self._zones_exist():
+            self._activate()
 
+    def _zones_exist(self) -> bool:
+        """Return whether bestiarium_mode has zone sensors."""
+        return bool(self._zone_entity_ids())
+
+    @callback
+    def _on_entity_registry_updated(
+        self, event: Event[EventEntityRegistryUpdatedData]
+    ) -> None:
+        """Come alive once the zone sensors are created; follow each new one."""
+        if (
+            event.data["action"] != "create"
+            or event.data["entity_id"] not in self._mode_entity_ids()
+        ):
+            return
+        if self._active:
+            self._unsubscribe()
+            self._subscribe()
+        else:
+            self._activate()
+
+    @callback
+    def _on_started(self, _hass: HomeAssistant) -> None:
+        """Tell the owner, once HA has started, that there are no zones."""
+        if not self._active:
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                ISSUE_NO_LOAD_ZONES,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_NO_LOAD_ZONES,
+            )
+
+    def _activate(self) -> None:
+        """Follow the zones and run the strategy of the current one."""
+        self._active = True
+        ir.async_delete_issue(self._hass, DOMAIN, ISSUE_NO_LOAD_ZONES)
         self._subscribe()
 
         # Determine initial active zone (but don't execute strategy per Q7)
@@ -147,6 +188,10 @@ class BalancingCoordinator:
             self._job_cancel = None
 
         self._unsubscribe()
+        for unsubscribe in self._unsubscribe_start:
+            unsubscribe()
+        self._unsubscribe_start = []
+        self._active = False
         for control in self._controls.values():
             control.async_stop()
         self._controls.clear()
@@ -188,16 +233,22 @@ class BalancingCoordinator:
         entity_id = self._zone_entity_id(zone)
         return self._hass.states.get(entity_id) if entity_id else None
 
+    def _zone_entity_ids(self) -> list[str]:
+        return [e for zone in ZONES if (e := self._zone_entity_id(zone))]
+
+    def _mode_entity_ids(self) -> list[str]:
+        """Return the entity_ids of the zone sensors and the mode select."""
+        select = mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID)
+        return [*self._zone_entity_ids(), *([select] if select else [])]
+
     def _subscribe(self) -> None:
         """
         Listen to the bestiarium_mode zone sensors and mode select.
 
         The entities are tracked by their current entity_ids, so the listeners
-        are re-created whenever one of them is renamed.
+        are re-created whenever one of them is renamed or created.
         """
-        zone_entity_ids = [
-            entity_id for zone in ZONES if (entity_id := self._zone_entity_id(zone))
-        ]
+        zone_entity_ids = self._zone_entity_ids()
         select_entity_id = mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID)
         mode_entity_ids = [select_entity_id] if select_entity_id else []
         self._subscriptions = [
@@ -234,31 +285,6 @@ class BalancingCoordinator:
         )
         self._unsubscribe()
         self._subscribe()
-
-    def _check_binary_sensors_exist(self) -> bool:
-        """Check if any power load zone binary sensor exists."""
-        return any(self._zone_state(zone) is not None for zone in ZONES)
-
-    async def _send_missing_sensors_notification(self) -> None:
-        """Send a persistent notification about missing binary sensors."""
-        try:
-            await self._hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title": "Bestiarium Devices - Balancing Disabled",
-                    "message": (
-                        "Power load binary sensors not found. "
-                        "Device consumption balancing is disabled.\n\n"
-                        "To enable balancing, configure AC load limits in "
-                        "the Bestiarium Mode integration."
-                    ),
-                    "notification_id": NOTIFICATION_ID_MISSING_SENSORS,
-                },
-            )
-        except Exception:  # noqa: BLE001
-            # Service may not be available (e.g., during testing)
-            LOGGER.debug("Could not send persistent notification")
 
     def _determine_active_zone(self) -> ActiveZone:
         """

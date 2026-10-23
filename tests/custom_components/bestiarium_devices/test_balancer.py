@@ -9,6 +9,7 @@ import pytest
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -17,7 +18,6 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.bestiarium_devices.balancer import (
-    NOTIFICATION_ID_MISSING_SENSORS,
     ActiveZone,
     BalancingCoordinator,
 )
@@ -41,6 +41,7 @@ from custom_components.bestiarium_devices.const import (
     EVENT_OVERLOAD_SECOND_QUEUE,
     EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
+    ISSUE_NO_LOAD_ZONES,
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
     RED_INTERVAL_SECONDS,
@@ -1882,10 +1883,15 @@ class TestModeEntitiesByUniqueId:
         assert [event.data["mode"] for event in mode_applied] == ["Grid off"]
         assert [call.data["entity_id"] for call in turn_off] == ["switch.heater"]
 
-    async def test_without_load_limits_coordinator_is_inactive_and_notifies(
+    async def test_without_load_limits_a_repair_then_it_comes_alive(
         self, hass: HomeAssistant
     ) -> None:
-        """Without AC load limits there are no zone sensors: inactive, notice."""
+        """
+        Criterion 6: no zone sensors is a Repairs issue, never a notification.
+
+        Once the AC load limits are set, the balancer follows the zones without
+        a restart of HA, and the issue is gone.
+        """
         mode_entry = MockConfigEntry(
             domain=DOMAIN_BESTIARIUM_MODE,
             unique_id="bestiarium_mode",
@@ -1895,16 +1901,33 @@ class TestModeEntitiesByUniqueId:
         assert await hass.config_entries.async_setup(mode_entry.entry_id)
         await hass.async_block_till_done()
         notifications = async_mock_service(hass, "persistent_notification", "create")
+        issues = ir.async_get(hass)
         coordinator = await started_coordinator(hass)
         try:
-            assert coordinator.is_running
             assert coordinator.active_zone == ActiveZone.NO_DATA
+            assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is not None
+
+            hass.states.async_set(POWER_SENSOR, "3500")
+            hass.config_entries.async_update_entry(
+                mode_entry,
+                data={
+                    **mode_entry.data,
+                    "ac_load_limits": {
+                        "ac_power_sensor": POWER_SENSOR,
+                        "ac_load_limit_w": 5000,
+                        "ac_yellow_zone_percent": 60,
+                        "ac_red_zone_percent": 85,
+                    },
+                },
+            )
+            await hass.config_entries.async_reload(mode_entry.entry_id)
+            await hass.async_block_till_done()
+
+            assert coordinator.active_zone == ActiveZone.YELLOW
+            assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is None
         finally:
             await coordinator.async_stop()
-
-        assert [call.data["notification_id"] for call in notifications] == [
-            NOTIFICATION_ID_MISSING_SENSORS
-        ]
+        assert notifications == []
 
 
 class TestOverloadFailSafe:

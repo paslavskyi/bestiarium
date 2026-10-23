@@ -276,5 +276,21 @@
         "name": "Mode"
       }
     }
+  },
+  "issues": {
+    "missing_power_sensor": {
+      "title": "The power sensor of the load zones is gone",
+      "fix_flow": {
+        "step": {
+          "power_sensor": {
+            "title": "The power sensor of the load zones is gone",
+            "description": "The load zones read the power from {sensor}, which is no longer in Home Assistant (removed or disabled). Until it is back the zones have no data and the balancer does nothing. Pick the power sensor again.",
+            "data": {
+              "ac_power_sensor": "Power sensor"
+            }
+          }
+        }
+      }
+    }
   }
 }

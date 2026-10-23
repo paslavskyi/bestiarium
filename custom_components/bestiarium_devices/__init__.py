@@ -32,6 +32,7 @@ from .power_memory import (
     async_import_history,
     async_track_runs,
 )
+from .repairs import async_watch_entities
 
 if TYPE_CHECKING:
     from homeassistant.core import Event, HomeAssistant
@@ -142,6 +143,7 @@ async def async_setup_entry(
     LOGGER.debug("Setting up Bestiarium Devices for entry %s", entry.entry_id)
     coordinator: BalancingCoordinator = hass.data[DOMAIN][DATA_COORDINATOR]
     entry.async_on_unload(coordinator.async_add_device(entry))
+    entry.async_on_unload(async_watch_entities(hass, entry))
 
     memory = await async_get_power_memory(hass)
     entry.async_on_unload(async_track_runs(hass, memory, entry))

@@ -155,6 +155,33 @@ def find_config_entry_for_device(
     return None
 
 
+def virtual_relay_schema(
+    hass: HomeAssistant, switch: str | None, power_sensor: str | None
+) -> vol.Schema:
+    """Return the switch and power sensor fields of a virtual device."""
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_SWITCH_ENTITY_ID, default=switch
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=DOMAIN_SWITCH,
+                    exclude_entities=non_candidate_entity_ids(hass, DOMAIN_SWITCH),
+                ),
+            ),
+            vol.Required(
+                CONF_POWER_SENSOR_ENTITY_ID, default=power_sensor
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=DOMAIN_SENSOR,
+                    device_class=DEVICE_CLASS_POWER,
+                    exclude_entities=non_candidate_entity_ids(hass, DOMAIN_SENSOR),
+                ),
+            ),
+        }
+    )
+
+
 class RelaySteps:
     """
     The steps that pick the device, relay and power sensor of a device entry.
@@ -410,30 +437,11 @@ class BestiariumDevicesFlowHandler(
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
                 ),
-                vol.Required(
-                    CONF_SWITCH_ENTITY_ID,
-                    default=self._switch_entity_id,
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=DOMAIN_SWITCH,
-                        exclude_entities=non_candidate_entity_ids(
-                            self.hass, DOMAIN_SWITCH
-                        ),
-                    ),
-                ),
-                vol.Required(
-                    CONF_POWER_SENSOR_ENTITY_ID,
-                    default=self._power_sensor_entity_id,
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain=DOMAIN_SENSOR,
-                        device_class=DEVICE_CLASS_POWER,
-                        exclude_entities=non_candidate_entity_ids(
-                            self.hass, DOMAIN_SENSOR
-                        ),
-                    ),
-                ),
             },
+        ).extend(
+            virtual_relay_schema(
+                self.hass, self._switch_entity_id, self._power_sensor_entity_id
+            ).schema
         )
 
         return self.async_show_form(

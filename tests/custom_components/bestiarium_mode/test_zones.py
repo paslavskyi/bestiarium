@@ -11,9 +11,12 @@ from datetime import timedelta
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant.components.repairs import repairs_flow_manager
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -40,6 +43,10 @@ class Grid:
     async def setup(self, watts: str) -> None:
         """Set up the mode entry at the given load."""
         self.hass.states.async_set(POWER, watts)
+        await self.setup_without_sensor()
+
+    async def setup_without_sensor(self) -> None:
+        """Set up the mode entry; the power sensor as it is."""
         self.entry = MockConfigEntry(
             domain=DOMAIN,
             data={
@@ -207,3 +214,24 @@ async def test_short_dropout_is_silent(grid: Grid) -> None:
     await grid.load("4000")
     await grid.tick(60)
     assert grid.zones == []
+
+
+async def test_gone_power_sensor_is_a_repair(grid: Grid) -> None:
+    """A3: the zones' sensor has no state after start: an issue; picked: gone."""
+    grid.hass.states.async_remove(POWER)
+    await grid.setup_without_sensor()
+    issues = ir.async_get(grid.hass)
+    assert issues.async_get_issue(DOMAIN, "missing_power_sensor") is not None
+
+    assert await async_setup_component(grid.hass, "repairs", {})
+    manager = repairs_flow_manager(grid.hass)
+    result = await manager.async_init(DOMAIN, data={"issue_id": "missing_power_sensor"})
+    grid.hass.states.async_set("sensor.new_meter", "1000")
+    await manager.async_configure(
+        result["flow_id"], {"ac_power_sensor": "sensor.new_meter"}
+    )
+    await grid.hass.async_block_till_done()
+
+    assert issues.async_get_issue(DOMAIN, "missing_power_sensor") is None
+    assert grid.entry.data["ac_load_limits"]["ac_power_sensor"] == "sensor.new_meter"
+    assert grid.zone is Zone.PAUSE
