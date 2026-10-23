@@ -105,7 +105,7 @@ async def _green_cycle(hass: HomeAssistant) -> None:
     coordinator = await started_coordinator(hass)
     try:
         assert coordinator.active_zone == ActiveZone.GREEN
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
     finally:
         await coordinator.async_stop()
 
@@ -154,7 +154,7 @@ async def test_unknown_load_turns_nothing_on(
     coordinator = await started_coordinator(hass)
     try:
         hass.states.async_set(GRID, STATE_UNAVAILABLE)
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
     finally:
         await coordinator.async_stop()
 
@@ -189,7 +189,7 @@ async def test_always_on_mode_is_not_limited(
 
         # The green strategy does not hold an 'always on' device back either
         hass.states.async_set(BOILER, STATE_OFF)
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
         assert relays.calls == [("turn_on", BOILER), ("turn_on", BOILER)]
     finally:
         await coordinator.async_stop()

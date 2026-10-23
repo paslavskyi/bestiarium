@@ -47,7 +47,7 @@ from custom_components.bestiarium_devices.const import (
 )
 from custom_components.bestiarium_devices.helpers import get_current_priority
 
-from .conftest import started_coordinator
+from .conftest import device_strategies, started_coordinator
 from .mode_entities import (
     AC_LOAD_LIMITS,
     BESTIARIUM_MODE_SELECT_ENTITY_ID,
@@ -212,7 +212,7 @@ class TestModeChangeHandling:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._apply_mode_priorities()  # noqa: SLF001
+                await coordinator._strategies.async_apply_mode()  # noqa: SLF001
                 mock_call.assert_any_call(
                     "switch",
                     "turn_off",
@@ -250,7 +250,7 @@ class TestModeChangeHandling:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._apply_mode_priorities()  # noqa: SLF001
+                await coordinator._strategies.async_apply_mode()  # noqa: SLF001
                 mock_call.assert_any_call(
                     "switch",
                     "turn_on",
@@ -304,7 +304,7 @@ class TestGreenStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_green_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_green()  # noqa: SLF001
                 mock_call.assert_called_once_with(
                     "switch",
                     "turn_on",
@@ -340,7 +340,7 @@ class TestGreenStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_green_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_green()  # noqa: SLF001
                 turn_on_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_on"
                 ]
@@ -395,7 +395,7 @@ class TestGreenStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_green_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_green()  # noqa: SLF001
                 turn_on_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_on"
                 ]
@@ -447,7 +447,7 @@ class TestRedStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_red_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_red()  # noqa: SLF001
                 mock_call.assert_called_once_with(
                     "switch",
                     "turn_off",
@@ -483,7 +483,7 @@ class TestRedStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_red_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_red()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -521,7 +521,7 @@ class TestRedStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_red_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_red()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -575,7 +575,7 @@ class TestOverloadStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -616,14 +616,14 @@ class TestOverloadStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ) as mock_call:
-                await coordinator._execute_red_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_red()  # noqa: SLF001
                 turn_off_after_red = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
                 assert len(turn_off_after_red) == 0
 
                 mock_call.reset_mock()
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_after_overload = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -677,7 +677,7 @@ class TestOverloadTwoStepStrategy:
         try:
             with (
                 patch(
-                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -685,7 +685,7 @@ class TestOverloadTwoStepStrategy:
                     new_callable=AsyncMock,
                 ) as mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
             turn_off_calls = [
                 c for c in mock_call.call_args_list if c[0][1] == "turn_off"
             ]
@@ -746,7 +746,7 @@ class TestOverloadTwoStepStrategy:
                 "homeassistant.core.ServiceRegistry.async_call",
                 mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
             turn_off_calls = [
                 c for c in mock_call.call_args_list if c[0][1] == "turn_off"
             ]
@@ -797,7 +797,7 @@ class TestOverloadTwoStepStrategy:
         try:
             with (
                 patch(
-                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                     side_effect=clear_overload_after_sleep,
                 ),
                 patch(
@@ -805,7 +805,7 @@ class TestOverloadTwoStepStrategy:
                     new_callable=AsyncMock,
                 ) as mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -853,7 +853,7 @@ class TestOverloadTwoStepStrategy:
         try:
             with (
                 patch(
-                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -861,7 +861,7 @@ class TestOverloadTwoStepStrategy:
                     new_callable=AsyncMock,
                 ) as mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -911,7 +911,7 @@ class TestOverloadTwoStepStrategy:
             sleep_mock = AsyncMock()
             with (
                 patch(
-                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                     sleep_mock,
                 ),
                 patch(
@@ -919,7 +919,7 @@ class TestOverloadTwoStepStrategy:
                     new_callable=AsyncMock,
                 ) as mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -972,7 +972,7 @@ class TestOverloadTwoStepStrategy:
         try:
             with (
                 patch(
-                    "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                    "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                     new_callable=AsyncMock,
                 ),
                 patch(
@@ -980,7 +980,7 @@ class TestOverloadTwoStepStrategy:
                     new_callable=AsyncMock,
                 ) as mock_call,
             ):
-                await coordinator._execute_overload_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_overload()  # noqa: SLF001
                 turn_off_calls = [
                     c for c in mock_call.call_args_list if c[0][1] == "turn_off"
                 ]
@@ -1250,7 +1250,7 @@ class TestEventFiring:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ):
-                await coordinator._execute_green_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_green()  # noqa: SLF001
             await hass.async_block_till_done()
 
             assert len(events) == 1
@@ -1296,7 +1296,7 @@ class TestEventFiring:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ):
-                await coordinator._execute_red_strategy()  # noqa: SLF001
+                await coordinator._strategies.async_red()  # noqa: SLF001
             await hass.async_block_till_done()
 
             assert len(events) == 1
@@ -1360,12 +1360,12 @@ class TestEventFiring:
                     hass.states.async_set(BINARY_SENSOR_OVERLOAD, STATE_OFF)
                     await hass.async_block_till_done()
 
-        coordinator = BalancingCoordinator(hass)
+        strategies = await device_strategies(hass)
         with patch(
             "homeassistant.core.ServiceRegistry.async_call",
             AsyncMock(side_effect=clear_overload_on_first_turn_off),
         ):
-            await coordinator._execute_overload_strategy()  # noqa: SLF001
+            await strategies.async_overload()
         await hass.async_block_till_done()
 
         first_queue_events = [
@@ -1427,10 +1427,10 @@ class TestEventFiring:
 
         hass.bus.async_listen(EVENT_OVERLOAD_SECOND_QUEUE, record)
 
-        coordinator = BalancingCoordinator(hass)
+        strategies = await device_strategies(hass)
         with (
             patch(
-                "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                 new_callable=AsyncMock,
             ),
             patch(
@@ -1438,7 +1438,7 @@ class TestEventFiring:
                 new_callable=AsyncMock,
             ),
         ):
-            await coordinator._execute_overload_strategy()  # noqa: SLF001
+            await strategies.async_overload()
         await hass.async_block_till_done()
 
         second_queue_events = [
@@ -1502,7 +1502,7 @@ class TestEventFiring:
                 "homeassistant.core.ServiceRegistry.async_call",
                 new_callable=AsyncMock,
             ):
-                await coordinator._apply_mode_priorities()  # noqa: SLF001
+                await coordinator._strategies.async_apply_mode()  # noqa: SLF001
             await hass.async_block_till_done()
 
             assert len(events) == 1
@@ -1769,7 +1769,7 @@ class TestModeEntitiesByUniqueId:
         coordinator = await started_coordinator(hass)
         try:
             with patch(
-                "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                 new_callable=AsyncMock,
             ):
                 hass.states.async_set(POWER_SENSOR, "5200")
@@ -1921,10 +1921,10 @@ class TestOverloadFailSafe:
             if lost == "during_wait":
                 lose_overload_sensor()
 
-        coordinator = BalancingCoordinator(hass)
+        strategies = await device_strategies(hass)
         with (
             patch(
-                "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+                "custom_components.bestiarium_devices.strategies.asyncio.sleep",
                 side_effect=on_wait,
             ),
             patch(
@@ -1932,7 +1932,7 @@ class TestOverloadFailSafe:
                 AsyncMock(side_effect=on_service_call),
             ) as mock_call,
         ):
-            await coordinator._execute_overload_strategy()  # noqa: SLF001
+            await strategies.async_overload()
         await hass.async_block_till_done()
 
         turned_off = [c[0][2]["entity_id"] for c in mock_call.call_args_list]

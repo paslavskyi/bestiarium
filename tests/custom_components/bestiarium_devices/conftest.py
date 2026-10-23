@@ -10,6 +10,12 @@ from homeassistant.core import HomeAssistant, ServiceRegistry
 
 from custom_components.bestiarium_devices.balancer import BalancingCoordinator
 from custom_components.bestiarium_devices.const import DOMAIN
+from custom_components.bestiarium_devices.control import (
+    DeviceControl,
+    async_get_response_memory,
+)
+from custom_components.bestiarium_devices.power_memory import async_get_power_memory
+from custom_components.bestiarium_devices.strategies import Strategies
 
 from .mode_entities import register_mode_entities
 
@@ -21,6 +27,21 @@ async def started_coordinator(hass: HomeAssistant) -> BalancingCoordinator:
     for entry in hass.config_entries.async_entries(DOMAIN):
         coordinator.async_add_device(entry)
     return coordinator
+
+
+async def device_strategies(hass: HomeAssistant) -> Strategies:
+    """Return the strategies over every device entry, with no balancer running."""
+    memory = await async_get_response_memory(hass)
+    controls = {
+        entry.entry_id: DeviceControl(hass, entry, memory)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+    }
+    return Strategies(
+        hass,
+        controls,
+        await async_get_power_memory(hass),
+        BalancingCoordinator(hass)._overload_cleared,  # noqa: SLF001
+    )
 
 
 @pytest.fixture
