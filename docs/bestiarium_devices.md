@@ -12,6 +12,7 @@ Core capabilities:
 4. **"Allowed" switch** — One switch per device lets the family exclude it from balancing: off turns the relay off and the balancer never turns it on.
 5. **Thermostat-driven devices** — A device option for relays that their own thermostat turns on: the balancer only turns them off.
 6. **Headroom** — The balancer turns a device on only if the grid load plus the device's expected power stays at or below the red zone threshold. The expected power is learned from the device's runs (see [Expected Power](#expected-power-consumptionpy-power_memorypy)).
+7. **Device control** — The balancer waits for each device's own response time, defers a device that does not respond so the queue goes on, and shows confirmed problems as a "Control state" sensor and "Control events" (see [Device Control](#device-control-controlpy)). Its parameters are the device's options.
 
 Multiple config entries are allowed (one per device). The integration has a declared dependency on `bestiarium_mode`.
 
@@ -27,7 +28,9 @@ Multiple config entries are allowed (one per device). The integration has a decl
 custom_components/bestiarium_devices/
 ├── __init__.py          # Entry setup/unload, coordinator lifecycle, device registry
 ├── manifest.json        # Integration metadata (depends on bestiarium_mode)
-├── const.py             # Constants, config keys, entity IDs, timing
+├── const.py             # Constants, config keys, entity IDs, timing, ControlSettings, event payloads
+├── control.py           # DeviceControl, ResponseMemory — control state of each device
+├── event.py             # ControlEventEntity — "Control events"
 ├── data.py              # Type alias for ConfigEntry
 ├── config_flow.py       # Multi-step config flow (virtual + extended device creation)
 ├── helpers.py           # Priority resolution, validation, utility functions
@@ -65,13 +68,14 @@ tests/custom_components/bestiarium_devices/
 ```python
 PLATFORMS: list[Platform] = [
     Platform.BUTTON,
+    Platform.EVENT,
     Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
 ```
 
-Each device gets four entities: the "Allowed" switch and three power entities (see [Power Entities](#power-entities)). Relays are controlled via service calls to existing switch entities.
+Each device gets six entities: the "Allowed" switch, three power entities (see [Power Entities](#power-entities)) and two diagnostic control entities, "Control state" and "Control events" (see [Device Control](#device-control-controlpy)). Relays are controlled via service calls to existing switch entities.
 
 ---
 
@@ -180,21 +184,25 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 
 ## Integration Lifecycle (`__init__.py`)
 
+### One coordinator (`async_setup`)
+
+HA calls `async_setup` once, before any entry of the integration is set up (`CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)`). It creates and starts the one `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) and stops it when HA stops. It lives as long as HA, with or without device entries.
+
+Before DEV-007 each entry created the coordinator if `hass.data` had none yet, and stored it only after its start awaited the power memory: the entries HA set up meanwhile each started their own (16–17 balancers on the owner's HA). Creating it in `async_setup` removes the check that could race.
+
 ### Setup (`async_setup_entry`)
 
-1. Initializes `hass.data[DOMAIN]` dict if needed
-2. Creates and starts a shared `BalancingCoordinator` (stored at `hass.data[DOMAIN]["balancing_coordinator"]`) — one coordinator for all device entries
-3. Starts tracking the device's runs (`async_track_runs`) and, if its memory was never filled and the recorder is loaded, imports its history in a background task (`async_import_history`)
+1. Registers the device with the coordinator (`async_add_device`): its control state follows the relay and power sensor until the entry unloads
+2. Starts tracking the device's runs (`async_track_runs`) and, if its memory was never filled and the recorder is loaded, imports its history in a background task (`async_import_history`)
 4. Forwards the platforms (for virtual devices the entities' device info creates the `identifiers={(DOMAIN, entry.entry_id)}` device)
 
-`async_remove_entry` drops the device's power memory. The manifest lists `recorder` in `after_dependencies`, so the recorder is set up before the device entries.
+`async_remove_entry` drops the device's power memory and response memory. The manifest lists `recorder` in `after_dependencies`, so the recorder is set up before the device entries.
 
 There is **no update listener**: the "Allowed" switch updates the entry options at runtime without a reload; the reconfigure flow reloads explicitly with `async_update_reload_and_abort(..., reason="reconfigure_successful")` — the explicit reason makes HA show this integration's translated message instead of the core one (which has no Ukrainian text yet). Any future flow that changes the entry must reload explicitly too.
 
 ### Unload (`async_unload_entry`)
 
-1. Unloads platforms
-2. If this is the **last** entry being unloaded, stops the `BalancingCoordinator` and cleans up `hass.data[DOMAIN]`
+Unloads the platforms; the device's control stops with the entry (`entry.async_on_unload`). The coordinator keeps running.
 
 ### Device Removal (`async_remove_config_entry_device`)
 
@@ -353,6 +361,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 - **Skips**: Devices already ON, devices with priority `0` (OFF), devices that do not fit (logged at debug: `X W + Y W (source) > Z W`)
 - **Sorting**: Candidates sorted by priority descending; the first one that fits is turned on, so a smaller, less important device can go before a large one
 - **ALWAYS_ON** (`9999`) candidates are turned on without the headroom check
+- **Device control**: a device that still waits for the answer to its last command, or is deferred, is not a candidate. The command is logged at info only on the first attempt of a series; repeats at debug
 
 #### Headroom: `_fits(entry)`
 
@@ -371,8 +380,11 @@ Checked only where the balancer turns a device on by itself: the green strategy 
 
 - **Trigger**: Periodic, every 5 seconds. Also runs once immediately on entering red zone.
 - **Action**: Turn OFF the **lowest-priority ON device** (one device per cycle)
-- **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON)
+- **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON), deferred devices
 - **Sorting**: Candidates sorted by priority ascending
+- **Waiting**: while a device may still answer its turn-off command (its response time, at most `red_max_wait_seconds` for the whole series), the red strategy turns off no other device. Then it defers that device and turns off the next one in the same step
+
+Green, red and "Allowed" fire their `device_turned_on/off` event from one place (`_fire_switched`, payload `DeviceSwitchedData`); the strategies, overload and mode application send relay commands through `_async_command`, which logs a command HA refused (`HomeAssistantError`) and goes on with the other devices. Overload and mode application send their command to deferred devices too, without waiting or counting attempts.
 
 #### Turning Devices On: `balancer_may_turn_on(entry)`
 
@@ -462,6 +474,50 @@ Both fire `bestiarium_devices_device_turned_off` / `_turned_on` with `strategy: 
 
 Recorder errors are not caught: the import fails with an error in the log and runs again on the next start. Without the recorder loaded the import waits for a start that has it. The reset button keeps `filled_from_history = true`, so a reset is not undone by a new import.
 
+## Device Control (`control.py`)
+
+One `DeviceControl` per device entry (`BalancingCoordinator.control(entry)`), following the relay and the power sensor (docs: [stability](concepts/stability.md), [problem reporting](concepts/problem-reporting.md)).
+
+### Commands and deferral
+
+- A strategy's command starts or continues a **series** of one direction (turn on / turn off). The attempt waits `max(strategy step, longest response × margin)`; the longest response is the longest of the device's last `RESPONSE_MEMORY_SIZE` (10) answers (`ResponseMemory`, Store `bestiarium_devices.control`, kept across restarts), or `default_response_seconds` before any. In the red zone the deadline is also capped by the series' limit, `red_max_wait_seconds` after its first command.
+- At the next step after the deadline (timers within `STEP_JITTER_SECONDS`) the attempt failed. After `attempts` failures, or when the red limit is reached, the device is **deferred** for `defer_minutes`: no strategy picks it; the event `deferred` fires and its control state is "Not responding". When the deferral ends the event `retrying` fires and a new series starts; the state stays "Not responding".
+- **Any change of the relay state** answers: the series and the deferral end (a change to the expected state is remembered as a response time). After the hysteresis the state leaves "Not responding" and the event `recovered` fires.
+- Deferral and series are not stored: after a restart every device gets its attempts again.
+
+### Control state (`ControlStateSensor`, enum, diagnostic)
+
+| State | Raw condition | Confirmed |
+|---|---|---|
+| `switch_unavailable` | relay `unavailable` / `unknown` / missing | after `tolerance_seconds` |
+| `unresponsive` | deferred, until the relay changes | at once |
+| `unstable` | `unstable_dropouts_per_hour` short dropouts (relay or power sensor gone for less than the tolerance) in the last hour | at once |
+| `no_power_data` | power sensor `unavailable` / `unknown` / missing | after `tolerance_seconds` |
+| `normal` | none of these | — |
+
+The first confirmed state in this order is shown. A problem ends after `hysteresis_seconds` without its raw condition. Availability counts only from HA's start (`async_at_started`); before that the state is "Normal". Each change of the state is logged once: `warning` into a problem, `info` back to normal. Attributes (all in `_unrecorded_attributes`): `direction`, `failed_attempts`, `last_attempt`, `next_attempt`, `response_time`, `dropouts_last_hour`.
+
+### Control events (`ControlEventEntity`, diagnostic)
+
+Event types `deferred`, `retrying`, `recovered`, with `direction`, `failed_attempts`, `next_attempt`. They are device events for the home's automations; the bus events of [events.md](events.md) are unchanged.
+
+### Settings (`ControlSettings`, options flow)
+
+Algorithm parameters, in the entry's options ([settings vs entities](concepts/settings-vs-entities.md)); a missing option is its default, so entries from before DEV-007 need no migration. "Configure" on the device entry opens the form (`ControlOptionsFlow`); it keeps the other options ("Allowed", estimated power), and the balancer reads the settings on every use (no reload).
+
+| Option | Default | Range | |
+|---|---|---|---|
+| `attempts` | 3 | 1–10 | |
+| `defer_minutes` | 15 | 1–240 | |
+| `tolerance_seconds` | 60 | 0–600 | |
+| `hysteresis_seconds` | 60 | 0–600 | |
+| `unstable_dropouts_per_hour` | 3 | 1–60 | |
+| `default_response_seconds` | 15 | 1–120 | advanced |
+| `response_margin` | 1.5 | 1–5 | advanced |
+| `red_max_wait_seconds` | 30 | 5–120 | advanced |
+
+---
+
 ## Power Entities
 
 All entities of a device share `BestiariumDeviceEntity` (`entity.py`): `has_entity_name`, `unique_id = {entry_id}_{key}`, translation `key`, and the device placement described for the "Allowed" switch below (`{key}_standalone` with "{device_name} …" for a relay without a device).
@@ -550,13 +606,22 @@ Translation keys cover:
 ### `test_power_entities.py`
 - Placement and categories, sensor attributes, number, reset button
 
+### `test_control_state.py`
+- On relays that ignore commands (`FakeRelays.stuck`) and the real `bestiarium_mode`: deferral after 3 failed green steps and the next device turns on; retry after 15 min; recovery after the hysteresis when the relay answers or is switched by hand; the red zone's 30 s limit; a slow device (12 s) gets one command and its response time is remembered; no guessing from the power; tolerance, hysteresis, priority of causes, unstable connection; an hour of a stuck device logs one warning and a line per series; overload and mode reach a deferred device; availability only after HA's start; unrecorded and diagnostic
+
+### `test_single_balancer.py`
+- Five entries set up as at HA start (power memory read from disk meanwhile): one command per step; also after a zone change, a reload, adding and removing a device; a mode is applied once
+
+### `test_control_options.py` / `test_control_memory.py`
+- Defaults for entries without options; the options flow keeps "Allowed" and estimated power; settings apply without a reload; translations of states, events and settings. Response memory: longest of the last 10, kept in the Store, forgotten on removal
+
 ---
 
 ## Design Notes & Gotchas
 
-1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created on first entry, destroyed on last unload.
+1. **Multi-entry, single coordinator**: Unlike bestiarium_mode (singleton), this integration allows multiple config entries (one per device). The `BalancingCoordinator` is shared — created once in `async_setup`, stopped with HA.
 
-2. **Entities per device**: the "Allowed" switch and the three power entities. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
+2. **Entities per device**: the "Allowed" switch, the three power entities and the two control entities. Relays are controlled through service calls (`switch.turn_on`, `switch.turn_off`) and state reads.
 
 3. **Device ID semantics**: Virtual devices use `entry.entry_id` as their device ID (since they have no pre-existing HA device). Extended devices use the actual HA `device_id`. This distinction matters for priority lookups.
 

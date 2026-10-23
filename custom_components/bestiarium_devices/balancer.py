@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+import logging
+from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.event import (
     async_track_entity_registry_updated_event,
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_OVERLOAD_FIRST_QUEUE,
@@ -34,6 +37,14 @@ from .const import (
     OVERLOAD_WAIT_SECONDS,
     RED_INTERVAL_SECONDS,
     ZONE_SENSOR_UNIQUE_ID,
+    DeviceSwitchedData,
+    ModeAppliedData,
+)
+from .control import (
+    DeviceControl,
+    Direction,
+    ResponseMemory,
+    async_get_response_memory,
 )
 from .helpers import (
     balancer_may_turn_on,
@@ -51,7 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import HomeAssistant, State
+    from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State
     from homeassistant.helpers.entity_registry import EventEntityRegistryUpdatedData
 
 # Notification ID for missing sensors warning
@@ -91,6 +102,10 @@ class BalancingCoordinator:
         self._running: bool = False
 
         self._power_memory: PowerMemory  # loaded by async_start
+        self._response_memory: ResponseMemory  # loaded by async_start
+
+        # The control state of each device, by entry_id
+        self._controls: dict[str, DeviceControl] = {}
 
     @property
     def active_zone(self) -> ActiveZone:
@@ -111,6 +126,7 @@ class BalancingCoordinator:
         LOGGER.debug("Starting BalancingCoordinator")
         self._running = True
         self._power_memory = await async_get_power_memory(self._hass)
+        self._response_memory = await async_get_response_memory(self._hass)
 
         # Check if binary sensors exist before subscribing
         if not self._check_binary_sensors_exist():
@@ -152,9 +168,99 @@ class BalancingCoordinator:
             self._job_cancel = None
 
         self._unsubscribe()
+        for control in self._controls.values():
+            control.async_stop()
+        self._controls.clear()
 
         self._active_zone = ActiveZone.NONE
         self._running = False
+
+    def control(self, entry: ConfigEntry) -> DeviceControl:
+        """Return the control state of a device, following it from now on."""
+        if (control := self._controls.get(entry.entry_id)) is None:
+            control = DeviceControl(self._hass, entry, self._response_memory)
+            control.async_start()
+            self._controls[entry.entry_id] = control
+        return control
+
+    @callback
+    def async_add_device(self, entry: ConfigEntry) -> CALLBACK_TYPE:
+        """Follow a device entry; return the call that stops following it."""
+        self.control(entry)
+
+        @callback
+        def remove() -> None:
+            if control := self._controls.pop(entry.entry_id, None):
+                control.async_stop()
+
+        return remove
+
+    async def _async_command(self, entry: ConfigEntry, direction: Direction) -> bool:
+        """
+        Send a device's relay a command; return whether HA accepted it.
+
+        A refused command is logged and the strategy goes on with the others.
+        """
+        try:
+            await self._hass.services.async_call(
+                "switch", direction, {"entity_id": entry.data[CONF_SWITCH_ENTITY_ID]}
+            )
+        except HomeAssistantError as err:
+            LOGGER.warning(
+                "Failed to %s device %s: %s",
+                direction.replace("_", " "),
+                get_device_name_from_entry(entry),
+                err,
+            )
+            return False
+        return True
+
+    def _fire_switched(
+        self, entry: ConfigEntry, direction: Direction, strategy: str, priority: int
+    ) -> None:
+        """Fire the event of a device the balancer turned on or off."""
+        self._hass.bus.async_fire(
+            EVENT_DEVICE_TURNED_ON
+            if direction is Direction.TURN_ON
+            else EVENT_DEVICE_TURNED_OFF,
+            DeviceSwitchedData(
+                strategy=strategy,
+                device_id=get_device_id_from_entry(entry),
+                device_name=get_device_name_from_entry(entry),
+                switch_entity_id=entry.data[CONF_SWITCH_ENTITY_ID],
+                priority=priority,
+            ),
+        )
+
+    async def _async_strategy_command(  # noqa: PLR0913
+        self,
+        entry: ConfigEntry,
+        direction: Direction,
+        strategy: str,
+        priority: int,
+        now: datetime,
+        *,
+        step_s: float,
+    ) -> None:
+        """
+        Send a strategy's command and wait for the device's answer.
+
+        Only the first attempt of a series is logged at info, the repeats at
+        debug: a device that does not respond gives no line a step.
+        """
+        control = self.control(entry)
+        LOGGER.log(
+            logging.INFO if control.first_attempt(direction) else logging.DEBUG,
+            "%s strategy: Turning %s device %s (%s) (priority %d)",
+            strategy.title(),
+            "on" if direction is Direction.TURN_ON else "off",
+            get_device_name_from_entry(entry),
+            get_device_id_from_entry(entry),
+            priority,
+        )
+        control.command_sent(direction, now, step_s=step_s, red=strategy == "red")
+        if await self._async_command(entry, direction):
+            self._fire_switched(entry, direction, strategy, priority)
 
     def _zone_entity_id(self, zone: ActiveZone) -> str | None:
         """Return the current entity_id of a zone binary sensor."""
@@ -379,7 +485,12 @@ class BalancingCoordinator:
         self._hass.async_create_task(self._apply_mode_priorities())
 
     async def _apply_mode_priorities(self) -> None:
-        """Apply mode-specific priorities (turn off/on devices based on priority)."""
+        """
+        Apply mode-specific priorities (turn off/on devices based on priority).
+
+        A rare human action: every device gets its command, a deferred one
+        too, without waiting for the answer or counting attempts.
+        """
         entries = self._hass.config_entries.async_entries(DOMAIN)
         devices_turned_off: list[str] = []
         devices_turned_on: list[str] = []
@@ -405,51 +516,27 @@ class BalancingCoordinator:
                     device_name,
                     device_id,
                 )
-                try:
-                    await self._hass.services.async_call(
-                        "switch",
-                        "turn_off",
-                        {"entity_id": switch_entity_id},
-                    )
+                if await self._async_command(entry, Direction.TURN_OFF):
                     devices_turned_off.append(device_id)
-                except Exception as err:  # noqa: BLE001
-                    LOGGER.warning(
-                        "Failed to turn off device %s (%s): %s",
-                        device_name,
-                        device_id,
-                        err,
-                    )
             elif priority == LOAD_PRIORITY_ALWAYS_ON and balancer_may_turn_on(entry):
                 LOGGER.debug(
                     "Device %s (%s) has LOAD_PRIORITY_ALWAYS_ON, turning on",
                     device_name,
                     device_id,
                 )
-                try:
-                    await self._hass.services.async_call(
-                        "switch",
-                        "turn_on",
-                        {"entity_id": switch_entity_id},
-                    )
+                if await self._async_command(entry, Direction.TURN_ON):
                     devices_turned_on.append(device_id)
-                except Exception as err:  # noqa: BLE001
-                    LOGGER.warning(
-                        "Failed to turn on device %s (%s): %s",
-                        device_name,
-                        device_id,
-                        err,
-                    )
 
         if devices_turned_off or devices_turned_on:
             mode_state = get_mode_state(self._hass)
             mode = mode_state.state if mode_state else ""
             self._hass.bus.async_fire(
                 EVENT_MODE_APPLIED,
-                {
-                    "mode": mode,
-                    "devices_turned_off": devices_turned_off,
-                    "devices_turned_on": devices_turned_on,
-                },
+                ModeAppliedData(
+                    mode=mode,
+                    devices_turned_off=devices_turned_off,
+                    devices_turned_on=devices_turned_on,
+                ),
             )
 
     def _fits(self, entry: ConfigEntry) -> bool:
@@ -488,13 +575,12 @@ class BalancingCoordinator:
         state = self._hass.states.get(switch_entity_id)
         if state is None:
             return
-        device_id = get_device_id_from_entry(entry)
         priority = get_current_priority(self._hass, entry)
 
         if not is_allowed(entry):
             if state.state == STATE_OFF:
                 return
-            service, event = "turn_off", EVENT_DEVICE_TURNED_OFF
+            direction = Direction.TURN_OFF
         elif (
             self._active_zone == ActiveZone.GREEN
             and state.state == STATE_OFF
@@ -502,26 +588,24 @@ class BalancingCoordinator:
             and balancer_may_turn_on(entry)
             and self._fits(entry)
         ):
-            service, event = "turn_on", EVENT_DEVICE_TURNED_ON
+            direction = Direction.TURN_ON
         else:
             return
 
+        # A person's action: a refused command reaches them as an error
         await self._hass.services.async_call(
-            "switch", service, {"entity_id": switch_entity_id}
+            "switch", direction, {"entity_id": switch_entity_id}
         )
-        self._hass.bus.async_fire(
-            event,
-            {
-                "strategy": "allowed",
-                "device_id": device_id,
-                "device_name": get_device_name_from_entry(entry),
-                "switch_entity_id": switch_entity_id,
-                "priority": priority,
-            },
-        )
+        self._fire_switched(entry, direction, "allowed", priority)
 
     async def _execute_green_strategy(self) -> None:
-        """Execute green strategy: turn on the most important OFF device that fits."""
+        """
+        Execute green strategy: turn on the most important OFF device that fits.
+
+        A device that waits for the answer to a command or is deferred is not
+        a candidate (docs/concepts/stability.md).
+        """
+        now = dt_util.utcnow()
         entries = self._hass.config_entries.async_entries(DOMAIN)
 
         candidates: list[tuple[int, ConfigEntry]] = []
@@ -543,6 +627,9 @@ class BalancingCoordinator:
             if priority == LOAD_PRIORITY_OFF or not balancer_may_turn_on(entry):
                 continue
 
+            if not self.control(entry).may_command(Direction.TURN_ON, now):
+                continue
+
             candidates.append((priority, entry))
 
         candidates.sort(key=lambda x: x[0], reverse=True)
@@ -559,49 +646,36 @@ class BalancingCoordinator:
             return
 
         priority, entry = fitting
-        switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
-        device_id = get_device_id_from_entry(entry)
-        device_name = get_device_name_from_entry(entry)
-        LOGGER.info(
-            "Green strategy: Turning on device %s (%s) (priority %d)",
-            device_name,
-            device_id,
+        await self._async_strategy_command(
+            entry,
+            Direction.TURN_ON,
+            "green",
             priority,
+            now,
+            step_s=GREEN_INTERVAL_SECONDS,
         )
-        try:
-            await self._hass.services.async_call(
-                "switch",
-                "turn_on",
-                {"entity_id": switch_entity_id},
-            )
-            self._hass.bus.async_fire(
-                EVENT_DEVICE_TURNED_ON,
-                {
-                    "strategy": "green",
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    "switch_entity_id": switch_entity_id,
-                    "priority": priority,
-                },
-            )
-        except Exception as err:  # noqa: BLE001
-            LOGGER.warning(
-                "Green strategy: failed to turn on device %s (%s): %s",
-                device_name,
-                device_id,
-                err,
-            )
 
     async def _execute_red_strategy(self) -> None:
-        """Execute red strategy: turn off lowest priority device that is ON."""
-        entries = self._hass.config_entries.async_entries(DOMAIN)
+        """
+        Execute red strategy: turn off lowest priority device that is ON.
 
-        # Build list of (priority, switch_entity_id, device_id, device_name)
-        candidates: list[tuple[int, str, str, str]] = []
+        While a device may still answer its turn-off command (its response
+        time, at most the red zone's limit), no other device is turned off.
+        A deferred device is not a candidate.
+        """
+        now = dt_util.utcnow()
+        entries = self._hass.config_entries.async_entries(DOMAIN)
+        if any(
+            self.control(entry).waiting(Direction.TURN_OFF, now)
+            for entry in entries
+            if entry.data.get(CONF_SWITCH_ENTITY_ID)
+        ):
+            LOGGER.debug("Red strategy: waiting for a device to turn off")
+            return
+
+        candidates: list[tuple[int, ConfigEntry]] = []
 
         for entry in entries:
-            device_id = get_device_id_from_entry(entry)
-            device_name = get_device_name_from_entry(entry)
             switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
 
             if not switch_entity_id:
@@ -619,7 +693,10 @@ class BalancingCoordinator:
             if priority == LOAD_PRIORITY_ALWAYS_ON:
                 continue
 
-            candidates.append((priority, switch_entity_id, device_id, device_name))
+            if not self.control(entry).may_command(Direction.TURN_OFF, now):
+                continue
+
+            candidates.append((priority, entry))
 
         if not candidates:
             LOGGER.debug("Red strategy: No devices to turn off")
@@ -629,68 +706,37 @@ class BalancingCoordinator:
         candidates.sort(key=lambda x: x[0])
 
         # Turn off the lowest priority device
-        priority, switch_entity_id, device_id, device_name = candidates[0]
-        LOGGER.info(
-            "Red strategy: Turning off device %s (%s) (priority %d)",
-            device_name,
-            device_id,
+        priority, entry = candidates[0]
+        await self._async_strategy_command(
+            entry,
+            Direction.TURN_OFF,
+            "red",
             priority,
+            now,
+            step_s=RED_INTERVAL_SECONDS,
         )
-        try:
-            await self._hass.services.async_call(
-                "switch",
-                "turn_off",
-                {"entity_id": switch_entity_id},
-            )
-            self._hass.bus.async_fire(
-                EVENT_DEVICE_TURNED_OFF,
-                {
-                    "strategy": "red",
-                    "device_id": device_id,
-                    "device_name": device_name,
-                    "switch_entity_id": switch_entity_id,
-                    "priority": priority,
-                },
-            )
-        except Exception as err:  # noqa: BLE001
-            LOGGER.warning(
-                "Red strategy: failed to turn off device %s (%s): %s",
-                device_name,
-                device_id,
-                err,
-            )
 
     async def _turn_off_devices(
         self,
         entries: list[ConfigEntry],
     ) -> int:
-        """Turn off switches for the given config entries. Returns count turned off."""
+        """
+        Turn off switches for the given config entries. Returns count turned off.
+
+        An emergency: every device gets the command, a deferred one too,
+        without waiting for the answer or counting attempts.
+        """
         count = 0
         for entry in entries:
-            device_id = get_device_id_from_entry(entry)
-            device_name = get_device_name_from_entry(entry)
-            switch_entity_id = entry.data.get(CONF_SWITCH_ENTITY_ID)
-            if not switch_entity_id:
+            if not entry.data.get(CONF_SWITCH_ENTITY_ID):
                 continue
             LOGGER.info(
                 "OVERLOAD: Turning off device %s (%s)",
-                device_name,
-                device_id,
+                get_device_name_from_entry(entry),
+                get_device_id_from_entry(entry),
             )
-            try:
-                await self._hass.services.async_call(
-                    "switch",
-                    "turn_off",
-                    {"entity_id": switch_entity_id},
-                )
+            if await self._async_command(entry, Direction.TURN_OFF):
                 count += 1
-            except Exception as err:  # noqa: BLE001
-                LOGGER.warning(
-                    "OVERLOAD: failed to turn off device %s (%s): %s",
-                    device_name,
-                    device_id,
-                    err,
-                )
         return count
 
     async def _execute_overload_strategy(self) -> None:

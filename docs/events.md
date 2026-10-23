@@ -234,6 +234,20 @@ action:
 
 ---
 
+### Device control events (event entities)
+
+Next to these bus events, each device has a "Control events" event entity (`event.<device>_control_events`, diagnostic) with the event types `deferred`, `retrying` and `recovered` and the attributes `direction`, `failed_attempts`, `next_attempt` — see [Device Control](bestiarium_devices.md#device-control-controlpy). Automations trigger on its state:
+
+```yaml
+trigger:
+  - platform: state
+    entity_id: event.rozetka_za_komodom_control_events
+    attribute: event_type
+    to: deferred
+```
+
+---
+
 ## bestiarium_climate Events
 
 All events are fired from `custom_components/bestiarium_climate/balancer.py`.

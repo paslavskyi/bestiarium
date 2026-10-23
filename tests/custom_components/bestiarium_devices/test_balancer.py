@@ -27,6 +27,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
     CONF_OVERLOAD_FIRST_QUEUE,
+    CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
@@ -106,6 +107,7 @@ def bestiarium_devices_entry(hass: HomeAssistant) -> MockConfigEntry:
             CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
             CONF_DEVICE_NAME: "Test Device",
             CONF_SWITCH_ENTITY_ID: "switch.test_device",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_device_power",
             CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
         },
     )
@@ -197,6 +199,7 @@ class TestModeChangeHandling:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Device",
                 CONF_SWITCH_ENTITY_ID: "switch.off_device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_device_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -235,6 +238,7 @@ class TestModeChangeHandling:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On Device",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on_device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_device_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -278,6 +282,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 3000},
             },
         )
@@ -290,6 +295,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "High",
                 CONF_SWITCH_ENTITY_ID: "switch.high",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.high_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 7000},
             },
         )
@@ -326,6 +332,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Already On",
                 CONF_SWITCH_ENTITY_ID: "switch.already_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.already_on_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -362,6 +369,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.off_priority",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_priority_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -377,6 +385,7 @@ class TestGreenStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.always_priority",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_priority_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -420,6 +429,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "High",
                 CONF_SWITCH_ENTITY_ID: "switch.high",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.high_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 7000},
             },
         )
@@ -431,6 +441,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 3000},
             },
         )
@@ -467,6 +478,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Already Off",
                 CONF_SWITCH_ENTITY_ID: "switch.already_off",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.already_off_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -502,6 +514,7 @@ class TestRedStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -544,6 +557,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Normal",
                 CONF_SWITCH_ENTITY_ID: "switch.normal",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.normal_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -555,6 +569,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -596,6 +611,7 @@ class TestOverloadStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always On",
                 CONF_SWITCH_ENTITY_ID: "switch.always_on",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_on_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -648,6 +664,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First Queue",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -660,6 +677,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second Queue",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -704,6 +722,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -716,6 +735,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -763,6 +783,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -775,6 +796,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -821,6 +843,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First1",
                 CONF_SWITCH_ENTITY_ID: "switch.first1",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first1_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -832,6 +855,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First2",
                 CONF_SWITCH_ENTITY_ID: "switch.first2",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first2_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -877,6 +901,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "A",
                 CONF_SWITCH_ENTITY_ID: "switch.a",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.a_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -888,6 +913,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "B",
                 CONF_SWITCH_ENTITY_ID: "switch.b",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.b_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -935,6 +961,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -946,6 +973,7 @@ class TestOverloadTwoStepStrategy:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -998,6 +1026,7 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -1039,6 +1068,7 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -1080,6 +1110,7 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -1142,6 +1173,7 @@ class TestZoneTransitions:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Device",
                 CONF_SWITCH_ENTITY_ID: "switch.device",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.device_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
             },
         )
@@ -1222,6 +1254,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Test Device",
                 CONF_SWITCH_ENTITY_ID: "switch.test",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.test_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 6000},
             },
         )
@@ -1268,6 +1301,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Low Priority",
                 CONF_SWITCH_ENTITY_ID: "switch.low",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.low_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 2000},
             },
         )
@@ -1314,6 +1348,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -1325,6 +1360,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -1388,6 +1424,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "First",
                 CONF_SWITCH_ENTITY_ID: "switch.first",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.first_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: True,
             },
@@ -1399,6 +1436,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Second",
                 CONF_SWITCH_ENTITY_ID: "switch.second",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.second_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 5000},
                 CONF_OVERLOAD_FIRST_QUEUE: False,
             },
@@ -1451,6 +1489,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Off Device",
                 CONF_SWITCH_ENTITY_ID: "switch.off",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.off_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_OFF,
@@ -1464,6 +1503,7 @@ class TestEventFiring:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Always Device",
                 CONF_SWITCH_ENTITY_ID: "switch.always",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.always_power",
                 CONF_LOAD_PRIORITIES: {
                     CONF_DEFAULT_PRIORITY: 5000,
                     "Eco": LOAD_PRIORITY_ALWAYS_ON,
@@ -1667,6 +1707,7 @@ class TestLoadLimitChange:
                 CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
                 CONF_DEVICE_NAME: "Heater",
                 CONF_SWITCH_ENTITY_ID: "switch.heater",
+                CONF_POWER_SENSOR_ENTITY_ID: "sensor.heater_power",
                 CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 100},
             },
         ).add_to_hass(hass)
@@ -1711,6 +1752,7 @@ def _add_device(
             CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
             CONF_DEVICE_NAME: name,
             CONF_SWITCH_ENTITY_ID: switch_entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: f"{switch_entity_id}_power",
             CONF_LOAD_PRIORITIES: priorities or {CONF_DEFAULT_PRIORITY: 100},
             CONF_OVERLOAD_FIRST_QUEUE: first_queue,
         },

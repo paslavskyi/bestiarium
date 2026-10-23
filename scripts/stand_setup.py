@@ -231,6 +231,18 @@ class Registry:
         """Return the entity_id of a Bestiarium Mock entity."""
         return self.entity_id(domain, MOCK, unique_id)
 
+    def control(self, device_id: str, key: str) -> str:
+        """Return the entity_id of a Bestiarium Devices control entity on a device."""
+        for entity in self.entities:
+            if (
+                entity["platform"] == DEVICES
+                and entity["device_id"] == device_id
+                and entity["unique_id"].endswith(f"_{key}")
+            ):
+                return entity["entity_id"]
+        msg = f"No {key} of Bestiarium Devices on device {device_id}"
+        raise StandError(msg)
+
 
 async def registry(ha: HomeAssistant) -> Registry:
     """Read the device and entity registries."""
@@ -574,11 +586,12 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
             ],
         },
     ]
-    switches = []
+    logged = [*zones, mode_select]
     for spec in MOCK_DEVICES:
         device = reg.mock_device(spec.device_id)
         switch = reg.mock("switch", f"mock_{spec.device_id}")
-        switches.append(switch)
+        control_state = reg.control(device["id"], "control_state")
+        logged += [switch, control_state, reg.control(device["id"], "control_events")]
         open_page = {
             "action": "navigate",
             "navigation_path": f"/config/devices/device/{device['id']}",
@@ -595,6 +608,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                     _tile(switch, tap_action=open_page),
                     _tile(reg.mock("sensor", f"mock_{spec.device_id}_power")),
                     _tile(reg.mock("select", f"mock_{spec.device_id}_fault_profile")),
+                    _tile(control_state),
                 ],
             }
         )
@@ -607,7 +621,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                 {
                     "type": "logbook",
                     "hours_to_show": 3,
-                    "target": {"entity_id": [*switches, *zones, mode_select]},
+                    "target": {"entity_id": logged},
                     "grid_options": {"columns": "full"},
                 },
             ],

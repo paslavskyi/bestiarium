@@ -156,6 +156,74 @@
             }
           }
         }
+      },
+      "control_state": {
+        "name": "Control state",
+        "state": {
+          "normal": "Normal",
+          "switch_unavailable": "Switch unavailable",
+          "unresponsive": "Not responding",
+          "unstable": "Unstable connection",
+          "no_power_data": "No power data"
+        },
+        "state_attributes": {
+          "failed_attempts": {
+            "name": "Failed attempts"
+          },
+          "last_attempt": {
+            "name": "Last attempt"
+          },
+          "next_attempt": {
+            "name": "Next attempt"
+          },
+          "response_time": {
+            "name": "Response time"
+          },
+          "dropouts_last_hour": {
+            "name": "Dropouts in the last hour"
+          },
+          "direction": {
+            "name": "Command",
+            "state": {
+              "turn_on": "Turn on",
+              "turn_off": "Turn off"
+            }
+          }
+        }
+      },
+      "control_state_standalone": {
+        "name": "{device_name} Control state",
+        "state": {
+          "normal": "Normal",
+          "switch_unavailable": "Switch unavailable",
+          "unresponsive": "Not responding",
+          "unstable": "Unstable connection",
+          "no_power_data": "No power data"
+        },
+        "state_attributes": {
+          "failed_attempts": {
+            "name": "Failed attempts"
+          },
+          "last_attempt": {
+            "name": "Last attempt"
+          },
+          "next_attempt": {
+            "name": "Next attempt"
+          },
+          "response_time": {
+            "name": "Response time"
+          },
+          "dropouts_last_hour": {
+            "name": "Dropouts in the last hour"
+          },
+          "direction": {
+            "name": "Command",
+            "state": {
+              "turn_on": "Turn on",
+              "turn_off": "Turn off"
+            }
+          }
+        }
       }
     },
     "switch": {
@@ -164,6 +232,97 @@
       },
       "allowed_standalone": {
         "name": "{device_name} Allowed"
+      }
+    },
+    "event": {
+      "control_events": {
+        "name": "Control events",
+        "state_attributes": {
+          "event_type": {
+            "name": "Event type",
+            "state": {
+              "deferred": "Deferred",
+              "retrying": "Retrying the connection",
+              "recovered": "Recovered"
+            }
+          },
+          "direction": {
+            "name": "Command",
+            "state": {
+              "turn_on": "Turn on",
+              "turn_off": "Turn off"
+            }
+          },
+          "failed_attempts": {
+            "name": "Failed attempts"
+          },
+          "next_attempt": {
+            "name": "Next attempt"
+          }
+        }
+      },
+      "control_events_standalone": {
+        "name": "{device_name} Control events",
+        "state_attributes": {
+          "event_type": {
+            "name": "Event type",
+            "state": {
+              "deferred": "Deferred",
+              "retrying": "Retrying the connection",
+              "recovered": "Recovered"
+            }
+          },
+          "direction": {
+            "name": "Command",
+            "state": {
+              "turn_on": "Turn on",
+              "turn_off": "Turn off"
+            }
+          },
+          "failed_attempts": {
+            "name": "Failed attempts"
+          },
+          "next_attempt": {
+            "name": "Next attempt"
+          }
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Balancer control",
+        "description": "How the balancer controls this device. Changes apply at once.",
+        "data": {
+          "attempts": "Attempts before deferring",
+          "defer_minutes": "Deferral, minutes",
+          "tolerance_seconds": "Tolerance, seconds",
+          "hysteresis_seconds": "Hysteresis, seconds",
+          "unstable_dropouts_per_hour": "Dropouts an hour for an unstable connection"
+        },
+        "data_description": {
+          "attempts": "Failed commands in a row after which the balancer defers the device and goes on with the next one",
+          "defer_minutes": "How long a device that does not respond waits before it is tried again",
+          "tolerance_seconds": "A switch or power sensor gone for less than this is a short dropout, not a problem",
+          "hysteresis_seconds": "A problem ends only after the device has worked this long without a dropout",
+          "unstable_dropouts_per_hour": "This many short dropouts in an hour make the connection unstable"
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "data": {
+              "default_response_seconds": "Response time of a new device, seconds",
+              "response_margin": "Margin over the response time",
+              "red_max_wait_seconds": "Longest wait in the red zone, seconds"
+            },
+            "data_description": {
+              "default_response_seconds": "Used until the device has answered commands; then its own response time counts",
+              "response_margin": "An attempt fails only after the device's longest response time times this",
+              "red_max_wait_seconds": "In the red zone the balancer waits for a device at most this long before it turns off the next one"
+            }
+          }
+        }
       }
     }
   }

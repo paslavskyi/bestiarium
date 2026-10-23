@@ -46,6 +46,18 @@ automated tests.
 
 ## Examples
 
-The balancer's control state (DEV-007 stage 2) is the first implementation:
-adaptive response time, tolerance, hysteresis, "unstable connection" and
-device events. It is described here when it lands.
+The balancer's device control (`bestiarium_devices/control.py`, DEV-007) is
+the first implementation, described in
+[../bestiarium_devices.md](../bestiarium_devices.md#device-control-controlpy):
+
+- **Adaptive response time:** an attempt waits `max(step, longest of the last
+  10 answers × 1.5)`, 15 s × 1.5 for a new device; the answers are kept across
+  restarts. A slow cloud socket that answers in 12 s gets no failed attempt in
+  the red zone, where before it got a command every 5 s.
+- **Hard limit:** in the red zone a device gets at most 30 s in all; then the
+  next device is turned off.
+- **Tolerance / hysteresis:** 60 s each; a glitch inside the hysteresis
+  starts it again.
+- **Unstable connection:** 3 short dropouts in an hour.
+- **Frugality:** the details are `_unrecorded_attributes`; the response memory
+  holds 10 values per device; the deferral is not stored.

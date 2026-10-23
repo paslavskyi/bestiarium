@@ -54,5 +54,18 @@ picks the Home Assistant mechanism; the table maps each kind of problem to it.
 - **Known debt:** "Balancing Disabled" is a `persistent_notification`; it
   becomes a Repairs issue in DEV-008.
 
-The balancer's handling of devices that do not respond (DEV-007 stage 2) is the
-first full example; it is added here when it lands.
+### The first full example: devices that do not respond (DEV-007)
+
+- **Short glitch:** a relay or power sensor gone for less than the tolerance
+  (default 1 min) — a `debug` line, and it counts towards "unstable
+  connection".
+- **Lasting device problem:** the "Control state" sensor of the device
+  (diagnostic): "Switch unavailable", "Not responding", "Unstable connection",
+  "No power data". The balancer works around the device: a device that does
+  not respond is deferred and the next one goes. One `warning` when the
+  problem is confirmed, one `info` when it ends.
+- **What happened meanwhile:** the "Control events" entity of the device —
+  "deferred", "retrying", "recovered" — once each, for the owner's
+  automations; the state stays "Not responding" and does not flap.
+- **Contract:** the `bestiarium_devices_*` bus events are unchanged; their
+  payloads are `TypedDict`s checked by the tests.

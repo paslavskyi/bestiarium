@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_RECONFIGURE
+from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
@@ -35,6 +38,7 @@ from .const import (
     DOMAIN_SENSOR,
     DOMAIN_SWITCH,
     LOAD_PRIORITY_DEFAULT,
+    ControlSettings,
 )
 from .helpers import (
     build_priority_form_key,
@@ -149,6 +153,14 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
     MINOR_VERSION = 2
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,  # noqa: ARG004
+    ) -> ControlOptionsFlow:
+        """Return the form of how the balancer controls the device."""
+        return ControlOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -567,3 +579,55 @@ class BestiariumDevicesFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Single switch AND single sensor - go directly to priorities
         return await self.async_step_configure_priorities()
+
+
+ADVANCED = "advanced"
+
+
+def _control_schema(settings: ControlSettings) -> vol.Schema:
+    """Return the form of the control settings; the rarely changed ones folded."""
+    main: dict[vol.Marker, Any] = {}
+    advanced: dict[vol.Marker, Any] = {}
+    for setting in fields(ControlSettings):
+        bounds = setting.metadata
+        form = advanced if bounds["advanced"] else main
+        form[vol.Required(setting.name, default=getattr(settings, setting.name))] = (
+            selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=bounds["min"],
+                    max=bounds["max"],
+                    step=bounds["step"],
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            )
+        )
+    main[vol.Required(ADVANCED)] = section(vol.Schema(advanced), {"collapsed": True})
+    return vol.Schema(main)
+
+
+class ControlOptionsFlow(config_entries.OptionsFlow):
+    """
+    How the balancer controls a device: attempts, waits, thresholds.
+
+    Algorithm parameters live in the entry's options, not in entities
+    (docs/concepts/settings-vs-entities.md). They apply at once: the balancer
+    reads them on every step.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.ConfigFlowResult:
+        """Show and store the control settings; keep the other options."""
+        if user_input is not None:
+            values = {**user_input.pop(ADVANCED), **user_input}
+            settings = {
+                setting.name: type(setting.default)(values[setting.name])
+                for setting in fields(ControlSettings)
+            }
+            return self.async_create_entry(
+                data={**self.config_entry.options, **settings}
+            )
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_control_schema(ControlSettings.of(self.config_entry)),
+        )
