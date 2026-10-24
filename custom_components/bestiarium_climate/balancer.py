@@ -326,6 +326,15 @@ class BalancingCoordinator:
             ),
         )
         deficit = capacity < len(ranked)
+        LOGGER.debug(
+            "Zone %s, capacity %s: %s",
+            zone,
+            capacity,
+            [
+                (c.name, round(self._working_time_coefficient(t, c, now), 2))
+                for t, c in ranked
+            ],
+        )
         for place, (thermostat, control) in enumerate(ranked):
             if zone in STARTING_ZONES:
                 on = place < capacity
@@ -350,8 +359,8 @@ class BalancingCoordinator:
 
     @staticmethod
     def _heating(control: ThermostatControl, now: datetime) -> bool:
-        """Return whether the switch is wanted on and is on; else want it off."""
-        if control.expected_on and control.switch_is_on():
+        """Return whether the switch heats (or is starting); else want it off."""
+        if control.heating(now):
             return True
         control.set_expected(False, now)  # noqa: FBT003
         return False

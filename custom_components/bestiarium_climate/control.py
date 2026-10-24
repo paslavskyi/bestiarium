@@ -227,6 +227,23 @@ class ThermostatControl:
         state = self._hass.states.get(self.switch)
         return None if _gone(state) else state.state == STATE_ON
 
+    def heating(self, now: datetime) -> bool:
+        """
+        Return whether the switch is wanted on and is on, or was just told to.
+
+        A start under way (its answer not in yet) is heating: a zone that the
+        start itself moves to yellow does not cancel it.
+        """
+        if not self.expected_on:
+            return False
+        if self.switch_is_on():
+            return True
+        return bool(
+            self._last_command
+            and self._last_command[1]
+            and now - self._last_command[0] < ATTEMPT_INTERVAL
+        )
+
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
         """Set what the balancer wants the switch to be."""
         if on != self.expected_on:

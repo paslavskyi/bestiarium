@@ -589,3 +589,18 @@ async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> No
 
     assert control.to_command(dt_util.utcnow()) is True
     assert control.attributes["failed_attempts"] == 3
+
+
+async def test_a_start_that_brings_yellow_is_not_cancelled(floors: Floors) -> None:
+    """Green starts two; their load makes it yellow before they answer: both stay."""
+    floors.stuck.update({"floor_1", "floor_2"})
+    await floors.setup(zones=True)
+    floors.zone("yellow")
+    await floors.hass.async_block_till_done()
+    floors.stuck.clear()
+    for floor in ("floor_1", "floor_2"):
+        floors.hass.states.async_set(f"switch.{floor}", STATE_ON)
+    await floors.tick(MINUTE)
+
+    assert floors.on() == {"floor_1", "floor_2"}
+    assert ("turn_off", "floor_1") not in floors.calls
