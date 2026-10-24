@@ -197,7 +197,7 @@ async def test_limit_survives_reload(hass: HomeAssistant) -> None:
 
     assert float(hass.states.get(LIMIT_ENTITY).state) == 8800  # noqa: PLR2004
     red = hass.states.get(_zone_entity_ids(hass)["red"])
-    assert red.attributes["red_threshold"] == 8800 * 0.9
+    assert red.attributes["red_threshold"] == 7480  # noqa: PLR2004 - 85 % of 8800
     assert red.state == STATE_OFF
 
 
