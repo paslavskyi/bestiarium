@@ -370,3 +370,16 @@ async def test_unavailable_as_soon_as_confirmed(floors: Floors) -> None:
 
     assert floors.state("floor_1") == "no_temperature"
     assert floors.hass.states.get(floors.climate("floor_1")).state == STATE_UNAVAILABLE
+
+
+async def test_a_confirmed_problem_frees_the_place_at_once(floors: Floors) -> None:
+    """No temperature confirmed between two cycles: the third floor starts at once."""
+    await floors.setup()
+    await floors.tick(MINUTE + 20)
+    first = sorted(floors.on())[0]
+    floors.hass.states.async_set(f"sensor.{first}_temperature", STATE_UNAVAILABLE)
+
+    await floors.tick(65, step=5)
+
+    assert first not in floors.on()
+    assert len(floors.on()) == 2

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -9,8 +10,10 @@ from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
 from homeassistant.components.climate import HVACAction
+from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
@@ -24,7 +27,9 @@ from .const import (
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
     LOGGER,
+    SIGNAL_CONTROL_CHANGED,
     SUBENTRY_TYPE_THERMOSTAT,
+    ControlState,
 )
 from .control import ThermostatControl, async_get_thermostat_memory
 from .util import duration_dict_to_timedelta
@@ -51,7 +56,10 @@ class BalancingCoordinator:
             entry.data.get(CONF_MIN_WORKING_TIME),
         )
         self.controls: dict[str, ThermostatControl] = {}
-        self._unsub: CALLBACK_TYPE | None = None
+        self._states: dict[str, ControlState] = {}
+        self._unsubscribe: list[CALLBACK_TYPE] = []
+        # One cycle at a time: a cycle asked for meanwhile waits
+        self._lock = asyncio.Lock()
 
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
@@ -72,30 +80,51 @@ class BalancingCoordinator:
         }
 
     def start(self) -> None:
-        """Follow the switches and balance every minute."""
+        """Follow the switches; balance every minute and on a control's new state."""
         for control in self.controls.values():
             control.async_start()
-        self._unsub = async_track_time_interval(
-            self._hass,
-            self.async_balance,
-            timedelta(seconds=BALANCING_INTERVAL_SECONDS),
+            self._states[control.subentry_id] = control.state
+            self._unsubscribe.append(
+                async_dispatcher_connect(
+                    self._hass,
+                    SIGNAL_CONTROL_CHANGED.format(control.subentry_id),
+                    self._control_changed(control),
+                )
+            )
+        self._unsubscribe.append(
+            async_track_time_interval(
+                self._hass,
+                self.async_balance,
+                timedelta(seconds=BALANCING_INTERVAL_SECONDS),
+            )
         )
 
     def stop(self) -> None:
         """Stop balancing and following."""
-        if self._unsub is not None:
-            self._unsub()
-            self._unsub = None
+        while self._unsubscribe:
+            self._unsubscribe.pop()()
         for control in self.controls.values():
             control.async_stop()
 
+    def _control_changed(self, control: ThermostatControl) -> CALLBACK_TYPE:
+        """Return the listener that rebalances when the control's state changes."""
+
+        @callback
+        def changed() -> None:
+            if control.state is not self._states[control.subentry_id]:
+                self._states[control.subentry_id] = control.state
+                self._hass.async_create_task(self.async_balance())
+
+        return changed
+
     async def async_balance(self, now: datetime | None = None) -> None:
         """Run one cycle: allocate the capacity, then send the switches."""
-        now = now or dt_util.utcnow()
-        thermostats = self._thermostats()
-        self._allocate(thermostats, now)
-        for control in self.controls.values():
-            await self._async_sync(control, now)
+        async with self._lock:
+            now = now or dt_util.utcnow()
+            thermostats = self._thermostats()
+            self._allocate(thermostats, now)
+            for control in self.controls.values():
+                await self._async_sync(control, now)
 
     def _capacity(self) -> int:
         """Read the capacity from its entity, the one source of it."""
