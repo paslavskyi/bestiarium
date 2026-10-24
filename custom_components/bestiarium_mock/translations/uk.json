@@ -73,6 +73,15 @@
           "unresponsive": "Не відповідає",
           "custom": "Власний"
         }
+      },
+      "reading_profile": {
+        "name": "Профіль несправності",
+        "state": {
+          "reliable": "Надійний",
+          "unstable": "Нестабільний",
+          "no_data": "Немає даних",
+          "frozen": "Застиг"
+        }
       }
     }
   },

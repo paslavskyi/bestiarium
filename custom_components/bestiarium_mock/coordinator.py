@@ -15,9 +15,11 @@ from .const import (
     GRID_UPDATE_INTERVAL_SECONDS,
     LOGGER,
     MOCK_DEVICES,
+    MOCK_GRID,
     MOCK_THERMOMETERS,
 )
 from .faults import MockSocket
+from .readings import MockReading
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -48,6 +50,14 @@ class MockDevicesCoordinator:
             socket.add_listener(self._update_grid) for socket in self.sockets.values()
         ]
         self._grid_power_sensor: MockGridPowerSensor | None = None
+        # What HA sees of the thermometers and the grid, by device id
+        self.readings: dict[str, MockReading] = {
+            device_id: MockReading(hass)
+            for device_id in (
+                *(spec.device_id for spec in MOCK_THERMOMETERS),
+                MOCK_GRID.device_id,
+            )
+        }
 
         # Thermometer entity references
         self._temperature_sensors: dict[str, MockThermometerTemperatureSensor] = {}
@@ -96,6 +106,8 @@ class MockDevicesCoordinator:
         LOGGER.debug("Stopping mock devices coordinator")
         for socket in self.sockets.values():
             socket.stop()
+        for reading in self.readings.values():
+            reading.stop()
         for unsub in self._unsub_sockets:
             unsub()
         if self._unsub_timer:

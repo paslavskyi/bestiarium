@@ -148,3 +148,42 @@ async def test_unload_entry(hass: HomeAssistant, stand: MockDevicesCoordinator) 
     """Unloading stops the stand."""
     assert await hass.config_entries.async_unload(stand.entry.entry_id)
     assert stand.entry.state is ConfigEntryState.NOT_LOADED
+
+
+@pytest.mark.parametrize("device", ["thermo_2", "grid"])
+async def test_reading_profiles(
+    hass: HomeAssistant, entity_id: EntityId, device: str
+) -> None:
+    """A thermometer or the grid: no data is unavailable; frozen keeps the value."""
+    knob = entity_id("select", f"mock_{device}_reading_profile")
+    unit = "temperature" if device.startswith("thermo") else "power"
+    sensor = entity_id("sensor", f"mock_{device}_{unit}")
+    assert _category(hass, knob) is EntityCategory.CONFIG
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": knob, "option": "no_data"},
+        blocking=True,
+    )
+    assert hass.states.get(sensor).state == "unavailable"
+
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": knob, "option": "frozen"},
+        blocking=True,
+    )
+    frozen = hass.states.get(sensor).state
+    if device.startswith("thermo"):
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {
+                "entity_id": entity_id("number", f"mock_{device}_mock_temperature"),
+                "value": 30,
+            },
+            blocking=True,
+        )
+    await hass.async_block_till_done()
+    assert hass.states.get(sensor).state == frozen

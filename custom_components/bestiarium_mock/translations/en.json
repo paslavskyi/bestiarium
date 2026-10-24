@@ -73,6 +73,15 @@
           "unresponsive": "Unresponsive",
           "custom": "Custom"
         }
+      },
+      "reading_profile": {
+        "name": "Fault profile",
+        "state": {
+          "reliable": "Reliable",
+          "unstable": "Unstable",
+          "no_data": "No data",
+          "frozen": "Frozen"
+        }
       }
     }
   },

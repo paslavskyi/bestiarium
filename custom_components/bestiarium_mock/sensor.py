@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
+    from .readings import MockReading
 
 
 async def async_setup_entry(
@@ -45,12 +46,14 @@ async def async_setup_entry(
 
     # Temperature sensors for each mock thermometer
     for thermo_spec in MOCK_THERMOMETERS:
-        sensor = MockThermometerTemperatureSensor(entry, thermo_spec)
+        sensor = MockThermometerTemperatureSensor(
+            entry, thermo_spec, coordinator.readings[thermo_spec.device_id]
+        )
         coordinator.register_temperature_sensor(thermo_spec.device_id, sensor)
         entities.append(sensor)
 
     # Grid power sensor
-    grid_sensor = MockGridPowerSensor(entry)
+    grid_sensor = MockGridPowerSensor(entry, coordinator.readings[MOCK_GRID.device_id])
     coordinator.register_grid_power_sensor(grid_sensor)
     entities.append(grid_sensor)
 
@@ -85,11 +88,12 @@ class MockGridPowerSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfPower.WATT
 
-    def __init__(self, entry: BestiariumMockConfigEntry) -> None:
+    def __init__(self, entry: BestiariumMockConfigEntry, reading: MockReading) -> None:
         """Initialize the grid power sensor."""
         super().__init__()
         self._entry = entry
-        self._attr_native_value: float = 0
+        self._reading = reading
+        self._power: float = 0
 
         # Entity attributes
         self._attr_unique_id = f"mock_{MOCK_GRID.device_id}_power"
@@ -102,9 +106,23 @@ class MockGridPowerSensor(SensorEntity):
             model="Mock Grid Monitor",
         )
 
+    @property
+    def available(self) -> bool:
+        """Return False while the reading's profile hides the data."""
+        return self._reading.available
+
+    @property
+    def native_value(self) -> float:
+        """Return the power HA sees."""
+        return self._reading.shown(self._power)
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the reading's profile."""
+        self.async_on_remove(self._reading.add_listener(self.async_write_ha_state))
+
     def set_power(self, power: float) -> None:
         """Set the power value (called by coordinator)."""
-        self._attr_native_value = power
+        self._power = power
         self.async_write_ha_state()
 
 
@@ -121,12 +139,14 @@ class MockThermometerTemperatureSensor(SensorEntity):
         self,
         entry: BestiariumMockConfigEntry,
         thermo_spec: MockThermometerSpec,
+        reading: MockReading,
     ) -> None:
         """Initialize the temperature sensor."""
         super().__init__()
         self._entry = entry
         self._thermo_spec = thermo_spec
-        self._attr_native_value: float = thermo_spec.default_temp_c
+        self._reading = reading
+        self._temperature: float = thermo_spec.default_temp_c
 
         # Entity attributes
         self._attr_unique_id = f"mock_{thermo_spec.device_id}_temperature"
@@ -139,7 +159,21 @@ class MockThermometerTemperatureSensor(SensorEntity):
             model="Mock Thermometer",
         )
 
+    @property
+    def available(self) -> bool:
+        """Return False while the reading's profile hides the data."""
+        return self._reading.available
+
+    @property
+    def native_value(self) -> float:
+        """Return the temperature HA sees."""
+        return self._reading.shown(self._temperature)
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the reading's profile."""
+        self.async_on_remove(self._reading.add_listener(self.async_write_ha_state))
+
     def set_temperature(self, temperature: float) -> None:
         """Set the temperature value (called by coordinator)."""
-        self._attr_native_value = temperature
+        self._temperature = temperature
         self.async_write_ha_state()

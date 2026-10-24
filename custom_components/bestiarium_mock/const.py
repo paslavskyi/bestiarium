@@ -155,3 +155,18 @@ MOCK_GRID = MockDeviceSpec(
     device_id="grid",
     power_w=GRID_MAX_POWER_W,
 )
+
+
+class ReadingProfile(StrEnum):
+    """How a sensor of the stand (thermometer, grid) misbehaves."""
+
+    RELIABLE = "reliable"
+    UNSTABLE = "unstable"  # short dropouts
+    NO_DATA = "no_data"  # unavailable until the profile changes
+    FROZEN = "frozen"  # the value no longer changes
+
+
+# The dropouts of an unstable reading
+READING_DROPOUTS_PER_HOUR = 6
+READING_DROPOUT_MIN_S = 10
+READING_DROPOUT_MAX_S = 40
