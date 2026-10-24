@@ -216,7 +216,7 @@ Class: `VirtualSwitch(SwitchEntity)`
 - **Turn off**: the off sequence
 - **State**: from the power sensor — on at or above `min_power`; on stays on down to `min_power × (1 − power_hysteresis_percent / 100)`. A change is shown only once it has lasted `power_delay_seconds` (a shorter dip or spike is not shown).
 - **No power data** (the sensor unavailable, unknown, missing or not a number) for `power_tolerance_seconds` (60 s): the switch is **unavailable**, not off; a shorter dropout is silent; data back → shown at once. Once HA runs, one `info` when the data goes and when it is back (none at the start). The balancer sees "Switch unavailable" after its own tolerance.
-- **Why it is in the integration** ([necessity](concepts/necessity.md), refinement 4): compared with HA's template switch it takes heating or cooling from its thermostats, has a hysteresis and a delay on the power threshold and is unavailable without power data, set up in one form per heater.
+- **Why it is in the integration** ([necessity](concepts/necessity.md), refinement 4) — only its differences from HA's template switch count: a delay on the state read from power (no `delay_on` / `delay_off` there; per heater it would take a Threshold helper, an `input_boolean` and an automation); "off" cancels an "on" sequence still running (the template switch's scripts run in `single` mode); its forms check that its actions match its thermostat's mode. The sequences, the hysteresis and plain availability are at parity.
 
 ### Device Info
 

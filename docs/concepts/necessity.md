@@ -26,12 +26,20 @@ the case:
 | Influence | Does it take part in control, not only show something? |
 | Quality | In the integration it is set up in a few clicks and covered by tests; in configuration it is copied by hand, untested |
 
-Example: the virtual switch of Bestiarium Climate meets all four, and since
-DEV-008 stage B it is more capable than HA's template switch (refinement 4):
-it runs the full action sequences through HA's script machinery, takes
-heating or cooling from the thermostat that controls it, reads its state
-from a power sensor with a hysteresis and a delay, and is unavailable without
-power data.
+Example: the virtual switch of Bestiarium Climate meets all four. Against
+HA's template switch (refinement 4) it stays for its real differences only:
+
+- **a delay on the state read from power**: the template switch has no
+  `delay_on` / `delay_off`; per heater it would take a Threshold helper, an
+  `input_boolean` and an automation;
+- **"off" cancels an "on" sequence still running**: the template switch runs
+  its actions as separate scripts in `single` mode;
+- **its forms check that its actions match its thermostat's mode** (a
+  thermostat cannot use a virtual switch without the action of its mode; the
+  switch cannot lose the action its thermostat needs).
+
+At parity, so no argument: the action sequences, the hysteresis (a template
+can use `this.state`), plain availability.
 
 ## Convenience — in the home's configuration
 
@@ -54,9 +62,12 @@ not an entity of `bestiarium_mode`.
 3. **Display at no cost** — no entities in the registry, no rows in the
    history, no migrations (for example the logbook descriptions of the
    events) — may stay when the home's alternative is more than one copy.
-4. **A building block is compared with the best built-in alternative of
-   HA** (UI helpers, blueprints), not with hand-written YAML; it stays only
-   if it is **more capable or safer** than that.
+4. **A building block is compared with the best native alternative of HA**
+   (UI helpers, blueprints), not with hand-written YAML. It stays only if it
+   **gives at least one capability a single native helper of the same kind
+   lacks** (without extra helpers, automations, blueprints or YAML), **or
+   prevents a failure the native one allows**. What the native helper also
+   does (parity) does not count. The plan lists each such difference.
 5. **"Its own logic" includes the other Bestiarium integrations**; the
    contract between them is minimal.
 6. **The person's need is judged**, not the exact shape of a feature.

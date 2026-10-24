@@ -48,8 +48,9 @@ Ask in this order:
   display-only ones are `diagnostic`, test knobs are `config`.
 - [ ] **Necessity:** each new entity, attribute, event, service or form field
   is stated as necessary, the only interface or a building block (compared
-  with HA's best built-in alternative); events only for the integration's own
-  decisions and only on transitions; attributes only if read or runtime data
+  with HA's best native alternative: only a capability one native helper of
+  the same kind lacks, or a failure it allows, counts — not parity); events
+  only for the integration's own decisions and only on transitions; attributes only if read or runtime data
   seen nowhere else, never configuration; internal signals stay internal;
   every removed element is listed in the report.
 - [ ] **Stability:** a problem is confirmed by tolerance and cleared by
