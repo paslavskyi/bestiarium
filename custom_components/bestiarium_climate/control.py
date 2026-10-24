@@ -82,6 +82,13 @@ class ThermostatMemory:
         self._data.setdefault(subentry_id, {}).update(values)
         self._store.async_delay_save(lambda: self._data, SAVE_DELAY_SECONDS)
 
+    def keep_only(self, subentry_ids: set[str]) -> None:
+        """Forget the thermostats that are no longer configured."""
+        if gone := self._data.keys() - subentry_ids:
+            for subentry_id in gone:
+                del self._data[subentry_id]
+            self._store.async_delay_save(lambda: self._data, SAVE_DELAY_SECONDS)
+
 
 @singleton(f"{DOMAIN}_thermostat_memory", async_=True)
 async def async_get_thermostat_memory(hass: HomeAssistant) -> ThermostatMemory:
@@ -248,6 +255,7 @@ class ThermostatControl:
             return False
         self._tries += 1
         self._keep()
+        self._refresh(now)
         return wanted
 
     def _defer(self, now: datetime) -> None:

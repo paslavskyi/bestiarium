@@ -56,6 +56,13 @@ class BalancingCoordinator:
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
         memory = await async_get_thermostat_memory(self._hass)
+        memory.keep_only(
+            {
+                subentry_id
+                for entry in self._hass.config_entries.async_entries(DOMAIN)
+                for subentry_id in entry.subentries
+            }
+        )
         self.controls = {
             subentry.subentry_id: ThermostatControl(
                 self._hass, self._entry, subentry, memory

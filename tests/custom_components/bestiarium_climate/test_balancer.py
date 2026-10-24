@@ -315,3 +315,29 @@ async def test_attempts_are_one_a_cycle(floors: Floors) -> None:
     await floors.tick(2 * MINUTE)
     assert floors.state("floor_1") == "normal"
     assert floors.calls.count(("turn_on", "floor_1")) <= 3
+
+
+async def test_attempts_are_shown_as_they_are_made(floors: Floors) -> None:
+    """The control state's failed_attempts follows each attempt."""
+    floors.stuck.add("floor_1")
+    await floors.setup()
+    await floors.tick(MINUTE)
+
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 2
+
+
+async def test_memory_forgets_a_removed_thermostat(
+    floors: Floors, hass_storage: dict
+) -> None:
+    """A thermostat removed from the configuration leaves nothing in the store."""
+    await floors.setup()
+    floors.entry.subentries.pop("floor_3")
+
+    await floors.hass.config_entries.async_reload(floors.entry.entry_id)
+    await floors.tick(MINUTE)
+
+    assert set(hass_storage["bestiarium_climate.thermostats"]["data"]) == {
+        "floor_1",
+        "floor_2",
+    }
