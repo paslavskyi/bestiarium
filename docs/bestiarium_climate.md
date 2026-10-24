@@ -248,7 +248,7 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 
 - It follows the thermostat's switch and temperature sensor; their availability counts only once HA has started.
 - **Switch unavailable / no temperature**: gone (unavailable, unknown, missing; for the temperature also not a number) for longer than `tolerance_seconds` → a confirmed problem; it ends after `hysteresis_seconds` without it.
-- **Not responding**: each balancing cycle in which the switch is not as wanted counts an attempt; after `attempts` the switch is **deferred** for the entry's `recovery_timeout`, turned off once, and then tried again. It ends when the switch takes the wanted state (after the hysteresis).
+- **Not responding**: each balancing cycle in which the switch is not as wanted counts an attempt (`failed_attempts` shows each at once); after `attempts` the switch is **deferred** for the entry's `recovery_timeout`, turned off once, and then tried again. It ends when the switch takes the wanted state (after the hysteresis).
 - **In the rotation** only if none of these: a gone switch, a deferred switch and no temperature all free the thermostat's place for the others.
 
 `ControlStateSensor` — `sensor.<thermostat>_control_state`, enum, diagnostic, on the thermostat's device: `switch_unavailable` > `unresponsive` > `no_temperature` > `normal`. Attributes `failed_attempts`, `next_attempt` (unrecorded). One `warning` when a problem starts, one `info` when it ends.
@@ -269,10 +269,12 @@ One set for all thermostats of the entry (the owner's choice), defaults: `attemp
 
 `BalancingCoordinator` — one per climate entry, made before the platforms (they show its controls), started after them.
 
-### Balance Cycle (`async_balance`, every 60 s and on a thermostat's change)
+### Balance Cycle (`async_balance`, every 60 s, on a thermostat's change and on a control's new state)
+
+One cycle at a time (a lock): a cycle asked for meanwhile runs after it. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second, not a minute later.
 
 1. **Allocate.** The working thermostats are those in the rotation that want heat or cold. Every other one is not wanted on. If the capacity is short (the normal state of a home that needs Bestiarium Climate), the ones that worked least go first: working-time coefficient ascending (time on / minimum working time, the thermostat's own or the entry's), then the temperature difference descending. In a deficit a change fires `bestiarium_climate_device_rotated_in` / `_out`.
-2. **Sync.** Each switch gets the state wanted (`ThermostatControl.to_command`); a command HA refuses counts as an attempt and the cycle goes on with the other switches — one switch never stops the others.
+2. **Sync.** Each switch gets the state wanted (`ThermostatControl.to_command`); a command HA refuses counts as an attempt and the cycle goes on with the other switches — one switch never stops the others. The same command is repeated at most once a cycle; a new wanted state (the thermostat off and back to heat) is sent at once and starts the count of attempts again.
 
 ### Capacity Reading
 

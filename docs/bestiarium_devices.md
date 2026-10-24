@@ -349,7 +349,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 - Recalculates active zone via `_determine_active_zone()`
 - If zone changed: cancels old periodic job, handles new zone
 
-**After HA has started** the mode is applied again (`async_apply_mode(restart=True)`, the owner's choice: restarts are rare, and the mode's duties do not survive one). Only the devices that are on get a turn-off; `bestiarium_devices_mode_applied` with `reason: "restart"` fires only if one was turned off, and lists only those.
+**After HA has started** the mode is applied again (`async_apply_mode(restart=True)`, the owner's choice: restarts are rare, and the mode's duties do not survive one). Only the devices that are on get a turn-off, and only the always-on ones that are off a turn-on; `bestiarium_devices_mode_applied` with `reason: "restart"` fires only if one was turned off, and lists only those commands.
 
 **Renamed modes**: the mode form sends `bestiarium_mode_options_renamed`; every device entry moves its priority keys, a removed mode's key goes.
 
