@@ -14,10 +14,12 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
+    STATE_UNAVAILABLE,
     UnitOfTemperature,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -33,6 +35,7 @@ from .const import (
     DEFAULT_TOLERANCE,
     DOMAIN,
     PRESET_KEYS,
+    SIGNAL_CONTROL_CHANGED,
     ClimateMode,
 )
 from .control import ThermostatMemory, async_get_thermostat_memory
@@ -330,6 +333,20 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         self._subscribe_temperature()
         self._update_hvac_action()
         self.async_write_ha_state()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_CONTROL_CHANGED.format(self._control.subentry_id),
+                self._async_control_changed,
+            )
+        )
+
+    @callback
+    def _async_control_changed(self) -> None:
+        """Show the availability as soon as the control confirms it."""
+        state = self.hass.states.get(self.entity_id)
+        if state is not None and (state.state != STATE_UNAVAILABLE) != self.available:
+            self.async_write_ha_state()
 
     async def async_will_remove_from_hass(self) -> None:
         """Unsubscribe from temperature sensor."""

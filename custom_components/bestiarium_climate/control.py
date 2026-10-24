@@ -167,7 +167,7 @@ class ThermostatControl:
         )
         self.state = ControlState.NORMAL
         # When the switch got its last command: an attempt is one a cycle
-        self._last_command: datetime | None = None
+        self._last_command: tuple[datetime, bool] | None = None
         self._watching = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -234,7 +234,8 @@ class ThermostatControl:
 
         Each balancing cycle (a minute) the switch is not as wanted counts an
         attempt; the cycles a thermostat's change runs in between wait for
-        the answer. Out of attempts the switch is deferred and turned off once.
+        the answer. A new wanted state is sent at once and starts the count
+        again. Out of attempts the switch is deferred and turned off once.
         """
         actual = self.switch_is_on()
         wanted = self.expected_on and self.in_rotation(now)
@@ -247,9 +248,12 @@ class ThermostatControl:
                 self._keep()
                 self._refresh(now)
             return None
-        if self._last_command and now - self._last_command < ATTEMPT_INTERVAL:
-            return None
-        self._last_command = now
+        if self._last_command and self._last_command[1] == wanted:
+            if now - self._last_command[0] < ATTEMPT_INTERVAL:
+                return None
+        else:
+            self._tries = 0
+        self._last_command = (now, wanted)
         if self._tries >= self.settings.attempts:
             self._defer(now)
             return False

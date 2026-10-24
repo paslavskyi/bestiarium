@@ -341,3 +341,32 @@ async def test_memory_forgets_a_removed_thermostat(
         "floor_1",
         "floor_2",
     }
+
+
+async def test_a_new_decision_is_sent_at_once(floors: Floors) -> None:
+    """Off and back to heat within a minute: the switch is turned on at once."""
+    await floors.setup(capacity=3)
+    assert floors.on() == set(FLOORS)
+
+    for hvac_mode in ("off", "heat"):
+        await floors.hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": floors.climate("floor_1"), "hvac_mode": hvac_mode},
+            blocking=True,
+        )
+        await floors.hass.async_block_till_done()
+
+    assert "floor_1" in floors.on()
+
+
+async def test_unavailable_as_soon_as_confirmed(floors: Floors) -> None:
+    """The thermostat is unavailable when no temperature is confirmed, not a cycle later."""
+    await floors.setup()
+    await floors.tick(MINUTE + 20)
+    floors.hass.states.async_set("sensor.floor_1_temperature", STATE_UNAVAILABLE)
+
+    await floors.tick(65, step=5)
+
+    assert floors.state("floor_1") == "no_temperature"
+    assert floors.hass.states.get(floors.climate("floor_1")).state == STATE_UNAVAILABLE
