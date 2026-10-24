@@ -254,6 +254,8 @@ def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
 
     class _Registry:
+        entities: list = []  # noqa: RUF012
+
         def mock(self, domain: str, unique_id: str) -> str:
             return f"{domain}.{unique_id}"
 

@@ -206,6 +206,12 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         },
     )
     entry_id = result["result"]["entry_id"]
+    # Three attempts (minutes): a dead switch is deferred quickly on the stand
+    await ha.flow(
+        "options/flow",
+        entry_id,
+        {"attempts": 3, "tolerance_seconds": 60, "hysteresis_seconds": 60},
+    )
     for name, thermometer, socket in THERMOSTATS:
         await ha.flow(
             "subentries/flow",

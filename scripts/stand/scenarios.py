@@ -2,17 +2,23 @@
 
 # A command-line script: it prints its progress. The stand dashboard and
 # scripts are for the owner, in Ukrainian.
-# ruff: noqa: T201
+# ruff: noqa: T201, RUF001
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
 from custom_components.bestiarium_devices.const import LOAD_PRIORITY_ALWAYS_ON
-from custom_components.bestiarium_mock.const import MOCK_DEVICES, FaultProfile
+from custom_components.bestiarium_mock.const import (
+    MOCK_DEVICES,
+    MOCK_GRID,
+    MOCK_THERMOMETERS,
+    FaultProfile,
+    ReadingProfile,
+)
 
 from .ha import StandError
-from .layout import MODE, RED_W, SCRIPT_PREFIX, STAND_DEVICES, YELLOW_W
+from .layout import CLIMATE, MODE, RED_W, SCRIPT_PREFIX, STAND_DEVICES, YELLOW_W
 
 if TYPE_CHECKING:
     from .ha import HomeAssistant, Registry
@@ -70,7 +76,42 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
     def wait(seconds: int) -> dict[str, Any]:
         return {"delay": {"seconds": seconds}}
 
+    thermostats = [
+        e["entity_id"]
+        for e in reg.entities
+        if e["platform"] == CLIMATE and e["entity_id"].startswith("climate.")
+    ]
+
+    def heat(hvac_mode: str) -> list[dict[str, Any]]:
+        """Every stand thermostat heats to 25 °C (above the thermometers), or off."""
+        steps: list[dict[str, Any]] = [
+            {
+                "action": "climate.set_hvac_mode",
+                "target": {"entity_id": thermostats},
+                "data": {"hvac_mode": hvac_mode},
+            }
+        ]
+        if hvac_mode == "heat":
+            steps.append(
+                {
+                    "action": "climate.set_temperature",
+                    "target": {"entity_id": thermostats},
+                    "data": {"temperature": 25},
+                }
+            )
+        return steps
+
+    def reading(device: str, reading_profile: ReadingProfile) -> dict[str, Any]:
+        return {
+            "action": "select.select_option",
+            "target": {
+                "entity_id": reg.mock("select", f"mock_{device}_reading_profile")
+            },
+            "data": {"option": reading_profile.value},
+        }
+
     reset = {"action": f"script.{SCRIPT_PREFIX}reset"}
+    readings = [*(spec.device_id for spec in MOCK_THERMOMETERS), MOCK_GRID.device_id]
     all_sockets = [spec.device_id for spec in MOCK_DEVICES]
     # The balancer keeps 'always on' devices on, so the reset leaves them on
     always_on = [
@@ -84,6 +125,8 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:restore",
             "sequence": [
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
+                *(reading(device, ReadingProfile.RELIABLE) for device in readings),
+                *heat("off"),
                 mode("Grid on"),
                 cooker(400),
                 turn("turn_off", *(s for s in all_sockets if s not in always_on)),
@@ -180,6 +223,40 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 turn("turn_on", "tuya_socket", "night_light", "boiler"),
                 wait(3),
                 grid_at(RED_W, 200),
+            ],
+        },
+        "thermostats_dead_switch": {
+            "alias": "Стенд: термостати — мертвий вимикач у ротації",
+            "icon": "mdi:radiator-off",
+            "sequence": [
+                reset,
+                profile("floor_heating_1", FaultProfile.UNRESPONSIVE),
+                *heat("heat"),
+            ],
+        },
+        "thermostats_no_temperature": {
+            "alias": "Стенд: термостати — немає температури",
+            "icon": "mdi:thermometer-off",
+            "sequence": [
+                reset,
+                *heat("heat"),
+                wait(90),
+                reading("thermo_2", ReadingProfile.NO_DATA),
+            ],
+        },
+        "grid_no_data": {
+            "alias": "Стенд: мережа без даних",
+            "icon": "mdi:transmission-tower-off",
+            "sequence": [reset, reading("grid", ReadingProfile.NO_DATA)],
+        },
+        "mode_after_restart": {
+            "alias": "Стенд: режим після перезапуску — підготовка",
+            "icon": "mdi:restart",
+            "sequence": [
+                reset,
+                mode("Night"),
+                wait(3),
+                turn("turn_on", "tuya_socket"),
             ],
         },
         "unstable_tuya": {
