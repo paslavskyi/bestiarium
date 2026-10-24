@@ -12,6 +12,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigSubentryData
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -28,12 +29,14 @@ from custom_components.bestiarium_climate.const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
 )
+from custom_components.bestiarium_climate.repairs import InvalidActionRepairFlow
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 SWITCH = "switch.floor"
 POWER = "sensor.floor_power"
 DELAY = 10
+TOLERANCE = 60
 
 Setup = Callable[..., Awaitable[ConfigEntry]]
 
@@ -50,6 +53,7 @@ def _switch(**data: Any) -> ConfigSubentryData:
             "min_power": 50.0,
             "power_hysteresis_percent": 20,
             "power_delay_seconds": DELAY,
+            "power_tolerance_seconds": TOLERANCE,
             "heating_action": [{"action": "test.valve"}, {"action": "test.heat"}],
             "cooling_action": [{"action": "test.cool"}],
             "off_action": [{"action": "test.off"}],
@@ -242,14 +246,17 @@ async def test_a_short_glitch_is_not_shown(hass: HomeAssistant, setup: Setup) ->
     assert _state(hass) == STATE_ON
 
 
-async def test_no_power_data_after_the_delay(hass: HomeAssistant, setup: Setup) -> None:
-    """Power data gone: unavailable after the delay; back: at once."""
+async def test_no_power_data_after_the_tolerance(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """Power data gone: unavailable after the tolerance (60 s), not the delay; back at once."""
     await setup(_switch(), power="100")
 
     hass.states.async_set(POWER, STATE_UNAVAILABLE)
+    _later(hass, DELAY + 1)
     await hass.async_block_till_done()
     assert _state(hass) == STATE_ON
-    _later(hass, DELAY + 1)
+    _later(hass, TOLERANCE + 1)
     await hass.async_block_till_done()
     assert _state(hass) == STATE_UNAVAILABLE
 
@@ -266,3 +273,94 @@ async def test_migration_removes_the_switch_mode(setup: Setup) -> None:
     assert entry.minor_version == 2
     assert "mode" not in subentry.data
     assert subentry.data["min_power"] == 50.0
+
+
+async def test_a_failing_sequence_fails_the_command(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """Whatever breaks in the sequence comes out as a HomeAssistantError."""
+
+    def boom(_call: ServiceCall) -> None:
+        msg = "broken"
+        raise ValueError(msg)
+
+    hass.services.async_register("test", "boom", boom)
+    await setup(_switch(heating_action=[{"action": "test.boom"}]))
+
+    with pytest.raises(HomeAssistantError) as err:
+        await _turn(hass, "turn_on")
+
+    assert err.value.translation_key == "action_failed"
+
+
+async def test_an_invalid_saved_action_is_a_repair(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """The bad switch is left out with a fixable issue; its fix saves the actions."""
+    entry = await setup(_switch(heating_action=[{"nonsense": 1}]))
+
+    assert hass.states.get(SWITCH) is None
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_switch_01")
+    assert issue is not None
+    assert issue.is_fixable
+
+    flow = InvalidActionRepairFlow(issue.data)
+    flow.hass = hass
+    result = await flow.async_step_init(
+        {
+            "heating_action": [{"action": "test.heat"}],
+            "off_action": [{"action": "test.off"}],
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert result["type"] == "create_entry"
+    assert entry.subentries["switch_01"].data["heating_action"] == [
+        {"action": "test.heat"}
+    ]
+    assert hass.states.get(SWITCH) is not None
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_switch_01") is None
+    )
+
+
+async def test_a_shared_switch_is_a_repair(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """Two thermostats on one switch (an old setting): Repairs, the switch idle."""
+    await setup(
+        _switch(),
+        _thermostat("Heater", ClimateMode.HEATING),
+        _thermostat("Second", ClimateMode.HEATING),
+    )
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"switch_shared_{SWITCH}")
+    with pytest.raises(HomeAssistantError):
+        await _turn(hass, "turn_on")
+    assert services["heat"] == []
+
+
+async def test_a_cooling_switch_that_now_heats_is_a_repair(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """1.2: cooling, a heating action, no thermostat: no silent change."""
+    await setup(_switch(mode=ClimateMode.COOLING), minor_version=1)
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "switch_now_heats_switch_01")
+
+
+async def test_the_options_do_not_reload_the_entry(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """The control settings are read on use: changing them reloads nothing."""
+    entry = await setup(_switch())
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"attempts": 3, "tolerance_seconds": 30, "hysteresis_seconds": 30},
+    )
+    await hass.async_block_till_done()
+
+    assert hass.data[DOMAIN][entry.entry_id] is coordinator

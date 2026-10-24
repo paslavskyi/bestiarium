@@ -4,7 +4,11 @@
 
 import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.core import HomeAssistant, State
+from pytest_homeassistant_custom_component.common import (
+    mock_restore_cache_with_extra_data,
+)
 
 from custom_components.bestiarium_climate.const import DOMAIN
 
@@ -194,3 +198,24 @@ async def test_target_before_a_preset_survives_a_restart(
     )
 
     assert hass.states.get(entity_id).attributes["temperature"] == 22
+
+
+async def test_mode_and_target_survive_a_restart_without_temperature(
+    hass: HomeAssistant, climate_entry_with_thermostat
+) -> None:
+    """Unavailable at shutdown (no temperature): heat and 23 °C come back."""
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("climate.room_thermostat", STATE_UNAVAILABLE),
+                {"hvac_mode": "heat", "temperature": 23.0, "preset_mode": None},
+            )
+        ],
+    )
+    await hass.config_entries.async_setup(climate_entry_with_thermostat.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("climate.room_thermostat")
+    assert state.state == "heat"
+    assert state.attributes["temperature"] == 23.0

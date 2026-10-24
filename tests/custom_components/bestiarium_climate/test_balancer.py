@@ -8,8 +8,9 @@ switch never stops the others; nothing is repeated every minute.
 
 # ruff: noqa: S101
 
+import asyncio
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +19,7 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -33,11 +35,20 @@ from custom_components.bestiarium_climate.const import (
     ClimateMode,
 )
 
+from custom_components.bestiarium_climate.control import (
+    ThermostatControl,
+    ThermostatMemory,
+)
+
 from .conftest import _make_subentry
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 MINUTE = 60
+ZONES = ("green", "yellow", "red", "overload")
 FLOORS = ("floor_1", "floor_2", "floor_3")
 
 
@@ -53,12 +64,24 @@ class Floors:
         self.stuck: set[str] = set()
         self.refusing: set[str] = set()
         self.events: list[str] = []
+        # What a switch does before it takes a command (a slow one, a sequence)
+        self.before: dict[str, Callable[[], Awaitable[None]]] = {}
 
-    async def setup(self, capacity: int = 2) -> None:
+    async def setup(self, capacity: int = 2, *, zones: bool = False) -> None:
         """Set up the entry: three thermostats heating to 21 °C."""
         for floor in FLOORS:
             self.hass.states.async_set(f"switch.{floor}", STATE_OFF)
             self.hass.states.async_set(f"sensor.{floor}_temperature", "18")
+        if zones:
+            registry = er.async_get(self.hass)
+            for zone in ZONES:
+                registry.async_get_or_create(
+                    "binary_sensor",
+                    "bestiarium_mode",
+                    f"power_load_{zone}",
+                    suggested_object_id=f"power_load_{zone}",
+                )
+            self.zone("green")
         self.entry = MockConfigEntry(
             domain=DOMAIN,
             minor_version=2,
@@ -105,6 +128,14 @@ class Floors:
                 blocking=True,
             )
         await self.hass.async_block_till_done()
+
+    def zone(self, zone: str) -> None:
+        """Show a load zone on the four zone sensors ("pause": all off)."""
+        for sensor in ZONES:
+            state = STATE_ON if sensor == zone else STATE_OFF
+            if zone == "no_data":
+                state = STATE_UNAVAILABLE
+            self.hass.states.async_set(f"binary_sensor.power_load_{sensor}", state)
 
     def entity_id(self, domain: str, unique_id: str) -> str:
         """Return an entity_id of the integration."""
@@ -158,6 +189,8 @@ def floors(hass: HomeAssistant, freezer: FrozenDateTimeFactory) -> Any:
         floor = entity_id.removeprefix("switch.")
         if domain == "switch" and floor in FLOORS:
             home.calls.append((service, floor))
+            if before := home.before.get(floor):
+                await before()
             if floor in home.refusing:
                 msg = "refused"
                 raise HomeAssistantError(msg)
@@ -383,3 +416,176 @@ async def test_a_confirmed_problem_frees_the_place_at_once(floors: Floors) -> No
 
     assert first not in floors.on()
     assert len(floors.on()) == 2
+
+
+async def _temperatures(floors: Floors, **temperatures: str) -> None:
+    for floor, value in temperatures.items():
+        floors.hass.states.async_set(f"sensor.{floor}_temperature", value)
+    await floors.hass.async_block_till_done()
+
+
+async def _hvac(floors: Floors, floor: str, hvac_mode: str) -> None:
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate(floor), "hvac_mode": hvac_mode},
+        blocking=True,
+    )
+    await floors.hass.async_block_till_done()
+
+
+async def test_yellow_keeps_the_heating_and_starts_none(floors: Floors) -> None:
+    """Yellow: the two heating go on heating; a freed place is not given."""
+    await floors.setup(zones=True)
+    assert floors.on() == {"floor_1", "floor_2"}
+
+    floors.zone("yellow")
+    await floors.tick(MINUTE)
+    assert floors.on() == {"floor_1", "floor_2"}
+
+    await _temperatures(floors, floor_1="22")
+    await floors.tick(MINUTE)
+    assert floors.on() == {"floor_2"}
+
+    floors.zone("green")
+    await floors.tick(MINUTE)
+    assert floors.on() == {"floor_2", "floor_3"}
+
+
+async def test_yellow_rotates_out_without_starting(floors: Floors) -> None:
+    """Yellow: after the minimum working time one goes out; the next waits."""
+    await floors.setup(zones=True)
+    floors.zone("yellow")
+
+    await floors.tick(11 * MINUTE)
+
+    assert len(floors.on()) == 1
+    assert "floor_3" not in floors.on()
+
+
+async def test_pause_no_data_and_overload_start_nothing(floors: Floors) -> None:
+    """The pause, no data and the overload: nothing starts, the heating goes on."""
+    await floors.setup(zones=True)
+    for zone in ("pause", "no_data", "overload"):
+        floors.zone(zone)
+        await _hvac(floors, "floor_1", "off")
+        await floors.tick(MINUTE)
+        assert floors.on() == {"floor_2"}, zone
+        await _hvac(floors, "floor_1", "heat")
+        await floors.tick(MINUTE)
+        assert floors.on() == {"floor_2"}, zone
+
+    floors.zone("green")
+    await floors.tick(MINUTE)
+    assert len(floors.on()) == 2
+
+
+async def test_red_turns_off_one_by_one(floors: Floors) -> None:
+    """Red: every 5 s one goes off, the room that needs it least first."""
+    await floors.setup(capacity=3, zones=True)
+    await _temperatures(floors, floor_1="20", floor_2="19", floor_3="18")
+    assert floors.on() == set(FLOORS)
+
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    assert floors.on() == {"floor_2", "floor_3"}
+    await floors.tick(5, step=5)
+    assert floors.on() == {"floor_3"}
+    await floors.tick(5, step=5)
+    assert floors.on() == set()
+
+
+async def test_load_protection_off_is_no_failed_attempt(floors: Floors) -> None:
+    """A switch the devices' protection turned off is not turned on in red."""
+    await floors.setup(zones=True)
+    floors.zone("red")
+    floors.hass.states.async_set("switch.floor_2", STATE_OFF)
+    calls = len(floors.calls)
+
+    await floors.tick(10 * MINUTE)
+
+    assert ("turn_on", "floor_2") not in floors.calls[calls:]
+    assert floors.state("floor_2") == "normal"
+
+
+async def test_a_switch_sequence_may_call_the_thermostat(floors: Floors) -> None:
+    """A switch whose command calls a climate service does not lock the balancer."""
+
+    async def set_temperature() -> None:
+        await floors.hass.services.async_call(
+            "climate",
+            "set_temperature",
+            {"entity_id": floors.climate("floor_1"), "temperature": 22},
+            blocking=True,
+        )
+
+    floors.before["floor_1"] = set_temperature
+    await floors.setup()
+    await floors.tick(MINUTE)
+
+    assert "floor_1" in floors.on()
+
+
+async def test_a_slow_switch_does_not_hold_the_others(floors: Floors) -> None:
+    """The switches get their commands at once, not one after another."""
+    released, commanded = asyncio.Event(), asyncio.Event()
+
+    async def slow() -> None:
+        await released.wait()
+
+    async def quick() -> None:
+        commanded.set()
+
+    floors.before.update(floor_1=slow, floor_2=quick)
+    setup = floors.hass.async_create_task(floors.setup())
+    await commanded.wait()
+
+    assert ("turn_on", "floor_1") in floors.calls
+    released.set()
+    await setup
+    assert floors.on() == {"floor_1", "floor_2"}
+
+
+async def test_a_restored_deferral_warns_once(
+    floors: Floors, hass_storage: dict, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A deferral kept across a restart is no new problem: no second warning."""
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "data": {
+            "floor_1": {
+                "expected_on": False,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "tries": 0,
+                "deferred_until": (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
+            }
+        },
+    }
+    await floors.setup()
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert "control state" not in caplog.text
+
+
+async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> None:
+    """The first command after a start is no new decision: the kept tries go on."""
+    memory = ThermostatMemory(hass)
+    memory.update(
+        "floor_1",
+        expected_on=True,
+        expected_changed_at=dt_util.utcnow().isoformat(),
+        tries=2,
+        deferred_until=None,
+    )
+    entry = MockConfigEntry(domain=DOMAIN, minor_version=2, data={})
+    subentry = _make_subentry(
+        "floor_1",
+        SUBENTRY_TYPE_THERMOSTAT,
+        "Floor_1",
+        {"temperature_sensor": "sensor.t", "target_switch": "switch.floor_1"},
+    )
+    hass.states.async_set("switch.floor_1", STATE_OFF)
+    control = ThermostatControl(hass, entry, subentry, memory)
+
+    assert control.to_command(dt_util.utcnow()) is True
+    assert control.attributes["failed_attempts"] == 3

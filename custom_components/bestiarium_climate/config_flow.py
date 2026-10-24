@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.config_entries import (
@@ -39,6 +39,7 @@ from .const import (
     CONF_POWER_DELAY,
     CONF_POWER_ENTITY,
     CONF_POWER_HYSTERESIS,
+    CONF_POWER_TOLERANCE,
     CONF_PRESETS,
     CONF_RECOVERY_TIMEOUT,
     CONF_SWITCH_NAME,
@@ -49,6 +50,7 @@ from .const import (
     DEFAULT_CAPACITY,
     DEFAULT_POWER_DELAY_SECONDS,
     DEFAULT_POWER_HYSTERESIS_PERCENT,
+    DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_TOLERANCE,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
@@ -65,8 +67,13 @@ from .switch import (
     ACTION_OF_MODE,
     ACTIONS,
     async_validate_actions,
-    thermostat_modes,
+    thermostats_of,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from homeassistant.core import HomeAssistant
 
 
 def _timedelta_to_dict(td: dict[str, int] | None) -> dict[str, int]:
@@ -87,6 +94,41 @@ def _dict_to_timedelta(data: dict[str, int]) -> dict[str, int]:
         "minutes": data.get("minutes", 0),
         "seconds": data.get("seconds", 0),
     }
+
+
+def actions_schema(saved: Mapping[str, Any]) -> dict[vol.Marker, Any]:
+    """
+    Return the action fields of a virtual switch.
+
+    Heating and cooling are suggested, not defaults: one cleared in the form goes.
+    """
+    return {
+        **{
+            vol.Optional(
+                key, description={"suggested_value": saved.get(key)}
+            ): selector.ActionSelector()
+            for key in (CONF_HEATING_ACTION, CONF_COOLING_ACTION)
+        },
+        vol.Required(CONF_OFF_ACTION, default=saved.get(CONF_OFF_ACTION)): (
+            selector.ActionSelector()
+        ),
+    }
+
+
+async def async_action_errors(
+    hass: HomeAssistant, user_input: dict[str, Any]
+) -> dict[str, str]:
+    """Return the errors of the actions: heating or cooling, each valid as a script."""
+    errors: dict[str, str] = {}
+    if not (user_input.get(CONF_HEATING_ACTION) or user_input.get(CONF_COOLING_ACTION)):
+        errors["base"] = "heating_or_cooling_required"
+    for key in ACTIONS:
+        if user_input.get(key):
+            try:
+                await async_validate_actions(hass, user_input[key])
+            except (vol.Invalid, HomeAssistantError):
+                errors[key] = "invalid_action"
+    return errors
 
 
 class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
@@ -234,7 +276,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
 class SwitchSubentryFlowHandler(ConfigSubentryFlow):
     """Subentry flow for virtual switch."""
 
-    async def async_step_user(  # noqa: PLR0912
+    async def async_step_user(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> SubentryFlowResult:
@@ -247,19 +289,9 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             if not name:
                 errors[CONF_SWITCH_NAME] = "name_required"
 
-            if not (
-                user_input.get(CONF_HEATING_ACTION)
-                or user_input.get(CONF_COOLING_ACTION)
-            ):
-                errors["base"] = "heating_or_cooling_required"
+            errors.update(await async_action_errors(self.hass, user_input))
             if subentry:
                 errors.update(self._actions_needed(subentry, user_input))
-            for key in ACTIONS:
-                if user_input.get(key):
-                    try:
-                        await async_validate_actions(self.hass, user_input[key])
-                    except (vol.Invalid, HomeAssistantError):
-                        errors[key] = "invalid_action"
 
             if not user_input.get(CONF_OFF_ACTION):
                 errors[CONF_OFF_ACTION] = "required"
@@ -283,6 +315,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
                     CONF_POWER_HYSTERESIS: int(user_input[CONF_POWER_HYSTERESIS]),
                     CONF_POWER_DELAY: int(user_input[CONF_POWER_DELAY]),
+                    CONF_POWER_TOLERANCE: int(user_input[CONF_POWER_TOLERANCE]),
                 }
                 for key in ACTIONS:
                     if user_input.get(key):
@@ -299,13 +332,6 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         saved = subentry.data if subentry else {}
-        # Suggested, not default: an action cleared in the form goes
-        actions = {
-            vol.Optional(
-                key, description={"suggested_value": saved.get(key)}
-            ): selector.ActionSelector()
-            for key in (CONF_HEATING_ACTION, CONF_COOLING_ACTION)
-        }
         schema_dict: dict[vol.Marker, Any] = {
             vol.Required(
                 CONF_SWITCH_NAME,
@@ -333,6 +359,16 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                 ),
             ),
             vol.Required(
+                CONF_POWER_TOLERANCE,
+                default=saved.get(
+                    CONF_POWER_TOLERANCE, DEFAULT_POWER_TOLERANCE_SECONDS
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
+            ),
+            vol.Required(
                 CONF_POWER_HYSTERESIS,
                 default=saved.get(
                     CONF_POWER_HYSTERESIS, DEFAULT_POWER_HYSTERESIS_PERCENT
@@ -350,10 +386,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
                 ),
             ),
-            **actions,
-            vol.Required(CONF_OFF_ACTION, default=saved.get(CONF_OFF_ACTION)): (
-                selector.ActionSelector()
-            ),
+            **actions_schema(saved),
         }
 
         return self.async_show_form(
@@ -373,7 +406,10 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             return {}
         return {
             ACTION_OF_MODE[mode]: "needed_by_thermostat"
-            for mode in thermostat_modes(self.hass, switch)
+            for mode in {
+                ClimateMode(t.data.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
+                for t in thermostats_of(self.hass, switch)
+            }
             if not user_input.get(ACTION_OF_MODE[mode])
         }
 
@@ -400,15 +436,16 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
 
     def _switch_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
         """
-        Return an error if the switch cannot serve this thermostat's mode.
+        Return an error if the switch cannot serve this thermostat.
 
-        A switch serves one mode; a virtual switch needs the mode's action.
+        One switch, one thermostat (any switch); a virtual switch needs the
+        action of the thermostat's mode.
         """
         switch = user_input[CONF_TARGET_SWITCH]
         mode = ClimateMode(user_input.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
         besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
-        if thermostat_modes(self.hass, switch, besides=besides) - {mode}:
-            return {CONF_THERMOSTAT_MODE: "switch_serves_other_mode"}
+        if thermostats_of(self.hass, switch, besides=besides):
+            return {CONF_TARGET_SWITCH: "switch_taken"}
         entity = er.async_get(self.hass).async_get(switch)
         if entity is None or entity.platform != DOMAIN:
             return {}

@@ -34,8 +34,10 @@ CONF_POWER_ENTITY = "power_entity"
 CONF_MIN_POWER = "min_power"
 CONF_POWER_HYSTERESIS = "power_hysteresis_percent"
 CONF_POWER_DELAY = "power_delay_seconds"
+CONF_POWER_TOLERANCE = "power_tolerance_seconds"
 DEFAULT_POWER_HYSTERESIS_PERCENT = 20
 DEFAULT_POWER_DELAY_SECONDS = 10
+DEFAULT_POWER_TOLERANCE_SECONDS = 60
 
 # Config keys — thermostat subentry
 CONF_THERMOSTAT_NAME = "name"
@@ -98,6 +100,31 @@ class ControlSettings:
                 if f.name in entry.options
             }
         )
+
+
+# The load zones are read from the four zone sensors of Bestiarium Mode, found
+# by unique_id: the whole contract between the two integrations
+ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
+# In the red zone one heater goes off every 5 s, as the red strategy of devices
+RED_STEP_SECONDS = 5
+ISSUE_SWITCH_SHARED = "switch_shared"
+ISSUE_INVALID_ACTION = "invalid_action"
+ISSUE_SWITCH_NOW_HEATS = "switch_now_heats"
+
+
+class Zone(StrEnum):
+    """The load zone the climate follows; NONE: no load limits configured."""
+
+    GREEN = "green"
+    YELLOW = "yellow"
+    RED = "red"
+    OVERLOAD = "overload"
+    PAUSE = "pause"
+    NO_DATA = "no_data"
+    NONE = "none"
+
+
+SENSOR_ZONES = (Zone.OVERLOAD, Zone.RED, Zone.YELLOW, Zone.GREEN)
 
 
 class ControlState(StrEnum):

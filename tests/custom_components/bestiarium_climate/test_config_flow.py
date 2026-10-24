@@ -240,10 +240,10 @@ async def test_thermostat_needs_the_action_of_its_mode(
     assert result["errors"] == {"target_switch": "switch_has_no_action"}
 
 
-async def test_one_switch_serves_one_mode(
+async def test_one_switch_one_thermostat(
     hass: HomeAssistant, climate_entry: MockConfigEntry
 ) -> None:
-    """A second thermostat of the other mode on the same switch is refused."""
+    """A second thermostat on a switch already taken is refused, any mode."""
     hass.states.async_set("switch.room_heat", "off")
     await _add(hass, climate_entry, SUBENTRY_TYPE_THERMOSTAT, THERMOSTAT_INPUT, {})
 
@@ -251,14 +251,10 @@ async def test_one_switch_serves_one_mode(
         hass,
         climate_entry,
         SUBENTRY_TYPE_THERMOSTAT,
-        {
-            **THERMOSTAT_INPUT,
-            "name": "Second",
-            "thermostat_mode": ClimateMode.COOLING,
-        },
+        {**THERMOSTAT_INPUT, "name": "Second"},
     )
 
-    assert result["errors"] == {"thermostat_mode": "switch_serves_other_mode"}
+    assert result["errors"] == {"target_switch": "switch_taken"}
 
 
 async def test_switch_keeps_the_action_its_thermostat_needs(

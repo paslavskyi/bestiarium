@@ -21,7 +21,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from .const import (
     CONF_COLD_TOLERANCE,
@@ -74,7 +74,7 @@ async def async_setup_entry(
 
 
 class VirtualThermostat(ClimateEntity, RestoreEntity):
-    """Virtual thermostat with hysteresis; sets expected_switch_state only."""
+    """Virtual thermostat with hysteresis; the balancer controls its switch."""
 
     _attr_has_entity_name = True
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
@@ -239,14 +239,14 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         with contextlib.suppress(AttributeError, TypeError, ValueError):
             self._cur_temp = float(new_state.state)
         if self._write_state_and_should_rebalance():
-            self._hass.async_create_task(self._trigger_rebalance())
+            self._request_balance()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set HVAC mode (heat/cool/off)."""
         self._attr_hvac_mode = hvac_mode
         self._update_hvac_action()
         self.async_write_ha_state()
-        await self._trigger_rebalance()
+        self._request_balance()
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set target temperature."""
@@ -255,7 +255,7 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             if self._attr_preset_mode:
                 self._save_target_temp(self._target_temp)
         if self._write_state_and_should_rebalance():
-            await self._trigger_rebalance()
+            self._request_balance()
 
     async def async_set_preset_mode(self, preset_mode: str | None) -> None:
         """Set preset mode; target temp comes from preset or saved value."""
@@ -264,7 +264,7 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             if self._saved_target_temp is not None:
                 self._target_temp = self._saved_target_temp
             if self._write_state_and_should_rebalance():
-                await self._trigger_rebalance()
+                self._request_balance()
             return
         if preset_mode not in (self._preset_temps or {}):
             return
@@ -274,18 +274,40 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             self._save_target_temp(self._target_temp)
             self._target_temp = preset_temp
         if self._write_state_and_should_rebalance():
-            await self._trigger_rebalance()
+            self._request_balance()
 
-    def _restore_from_last_state(self, last_state: Any) -> None:
-        """Restore entity state from RestoreEntity last state."""
-        if last_state.state in (HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF):
-            self._attr_hvac_mode = last_state.state
-        attrs = last_state.attributes or {}
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        """Keep the mode, the target and the preset, also while unavailable."""
+        return RestoredExtraData(
+            {
+                "hvac_mode": self._attr_hvac_mode,
+                "temperature": self._target_temp,
+                "preset_mode": self._attr_preset_mode,
+            }
+        )
+
+    async def _async_restore(self) -> None:
+        """
+        Restore the mode, the target and the preset.
+
+        An unavailable state has no attributes (a thermostat without
+        temperature at shutdown), so they are kept as extra data; a state
+        saved before DEV-008 stage B has only the attributes.
+        """
+        if extra := await self.async_get_last_extra_data():
+            kept = extra.as_dict()
+        elif last_state := await self.async_get_last_state():
+            kept = {"hvac_mode": last_state.state, **last_state.attributes}
+        else:
+            kept = {}
+        if kept.get("hvac_mode") in (HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF):
+            self._attr_hvac_mode = HVACMode(kept["hvac_mode"])
         with contextlib.suppress(TypeError, ValueError):
-            if "temperature" in attrs:
-                self._target_temp = float(attrs["temperature"])
-        if attrs.get("preset_mode"):
-            self._attr_preset_mode = attrs["preset_mode"]
+            if kept.get("temperature") is not None:
+                self._target_temp = float(kept["temperature"])
+        if kept.get("preset_mode"):
+            self._attr_preset_mode = kept["preset_mode"]
         self._saved_target_temp = self._memory.get(self.subentry_id).get(
             "saved_temperature"
         )
@@ -318,17 +340,15 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             self._async_temp_changed,
         )
 
-    async def _trigger_rebalance(self) -> None:
-        """Ask the balancer to run an immediate cycle."""
-        await self._hass.data[DOMAIN][self._entry.entry_id].async_balance()
+    def _request_balance(self) -> None:
+        """Ask the balancer for a cycle at once; it does not wait for it."""
+        self._hass.data[DOMAIN][self._entry.entry_id].async_request_balance()
 
     async def async_added_to_hass(self) -> None:
         """Restore state and subscribe to temperature sensor."""
         await super().async_added_to_hass()
 
-        last_state = await self.async_get_last_state()
-        if last_state:
-            self._restore_from_last_state(last_state)
+        await self._async_restore()
         self._apply_default_target_temp()
         self._subscribe_temperature()
         self._update_hvac_action()

@@ -70,7 +70,7 @@ class CapacityNumber(NumberEntity, RestoreEntity):
         """Set the capacity and share it again at once."""
         self._attr_native_value = value
         self.async_write_ha_state()
-        await self._hass.data[DOMAIN][self._entry.entry_id].async_balance()
+        self._hass.data[DOMAIN][self._entry.entry_id].async_request_balance()
 
     async def async_added_to_hass(self) -> None:
         """Restore state when added to hass; fallback to config entry."""

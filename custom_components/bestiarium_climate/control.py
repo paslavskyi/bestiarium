@@ -165,7 +165,12 @@ class ThermostatControl:
             raw=self.deferred_until is not None,
             confirmed=self.deferred_until is not None,
         )
-        self.state = ControlState.NORMAL
+        # A restored deferral is no new problem: no second warning
+        self.state = (
+            ControlState.UNRESPONSIVE
+            if self.deferred_until is not None
+            else ControlState.NORMAL
+        )
         # When the switch got its last command: an attempt is one a cycle
         self._last_command: tuple[datetime, bool] | None = None
         self._watching = False
@@ -248,11 +253,11 @@ class ThermostatControl:
                 self._keep()
                 self._refresh(now)
             return None
-        if self._last_command and self._last_command[1] == wanted:
-            if now - self._last_command[0] < ATTEMPT_INTERVAL:
+        if self._last_command is not None:
+            if self._last_command[1] != wanted:
+                self._tries = 0
+            elif now - self._last_command[0] < ATTEMPT_INTERVAL:
                 return None
-        else:
-            self._tries = 0
         self._last_command = (now, wanted)
         if self._tries >= self.settings.attempts:
             self._defer(now)
