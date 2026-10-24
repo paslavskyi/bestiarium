@@ -212,7 +212,8 @@ the script fails if HA did not load them.
    it (the boiler's "Reconfigure" → another device).
 
 3. Replaces the stand's Bestiarium Climate entry (the one with the "Stand
-   floor" thermostats; others are kept) with one entry (capacity 2) and
+   floor" thermostats; others are kept) with one entry (capacity 2, control
+   settings: 3 attempts, so a dead switch is deferred in 3 minutes) and
    thermostats "Stand floor 1–3" on thermometers 1–3 and floor heating 1–3.
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
