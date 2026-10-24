@@ -142,3 +142,43 @@ async def test_another_mode_ends_the_failure(home: Home) -> None:
     commands = len(home.commands(HEATER))
     await home.tick(20 * MINUTE, step=MINUTE)
     assert len(home.commands(HEATER)) == commands
+
+
+async def test_reload_of_the_modes_is_no_change_of_mode(home: Home) -> None:
+    """Review 06, 1: the mode entry reloads; a device a person turned on stays on."""
+    await home.mode("1000")
+    await home.device(HEATER, 5000, on=True, priorities=OFF_IN_ALWAYS)
+    await _select(home, "Always")
+    home.set(HEATER, "on")
+    await home.tick(1)
+
+    mode_entry = home.hass.config_entries.async_entries(DOMAIN_BESTIARIUM_MODE)[0]
+    await home.hass.config_entries.async_reload(mode_entry.entry_id)
+    await home.tick(MINUTE, step=5)
+
+    assert home.relays.is_on(HEATER) is True
+    assert home.commands(HEATER) == ["turn_off"]
+
+
+async def test_red_turn_off_of_a_device_off_by_mode_is_the_mode_duty(
+    home: Home,
+) -> None:
+    """Review 06, 8: red opens the duty; it fails as the mode; repeats in green."""
+    await home.mode("1000")
+    heater = await home.device(HEATER, 5000, priorities=OFF_IN_ALWAYS)
+    await _select(home, "Always")
+    home.set(HEATER, "on")
+    home.relays.stuck.add(HEATER)
+    await home.tick(1)
+
+    home.load("4400")
+    await home.tick(MINUTE, step=5)
+    assert home.state(heater) == ControlState.MODE_OFF_FAILED
+    assert home.events[heater.entry_id] == ["mode_off_failed"]
+
+    home.load("1000")
+    await home.tick(16 * MINUTE, step=5)
+    commands = home.commands(HEATER)
+    assert len(commands) > 3  # noqa: PLR2004 - more than the first series
+    assert set(commands) == {"turn_off"}
+    assert home.state(heater) == ControlState.MODE_OFF_FAILED

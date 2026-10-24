@@ -182,6 +182,13 @@ def virtual_relay_schema(
     )
 
 
+def reset_power_memory_field() -> dict[vol.Marker, Any]:
+    """Return the "Reset the learned consumption" checkbox (an action, not stored)."""
+    return {
+        vol.Required(CONF_RESET_POWER_MEMORY, default=False): selector.BooleanSelector()
+    }
+
+
 class RelaySteps:
     """
     The steps that pick the device, relay and power sensor of a device entry.
@@ -191,7 +198,7 @@ class RelaySteps:
     """
 
     hass: HomeAssistant
-    _entry_id: str | None  # the entry being changed
+    _device_type: str | None
     _device_id: str | None
     _switch_entity_id: str | None
     _power_sensor_entity_id: str | None
@@ -241,9 +248,7 @@ class RelaySteps:
                     vol.Required(
                         CONF_DEVICE_ID, default=self._device_id
                     ): selector.DeviceSelector(selector.DeviceSelectorConfig()),
-                    vol.Required(
-                        CONF_RESET_POWER_MEMORY, default=False
-                    ): selector.BooleanSelector(),
+                    **reset_power_memory_field(),
                 }
             ),
             errors=errors,
@@ -315,18 +320,32 @@ class RelaySteps:
             errors=errors,
         )
 
-    async def _async_forget(
-        self, entry: config_entries.ConfigEntry, *, device_changed: bool
-    ) -> None:
+    def _relay_data(self) -> dict[str, Any]:
+        """Return what the steps picked, as entry data."""
+        data: dict[str, Any] = {
+            CONF_SWITCH_ENTITY_ID: self._switch_entity_id,
+            CONF_POWER_SENSOR_ENTITY_ID: self._power_sensor_entity_id,
+        }
+        if self._device_type == DEVICE_TYPE_EXTENDED:
+            data[CONF_DEVICE_ID] = self._device_id
+        return data
+
+    async def _async_forget(self, entry: config_entries.ConfigEntry) -> None:
         """
         Forget what no longer holds for the device.
 
-        The response time belongs to the connection, so another device starts
-        anew; the consumption only if the owner asked.
+        The response time belongs to the connection: another device (a
+        virtual one: another switch) starts anew. The consumption only if the
+        owner asked.
         """
+        key = (
+            CONF_DEVICE_ID
+            if self._device_type == DEVICE_TYPE_EXTENDED
+            else CONF_SWITCH_ENTITY_ID
+        )
         if self._reset_power_memory:
             (await async_get_power_memory(self.hass)).reset(entry.entry_id)
-        if device_changed:
+        if self._relay_data()[key] != entry.data.get(key):
             (await async_get_response_memory(self.hass)).remove(entry.entry_id)
 
 
@@ -356,7 +375,6 @@ class BestiariumDevicesFlowHandler(
     def __init__(self) -> None:
         """Initialize the config flow."""
         super().__init__()
-        self._entry_id: str | None = None
         self._reset_power_memory = False
         self._device_type: str | None = None
         self._device_id: str | None = None
@@ -427,6 +445,9 @@ class BestiariumDevicesFlowHandler(
                 self._device_name = device_name
                 self._switch_entity_id = switch_entity_id
                 self._power_sensor_entity_id = power_sensor_entity_id
+                self._reset_power_memory = user_input.get(
+                    CONF_RESET_POWER_MEMORY, False
+                )
                 return await self.async_step_configure_priorities()
 
         data_schema = vol.Schema(
@@ -443,6 +464,8 @@ class BestiariumDevicesFlowHandler(
                 self.hass, self._switch_entity_id, self._power_sensor_entity_id
             ).schema
         )
+        if self.source == SOURCE_RECONFIGURE:
+            data_schema = data_schema.extend(reset_power_memory_field())
 
         return self.async_show_form(
             step_id="create_virtual",
@@ -562,10 +585,7 @@ class BestiariumDevicesFlowHandler(
             # Create or update config entry
             if self.source == SOURCE_RECONFIGURE:
                 entry = self._get_reconfigure_entry()
-                await self._async_forget(
-                    entry,
-                    device_changed=self._device_id != entry.data.get(CONF_DEVICE_ID),
-                )
+                await self._async_forget(entry)
                 return self.async_update_reload_and_abort(
                     entry,
                     data_updates=self._build_config_entry_data(),
@@ -595,18 +615,14 @@ class BestiariumDevicesFlowHandler(
         """Build config entry data dictionary."""
         data: dict[str, Any] = {
             CONF_DEVICE_TYPE: self._device_type,
-            CONF_SWITCH_ENTITY_ID: self._switch_entity_id,
-            CONF_POWER_SENSOR_ENTITY_ID: self._power_sensor_entity_id,
+            **self._relay_data(),
             CONF_LOAD_PRIORITIES: self._load_priorities,
             CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
             CONF_OVERLOAD_FIRST_QUEUE: self._overload_first_queue,
             CONF_THERMOSTAT_DRIVEN: self._thermostat_driven,
         }
 
-        if self._device_type == DEVICE_TYPE_VIRTUAL:
-            data[CONF_DEVICE_NAME] = self._device_name
-        elif self._device_type == DEVICE_TYPE_EXTENDED:
-            data[CONF_DEVICE_ID] = self._device_id
+        if self._device_type in (DEVICE_TYPE_VIRTUAL, DEVICE_TYPE_EXTENDED):
             data[CONF_DEVICE_NAME] = self._device_name
 
         return data
@@ -637,7 +653,6 @@ class BestiariumDevicesFlowHandler(
             return await self.async_step_create_virtual()
 
         # Extended device: its device first, it may be another one
-        self._entry_id = entry.entry_id
         return await self.async_step_pick_device()
 
     async def _async_relay_chosen(self) -> config_entries.ConfigFlowResult:
@@ -665,9 +680,7 @@ def _control_schema(settings: ControlSettings, estimated_power: int) -> vol.Sche
                 mode=selector.NumberSelectorMode.BOX,
             )
         ),
-        vol.Required(
-            CONF_RESET_POWER_MEMORY, default=False
-        ): selector.BooleanSelector(),
+        **reset_power_memory_field(),
     }
     advanced: dict[vol.Marker, Any] = {}
     for setting in fields(ControlSettings):

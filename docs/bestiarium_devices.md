@@ -248,7 +248,7 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 
 ### Reconfigure Flow
 
-- **Virtual devices**: routes to `create_virtual` form (can change name, switch, sensor)
+- **Virtual devices**: routes to `create_virtual` form (can change name, switch, sensor; "Reset the learned consumption"); another switch is another connection, so the response time is forgotten
 - **Extended devices**: `pick_device` first (default: the current device), then `select_entities` if the device has several switches or sensors, then `configure_priorities`
 
 **Re-pointing (DEV-008).** Picking another device moves the entry to it (SmartThings to Matter: the same appliance, a new device in HA). Only `device_id`, `switch_entity_id` and `power_sensor_entity_id` change in `entry.data`; priorities, "Allowed", the settings, the name and the learned consumption stay, because they belong to the entry, not to the device. The entities keep their `unique_id` and `entity_id` and move to the new device's page on the reload. The **response time is always forgotten** on another device (it belongs to the connection, cloud vs local); "Reset the learned consumption" (`reset_power_memory`, not stored) also empties the power memory. The checks are those of `extend_device` (`RelaySteps._use_device`): the device has a switch and a power sensor. `RelaySteps` (`pick_device`, `select_entities`) is shared with the Repairs fix flow.
@@ -349,7 +349,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 - Recalculates active zone via `_determine_active_zone()`
 - If zone changed: cancels old periodic job, handles new zone
 
-**Mode changes** (`_on_mode_changed`):
+**Mode changes** (`_on_mode_changed`), only when the select goes from one mode to another (a select that goes `unavailable` and comes back with a reload of the mode entry is no change):
 - `Strategies.async_apply_mode()` goes over the devices set up:
   - Priority `0` (OFF) → turns off the switch; a device that is **on** gets the mode's **duty**: its turn-off is repeated like any balancer command (`async_mode_duties`, every 5 s while a duty is open: waits for the answer, attempts, deferral, again) until it is off or the mode no longer says off
   - Priority `9999` (ALWAYS_ON) → turns on the switch
@@ -364,7 +364,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 - **Trigger**: Periodic, every 60 seconds
 - **Action**: Turn ON the **highest-priority OFF device that fits** (one device per cycle)
 - **Skips**: Devices already ON, devices with priority `0` (OFF), devices that do not fit (logged at debug: `X W + Y W (source) > Z W`)
-- **Sorting**: Candidates sorted by priority descending; the first one that fits is turned on, so a smaller, less important device can go before a large one
+- **Sorting**: Candidates sorted by priority descending; the first one that fits is turned on, so a smaller, less important device can go before a large one. Devices go in the order of their entries (`Strategies._devices`), so of two with the same priority the one added first wins, also after a reload
 - **ALWAYS_ON** (`9999`) candidates are turned on without the headroom check
 - **Device control**: a device that still waits for the answer to its last command, or is deferred, is not a candidate. The command is logged at info only on the first attempt of a series; repeats at debug
 
@@ -384,7 +384,7 @@ Checked only where the balancer turns a device on by itself: the green strategy 
 #### Red Strategy (`_execute_red_strategy`)
 
 - **Trigger**: Periodic, every 5 seconds. Also runs once immediately on entering red zone.
-- **First**: every ON device whose priority in the current mode is `0` (off by mode, someone turned it on) gets its turn-off **at once**, in the same step; the queue goes on at the next step
+- **First**: every ON device whose priority in the current mode is `0` (off by mode, someone turned it on) gets its turn-off **at once**, in the same step, and the mode's duty: it is repeated after the red zone too, and out of attempts it is "Does not turn off by mode"; the queue goes on at the next step
 - **Action**: Turn OFF the **lowest-priority ON device** (one device per cycle)
 - **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON), deferred devices
 - **Sorting**: Candidates sorted by priority ascending

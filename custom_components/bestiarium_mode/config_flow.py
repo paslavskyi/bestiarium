@@ -27,6 +27,15 @@ from .const import (
 )
 
 CONF_OPTIONS = "options"
+
+
+def power_sensor_selector() -> selector.EntitySelector:
+    """Return the selector of the zones' power sensor."""
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="sensor", device_class="power")
+    )
+
+
 CONF_NAME = "name"
 CONF_DESCRIPTION = "description"
 CONF_ICON = "icon"
@@ -233,12 +242,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                sensor_key: selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    ),
-                ),
+                sensor_key: power_sensor_selector(),
                 limit_key: selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=LOAD_LIMIT_MIN_W,

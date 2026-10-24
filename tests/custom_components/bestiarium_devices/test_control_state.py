@@ -486,3 +486,17 @@ async def test_device_appearing_after_start_is_no_dropout(
     ).attributes
     assert attributes["dropouts_last_hour"] == 0
     assert home.state(device) == ControlState.NORMAL
+
+
+async def test_reloaded_device_keeps_its_place_in_the_queue(home: Home) -> None:
+    """Review 06, 3: of two with the same priority the first added goes first."""
+    await home.mode("1000")
+    commode = await home.device(COMMODE, 5200)
+    await home.device(BEDSIDE, 5200)
+    await home.hass.config_entries.async_reload(commode.entry_id)
+    await home.hass.async_block_till_done()
+
+    await home.tick(MINUTE, step=MINUTE)
+
+    assert home.commands(COMMODE) == ["turn_on"]
+    assert home.commands(BEDSIDE) == []

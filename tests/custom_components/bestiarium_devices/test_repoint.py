@@ -32,6 +32,7 @@ from custom_components.bestiarium_devices.const import (
     CONF_SWITCH_ENTITY_ID,
     CONF_THERMOSTAT_DRIVEN,
     DEVICE_TYPE_EXTENDED,
+    DEVICE_TYPE_VIRTUAL,
     DOMAIN,
 )
 from custom_components.bestiarium_devices.consumption import SOURCE_RUN, PowerRecord
@@ -40,6 +41,7 @@ from custom_components.bestiarium_devices.power_memory import async_get_power_me
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
+POWER = {"device_class": "power", "unit_of_measurement": "W"}
 OPTIONS = {"allowed": False, CONF_ESTIMATED_POWER: 900, "attempts": 5}
 PRIORITIES = {CONF_DEFAULT_PRIORITY: 7000, "Eco": 1000}
 
@@ -219,3 +221,92 @@ async def test_device_without_a_relay_is_refused(
     )
     assert result["step_id"] == "pick_device"
     assert result["errors"] == {CONF_DEVICE_ID: "no_switch"}
+
+
+@pytest.fixture
+async def lamp(
+    hass: HomeAssistant,
+    bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
+) -> MockConfigEntry:
+    """Set up a virtual lamp with a learned response time and consumption."""
+    for switch in ("switch.lamp", "switch.lamp_matter"):
+        hass.states.async_set(switch, "off")
+    hass.states.async_set("sensor.lamp_power", "0", POWER)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Lamp",
+        minor_version=3,
+        data={
+            CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
+            CONF_DEVICE_NAME: "Lamp",
+            CONF_SWITCH_ENTITY_ID: "switch.lamp",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.lamp_power",
+            CONF_LOAD_PRIORITIES: PRIORITIES,
+            CONF_MODE_OPTIONS_SNAPSHOT: list(PRIORITIES),
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    memory = await async_get_power_memory(hass)
+    memory.add_run(
+        entry.entry_id,
+        PowerRecord(
+            start=dt_util.utcnow() - timedelta(hours=1),
+            duration_s=900,
+            power_w=60,
+            source=SOURCE_RUN,
+        ),
+    )
+    (await async_get_response_memory(hass)).add(entry.entry_id, 9.0)
+    yield entry
+    await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def _reconfigure_virtual(
+    hass: HomeAssistant, entry: MockConfigEntry, switch: str, *, reset: bool
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
+    )
+    assert result["step_id"] == "create_virtual"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Lamp",
+            CONF_SWITCH_ENTITY_ID: switch,
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.lamp_power",
+            CONF_RESET_POWER_MEMORY: reset,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEFAULT_PRIORITY: 7000,
+            CONF_OVERLOAD_FIRST_QUEUE: False,
+            CONF_THERMOSTAT_DRIVEN: False,
+        },
+    )
+    assert result["reason"] == "reconfigure_successful"
+    await hass.async_block_till_done()
+
+
+async def test_virtual_device_on_another_switch_forgets_the_response_time(
+    hass: HomeAssistant, lamp: MockConfigEntry
+) -> None:
+    """Review 06, 2: another switch is another connection, as in Repairs."""
+    await _reconfigure_virtual(hass, lamp, "switch.lamp_matter", reset=False)
+
+    assert lamp.data[CONF_SWITCH_ENTITY_ID] == "switch.lamp_matter"
+    assert (await async_get_response_memory(hass)).longest(lamp.entry_id) is None
+    assert len((await async_get_power_memory(hass)).records(lamp.entry_id)) == 1
+
+
+async def test_virtual_device_reset_and_same_switch(
+    hass: HomeAssistant, lamp: MockConfigEntry
+) -> None:
+    """Review 06, 2: the virtual form's checkbox; the same switch keeps the time."""
+    await _reconfigure_virtual(hass, lamp, "switch.lamp", reset=True)
+
+    assert (await async_get_response_memory(hass)).longest(lamp.entry_id) == 9.0
+    assert (await async_get_power_memory(hass)).records(lamp.entry_id) == []

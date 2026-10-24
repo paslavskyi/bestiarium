@@ -11,18 +11,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers import selector
 from homeassistant.helpers.event import (
     async_track_entity_registry_updated_event,
     async_track_state_change_event,
 )
 from homeassistant.helpers.start import async_at_started
 
-from .config_flow import RelaySteps, virtual_relay_schema
+from .config_flow import RelaySteps, reset_power_memory_field, virtual_relay_schema
 from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_TYPE,
@@ -130,7 +128,7 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
     def __init__(self, entry: ConfigEntry) -> None:
         """Fix the given device entry."""
         self._entry = entry
-        self._entry_id = entry.entry_id
+        self._device_type = entry.data[CONF_DEVICE_TYPE]
         self._device_id = entry.data.get(CONF_DEVICE_ID)
         self._switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
         self._power_sensor_entity_id = entry.data[CONF_POWER_SENSOR_ENTITY_ID]
@@ -142,7 +140,7 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
         _user_input: dict[str, Any] | None = None,  # the issue's data
     ) -> FlowResult:
         """Start with the device, or the relay of a virtual device."""
-        if self._entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_VIRTUAL:
+        if self._device_type == DEVICE_TYPE_VIRTUAL:
             return await self.async_step_virtual_relay()
         return await self.async_step_pick_device()
 
@@ -162,13 +160,7 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
                 return await self._async_relay_chosen()
         schema = virtual_relay_schema(
             self.hass, self._switch_entity_id, self._power_sensor_entity_id
-        ).extend(
-            {
-                vol.Required(
-                    CONF_RESET_POWER_MEMORY, default=False
-                ): selector.BooleanSelector()
-            }
-        )
+        ).extend(reset_power_memory_field())
         return self.async_show_form(
             step_id="virtual_relay", data_schema=schema, errors=errors
         )
@@ -176,18 +168,10 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
     async def _async_relay_chosen(self) -> FlowResult:
         """Store the relay, reload the entry; the issue goes with the check."""
         entry = self._entry
-        data = {
-            **entry.data,
-            CONF_SWITCH_ENTITY_ID: self._switch_entity_id,
-            CONF_POWER_SENSOR_ENTITY_ID: self._power_sensor_entity_id,
-        }
-        if entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_VIRTUAL:
-            changed = self._switch_entity_id != entry.data[CONF_SWITCH_ENTITY_ID]
-        else:
-            data[CONF_DEVICE_ID] = self._device_id
-            changed = self._device_id != entry.data.get(CONF_DEVICE_ID)
-        await self._async_forget(entry, device_changed=changed)
-        self.hass.config_entries.async_update_entry(entry, data=data)
+        await self._async_forget(entry)
+        self.hass.config_entries.async_update_entry(
+            entry, data={**entry.data, **self._relay_data()}
+        )
         self.hass.config_entries.async_schedule_reload(entry.entry_id)
         return self.async_create_entry(data={})
 

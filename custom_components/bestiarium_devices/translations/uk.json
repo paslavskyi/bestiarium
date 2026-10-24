@@ -15,12 +15,14 @@
         "data": {
           "device_name": "Назва пристрою",
           "switch_entity_id": "Сутність вимикача",
-          "power_sensor_entity_id": "Сенсор потужності"
+          "power_sensor_entity_id": "Сенсор потужності",
+          "reset_power_memory": "Скинути пам'ять споживання"
         },
         "data_description": {
           "device_name": "Назва для нового віртуального пристрою",
           "switch_entity_id": "Сутність вимикача для керування пристроєм",
-          "power_sensor_entity_id": "Сенсор потужності (має використовувати одиниці вимірювання Вт/W)"
+          "power_sensor_entity_id": "Сенсор потужності (має використовувати одиниці вимірювання Вт/W)",
+          "reset_power_memory": "Лише якщо сам прилад інший"
         }
       },
       "extend_device": {

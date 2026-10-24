@@ -14,10 +14,10 @@ import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers import selector
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.start import async_at_started
 
+from .config_flow import power_sensor_selector
 from .const import CONF_AC_LOAD_LIMITS, CONF_AC_POWER_SENSOR, DOMAIN
 
 if TYPE_CHECKING:
@@ -112,13 +112,7 @@ class PowerSensorFixFlow(RepairsFlow):
         return self.async_show_form(
             step_id="power_sensor",
             data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_AC_POWER_SENSOR): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain="sensor", device_class="power"
-                        )
-                    )
-                }
+                {vol.Required(CONF_AC_POWER_SENSOR): power_sensor_selector()}
             ),
             description_placeholders={"sensor": limits[CONF_AC_POWER_SENSOR]},
         )

@@ -15,12 +15,14 @@
         "data": {
           "device_name": "Device name",
           "switch_entity_id": "Switch entity",
-          "power_sensor_entity_id": "Power sensor"
+          "power_sensor_entity_id": "Power sensor",
+          "reset_power_memory": "Reset the learned consumption"
         },
         "data_description": {
           "device_name": "Name for the new virtual device",
           "switch_entity_id": "Switch entity to control the device",
-          "power_sensor_entity_id": "Power sensor (must have unit W)"
+          "power_sensor_entity_id": "Power sensor (must have unit W)",
+          "reset_power_memory": "Only if the appliance itself is another one"
         }
       },
       "extend_device": {

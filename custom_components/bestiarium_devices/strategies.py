@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_SWITCH_ENTITY_ID,
+    DOMAIN,
     EVENT_DEVICE_TURNED_OFF,
     EVENT_DEVICE_TURNED_ON,
     EVENT_MODE_APPLIED,
@@ -43,7 +44,7 @@ from .helpers import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable
     from datetime import datetime
 
     from homeassistant.config_entries import ConfigEntry
@@ -68,20 +69,20 @@ class Strategies:
         self._power_memory = power_memory
         self._overload_cleared = overload_cleared
 
-    def _devices(self) -> Iterator[tuple[ConfigEntry, DeviceControl, State | None]]:
+    def _devices(self) -> list[tuple[ConfigEntry, DeviceControl, State | None]]:
         """
-        Return the devices set up, with their relay's state.
+        Return the devices set up, with their relay's state, in entry order.
 
-        Disabled, unloading and removed entries have no control and are left
-        alone.
+        Of two devices with the same priority the one added first wins, also
+        after a reload. Disabled, unloading and removed entries have no
+        control and are left alone. A list: the strategies await between
+        devices while entries come and go.
         """
-        for control in self._controls.values():
-            entry = control.entry
-            yield (
-                entry,
-                control,
-                self._hass.states.get(entry.data[CONF_SWITCH_ENTITY_ID]),
-            )
+        return [
+            (entry, control, self._hass.states.get(entry.data[CONF_SWITCH_ENTITY_ID]))
+            for entry in self._hass.config_entries.async_entries(DOMAIN)
+            if (control := self._controls.get(entry.entry_id))
+        ]
 
     async def _async_command(self, entry: ConfigEntry, direction: Direction) -> bool:
         """
@@ -366,6 +367,8 @@ class Strategies:
 
         if off_by_mode:
             for priority, entry, control in off_by_mode:
+                if not control.mode_off:
+                    control.start_mode_off()
                 await self._async_strategy_command(
                     entry,
                     control,

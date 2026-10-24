@@ -6,7 +6,7 @@ from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
@@ -26,6 +26,7 @@ from .const import (
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
     ZONE_SENSOR_UNIQUE_ID,
+    ZoneChangedData,
 )
 from .control import DeviceControl, ResponseMemory, async_get_response_memory
 from .helpers import mode_entity_id
@@ -36,7 +37,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from homeassistant.config_entries import ConfigEntry
-    from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State
+    from homeassistant.core import (
+        CALLBACK_TYPE,
+        EventStateChangedData,
+        HomeAssistant,
+        State,
+    )
     from homeassistant.helpers.entity_registry import EventEntityRegistryUpdatedData
 
 
@@ -118,26 +124,24 @@ class BalancingCoordinator:
         self._unsubscribe_start = [
             self._hass.bus.async_listen(
                 EVENT_ENTITY_REGISTRY_UPDATED, self._on_entity_registry_updated
-            ),
-            async_at_started(self._hass, self._on_started),
+            )
         ]
         if self._zone_entity_ids():
             self._activate()
+        self._unsubscribe_start.append(async_at_started(self._hass, self._on_started))
 
     @callback
     def _on_entity_registry_updated(
         self, event: Event[EventEntityRegistryUpdatedData]
     ) -> None:
-        """Come alive once the zone sensors are created; follow each new one."""
-        if (
-            event.data["action"] != "create"
-            or event.data["entity_id"] not in self._mode_entity_ids()
-        ):
+        """Come alive once a zone sensor is created; follow each new mode entity."""
+        entity_id = event.data["entity_id"]
+        if event.data["action"] != "create":
             return
-        if self._active:
+        if self._active and entity_id in self._mode_entity_ids():
             self._unsubscribe()
             self._subscribe()
-        else:
+        elif entity_id in self._zone_entity_ids():
             self._activate()
 
     @callback
@@ -356,7 +360,7 @@ class BalancingCoordinator:
 
             async def red_job(_now: object) -> None:
                 """Execute red strategy on interval."""
-                await self._strategies.async_red()
+                await self._async_red()
 
             self._job_cancel = async_track_time_interval(
                 self._hass,
@@ -385,7 +389,7 @@ class BalancingCoordinator:
 
         # When entering red zone, run strategy once immediately (plus periodic job)
         if new_zone == ActiveZone.RED:
-            await self._strategies.async_red()
+            await self._async_red()
 
     @callback
     def _on_zone_changed(self, event: Event) -> None:
@@ -414,32 +418,44 @@ class BalancingCoordinator:
             self._active_zone = new_zone
             self._hass.bus.async_fire(
                 EVENT_ZONE_CHANGED,
-                {"previous_zone": previous_zone.value, "zone": new_zone.value},
+                ZoneChangedData(previous_zone=previous_zone.value, zone=new_zone.value),
             )
             # Handle zone change (stop/start periodic jobs, execute overload)
             self._hass.async_create_task(self._handle_zone_change(new_zone))
 
     @callback
-    def _on_mode_changed(self, event: Event) -> None:
-        """Handle mode select state changes."""
-        new_state = event.data.get("new_state")
-        old_state = event.data.get("old_state")
+    def _on_mode_changed(self, event: Event[EventStateChangedData]) -> None:
+        """
+        Apply a mode a person or an automation selected.
 
-        old_mode = old_state.state if old_state else "None"
-        new_mode = new_state.state if new_state else "None"
-
-        LOGGER.info("Mode changed from %s to %s", old_mode, new_mode)
-
+        A select that goes and comes back (a reload of the mode entry) is no
+        change: applying it again would turn off a device a person turned on.
+        """
+        old, new = _mode(event.data["old_state"]), _mode(event.data["new_state"])
+        if old is None or new is None or old == new:
+            return
+        LOGGER.info("Mode changed from %s to %s", old, new)
         # Apply mode priorities: turn off OFF, turn on ALWAYS_ON
         self._hass.async_create_task(self._async_apply_mode())
 
     async def _async_apply_mode(self) -> None:
         """Apply the mode, then repeat its turn-offs until they are done."""
         await self._strategies.async_apply_mode()
-        if self._mode_job_cancel is None:
+        self._repeat_mode_duties()
+
+    def _repeat_mode_duties(self) -> None:
+        """Run the job that repeats the mode's turn-offs, while a duty is open."""
+        if self._mode_job_cancel is None and any(
+            control.mode_off for control in self._controls.values()
+        ):
             self._mode_job_cancel = async_track_time_interval(
                 self._hass, self._mode_job, timedelta(seconds=RED_INTERVAL_SECONDS)
             )
+
+    async def _async_red(self) -> None:
+        """Run the red strategy; its turn-off of a device off by mode is a duty."""
+        await self._strategies.async_red()
+        self._repeat_mode_duties()
 
     async def _mode_job(self, _now: object) -> None:
         if not await self._strategies.async_mode_duties() and self._mode_job_cancel:
@@ -460,3 +476,10 @@ __all__ = [
     "ActiveZone",
     "BalancingCoordinator",
 ]
+
+
+def _mode(state: State | None) -> str | None:
+    """Return the mode a select state names; None while it is gone."""
+    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        return None
+    return state.state

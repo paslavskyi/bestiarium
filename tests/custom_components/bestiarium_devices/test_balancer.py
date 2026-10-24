@@ -44,6 +44,7 @@ from custom_components.bestiarium_devices.const import (
     ISSUE_NO_LOAD_ZONES,
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
+    MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
 )
 from custom_components.bestiarium_devices.helpers import get_current_priority
@@ -1928,6 +1929,25 @@ class TestModeEntitiesByUniqueId:
         finally:
             await coordinator.async_stop()
         assert notifications == []
+
+
+async def test_mode_select_alone_does_not_bring_the_balancer_alive(
+    hass: HomeAssistant,
+) -> None:
+    """Review 06, 4: no zone sensors yet: the issue stays, the balancer waits."""
+    coordinator = await started_coordinator(hass)
+    issues = ir.async_get(hass)
+    try:
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is not None
+        er.async_get(hass).async_get_or_create(
+            "select", DOMAIN_BESTIARIUM_MODE, MODE_SELECT_UNIQUE_ID
+        )
+        await hass.async_block_till_done()
+
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is not None
+        assert coordinator.active_zone == ActiveZone.NO_DATA
+    finally:
+        await coordinator.async_stop()
 
 
 class TestOverloadFailSafe:

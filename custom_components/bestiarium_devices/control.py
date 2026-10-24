@@ -218,11 +218,6 @@ class DeviceControl:
         self._cancel_timer: CALLBACK_TYPE | None = None
 
     @property
-    def entry(self) -> ConfigEntry:
-        """Return the device's entry."""
-        return self._entry
-
-    @property
     def settings(self) -> ControlSettings:
         """Return the device's control settings, read on every use."""
         return ControlSettings.of(self._entry)
