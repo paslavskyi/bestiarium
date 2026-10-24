@@ -72,8 +72,8 @@ async def bestiarium_mode_entry(hass: HomeAssistant) -> MockConfigEntry:
         unique_id="bestiarium_mode",
         data={
             "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-                {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
+                {"name": "Eco"},
+                {"name": "Boost"},
             ],
         },
     )

@@ -151,11 +151,7 @@ async def test_config_flow_create_virtual_device(
         "Eco": 1000,
         "Boost": 9999,
     }
-    assert set(entries[0].data[CONF_MODE_OPTIONS_SNAPSHOT]) == {
-        CONF_DEFAULT_PRIORITY,
-        "Eco",
-        "Boost",
-    }
+    assert CONF_MODE_OPTIONS_SNAPSHOT not in entries[0].data
     assert entries[0].data[CONF_OVERLOAD_FIRST_QUEUE] is True
 
 

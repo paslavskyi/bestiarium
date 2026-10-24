@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 CONF_OPTIONS = "options"
 CONF_NAME = "name"
-CONF_ICON = "icon"
 DEFAULT_ICON = "mdi:home"
 
 
@@ -56,15 +55,6 @@ class BestiariumModeSelect(SelectEntity, RestoreEntity):
     def current_option(self) -> str | None:
         """Return the currently selected option."""
         return self._current_option
-
-    @property
-    def icon(self) -> str | None:
-        """Return the icon for the entity."""
-        if self._current_option:
-            for opt in self._options_data:
-                if opt.get(CONF_NAME) == self._current_option:
-                    return opt.get(CONF_ICON, DEFAULT_ICON)
-        return DEFAULT_ICON
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""

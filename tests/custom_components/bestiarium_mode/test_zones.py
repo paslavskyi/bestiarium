@@ -50,7 +50,7 @@ class Grid:
         self.entry = MockConfigEntry(
             domain=DOMAIN,
             data={
-                "options": [{"name": "Grid on", "icon": "mdi:home"}],
+                "options": [{"name": "Grid on"}],
                 "ac_load_limits": {
                     "ac_power_sensor": POWER,
                     "ac_load_limit_w": 5000,

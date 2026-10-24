@@ -70,19 +70,13 @@ class PowerLoadBinarySensor(BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """
-        Return what only this sensor tells.
+        Return the red threshold on the red sensor: the balancer reads it.
 
-        Yellow and red their threshold (the balancer reads red's), green
-        whether it is on pause; the limit is the limit entity's.
+        Nothing else: the pause is "all four off and available", the limit is
+        the limit entity's, the other thresholds are configuration.
         """
-        config = self._tracker.config
-        match self._zone:
-            case Zone.GREEN:
-                return {"recovery_pending": self._tracker.zone is Zone.PAUSE}
-            case Zone.YELLOW:
-                return {"yellow_threshold": config.yellow_threshold}
-            case Zone.RED:
-                return {"red_threshold": config.red_threshold}
+        if self._zone is Zone.RED:
+            return {"red_threshold": self._tracker.config.red_threshold}
         return None
 
     async def async_added_to_hass(self) -> None:

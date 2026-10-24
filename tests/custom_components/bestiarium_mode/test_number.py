@@ -33,7 +33,7 @@ ZONES = ("green", "yellow", "red", "overload")
 
 # The owner's production config entry data.
 OWNER_ENTRY_DATA = {
-    "options": [{"name": "Grid on", "icon": "mdi:home"}],
+    "options": [{"name": "Grid on"}],
     CONF_AC_LOAD_LIMITS: {
         "ac_power_sensor": POWER_SENSOR,
         CONF_AC_LOAD_LIMIT_W: 5000,
@@ -104,7 +104,7 @@ async def test_no_limit_entity_without_load_limits(hass: HomeAssistant) -> None:
     """Without AC load limits there is no limit entity."""
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={"options": [{"name": "Grid on", "icon": "mdi:home"}]},
+        data={"options": [{"name": "Grid on"}]},
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -133,8 +133,6 @@ async def test_raising_limit_recalculates_zones_without_power_change(
     assert float(hass.states.get(LIMIT_ENTITY).state) == 8800  # noqa: PLR2004
     assert entry.data[CONF_AC_LOAD_LIMITS][CONF_AC_LOAD_LIMIT_W] == 8800  # noqa: PLR2004
     zones = _zone_entity_ids(hass)
-    yellow = hass.states.get(zones["yellow"]).attributes["yellow_threshold"]
-    assert yellow == 5280  # noqa: PLR2004
     assert hass.states.get(zones["red"]).attributes["red_threshold"] == 7480  # noqa: PLR2004
 
 

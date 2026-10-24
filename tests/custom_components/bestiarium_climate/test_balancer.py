@@ -298,3 +298,19 @@ async def test_virtual_switch_without_power_data_is_unavailable(
     hass.states.async_set("sensor.power", "1500")
     await hass.async_block_till_done()
     assert hass.states.get(switch).state == STATE_ON
+
+
+async def test_attempts_are_one_a_cycle(floors: Floors) -> None:
+    """A thermostat's changes run cycles in between: they count no attempt."""
+    floors.stuck.add("floor_1")
+    await floors.setup()
+    for _ in range(5):
+        await floors.hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": floors.climate("floor_1"), "hvac_mode": "heat"},
+            blocking=True,
+        )
+    await floors.tick(2 * MINUTE)
+    assert floors.state("floor_1") == "normal"
+    assert floors.calls.count(("turn_on", "floor_1")) <= 3

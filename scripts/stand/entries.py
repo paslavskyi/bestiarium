@@ -112,7 +112,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         missing = [m for m in MODES if m not in select["attributes"]["options"]]
         added: list[dict[str, Any]] = []
         for mode in missing:
-            added += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+            added += [{"next_step_id": "add"}, {"name": mode}]
         await ha.reconfigure(
             entries[0],
             *added,
@@ -124,7 +124,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         return
     steps: list[dict[str, Any]] = []
     for mode in MODES:
-        steps += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+        steps += [{"next_step_id": "add"}, {"name": mode}]
     steps += [
         {"next_step_id": "configure_ac_load_limits"},
         {

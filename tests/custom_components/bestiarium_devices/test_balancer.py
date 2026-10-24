@@ -90,8 +90,8 @@ def mode_select_entry(hass: HomeAssistant, mode_entities: None) -> MockConfigEnt
         unique_id="bestiarium_mode",
         data={
             "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-                {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
+                {"name": "Eco"},
+                {"name": "Boost"},
             ],
             "ac_load_limits": AC_LOAD_LIMITS,
         },
@@ -1508,7 +1508,7 @@ class TestEventFiring:
             domain=DOMAIN_BESTIARIUM_MODE,
             unique_id="bestiarium_mode",
             data={
-                "options": [{"name": "Eco", "icon": "mdi:leaf"}],
+                "options": [{"name": "Eco"}],
                 "ac_load_limits": {
                     "ac_power_sensor": "sensor.power_meter",
                     "ac_load_limit_w": 5000,
@@ -1550,7 +1550,7 @@ async def _setup_real_mode(
         domain=DOMAIN_BESTIARIUM_MODE,
         unique_id="bestiarium_mode",
         data={
-            "options": [{"name": name, "icon": "mdi:home"} for name in options],
+            "options": [{"name": name} for name in options],
             "ac_load_limits": {
                 "ac_power_sensor": POWER_SENSOR,
                 "ac_load_limit_w": limit,
@@ -1853,7 +1853,7 @@ class TestModeEntitiesByUniqueId:
         mode_entry = MockConfigEntry(
             domain=DOMAIN_BESTIARIUM_MODE,
             unique_id="bestiarium_mode",
-            data={"options": [{"name": "Grid on", "icon": "mdi:home"}]},
+            data={"options": [{"name": "Grid on"}]},
         )
         mode_entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(mode_entry.entry_id)

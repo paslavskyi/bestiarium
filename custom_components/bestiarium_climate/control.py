@@ -27,6 +27,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BALANCING_INTERVAL_SECONDS,
     CONF_RECOVERY_TIMEOUT,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
     from .data import BestiariumClimateConfigEntry
 
 GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
+# One attempt a balancing cycle; a little less, as the timers jitter
+ATTEMPT_INTERVAL = timedelta(seconds=BALANCING_INTERVAL_SECONDS - 5)
 
 
 class ThermostatMemory:
@@ -156,6 +159,8 @@ class ThermostatControl:
             confirmed=self.deferred_until is not None,
         )
         self.state = ControlState.NORMAL
+        # When the switch got its last command: an attempt is one a cycle
+        self._last_command: datetime | None = None
         self._watching = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -220,8 +225,9 @@ class ThermostatControl:
         """
         Return the state to send the switch now, or None.
 
-        Each cycle the switch is not as wanted counts an attempt; out of
-        attempts the switch is deferred and turned off once.
+        Each balancing cycle (a minute) the switch is not as wanted counts an
+        attempt; the cycles a thermostat's change runs in between wait for
+        the answer. Out of attempts the switch is deferred and turned off once.
         """
         actual = self.switch_is_on()
         wanted = self.expected_on and self.in_rotation(now)
@@ -234,6 +240,9 @@ class ThermostatControl:
                 self._keep()
                 self._refresh(now)
             return None
+        if self._last_command and now - self._last_command < ATTEMPT_INTERVAL:
+            return None
+        self._last_command = now
         if self._tries >= self.settings.attempts:
             self._defer(now)
             return False

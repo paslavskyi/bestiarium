@@ -41,9 +41,6 @@ def power_sensor_selector() -> selector.EntitySelector:
 
 
 CONF_NAME = "name"
-CONF_DESCRIPTION = "description"
-CONF_ICON = "icon"
-DEFAULT_ICON = "mdi:home"
 MIN_YELLOW_ZONE_PERCENT = 50
 
 
@@ -51,6 +48,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Bestiarium Mode."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     def __init__(self) -> None:
         """Initialize the config flow."""
@@ -127,12 +125,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if not name:
                 errors[CONF_NAME] = "name_required"
             else:
-                option = {
-                    CONF_NAME: name,
-                    CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
-                    CONF_ICON: user_input.get(CONF_ICON, DEFAULT_ICON),
-                }
-                self._options.append(option)
+                self._options.append({CONF_NAME: name})
                 self._origins.append(None)
                 return await self._async_step_options_list()
 
@@ -140,12 +133,6 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             {
                 vol.Required(CONF_NAME, default=""): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
-                ),
-                vol.Optional(CONF_DESCRIPTION, default=""): selector.TextSelector(
-                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
-                ),
-                vol.Optional(CONF_ICON, default=DEFAULT_ICON): selector.IconSelector(
-                    selector.IconSelectorConfig(),
                 ),
             },
         )
@@ -437,11 +424,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if not name:
                 errors[CONF_NAME] = "name_required"
             else:
-                self._options[edit_index] = {
-                    CONF_NAME: name,
-                    CONF_DESCRIPTION: user_input.get(CONF_DESCRIPTION, "").strip(),
-                    CONF_ICON: user_input.get(CONF_ICON, DEFAULT_ICON),
-                }
+                self._options[edit_index] = {CONF_NAME: name}
                 return await self._async_step_options_list()
 
         data_schema = vol.Schema(
@@ -450,17 +433,6 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_NAME, default=option.get(CONF_NAME, "")
                 ): selector.TextSelector(
                     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
-                ),
-                vol.Optional(
-                    CONF_DESCRIPTION,
-                    default=option.get(CONF_DESCRIPTION, ""),
-                ): selector.TextSelector(
-                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
-                ),
-                vol.Optional(
-                    CONF_ICON, default=option.get(CONF_ICON, DEFAULT_ICON)
-                ): selector.IconSelector(
-                    selector.IconSelectorConfig(),
                 ),
                 vol.Optional("delete", default=False): selector.BooleanSelector(
                     selector.BooleanSelectorConfig(),

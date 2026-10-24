@@ -16,20 +16,7 @@ async def test_select_entity_state_and_attributes(hass: HomeAssistant) -> None:
     """Test select entity state, options, and attributes."""
     entry = MockConfigEntry(
         domain=DOMAIN,
-        data={
-            "options": [
-                {
-                    "name": "Eco",
-                    "description": "Energy saving",
-                    "icon": "mdi:leaf",
-                },
-                {
-                    "name": "Boost",
-                    "description": "High priority",
-                    "icon": "mdi:flash",
-                },
-            ]
-        },
+        data={"options": [{"name": "Eco"}, {"name": "Boost"}]},
     )
     entry.add_to_hass(hass)
 
@@ -44,6 +31,6 @@ async def test_select_entity_state_and_attributes(hass: HomeAssistant) -> None:
     assert state is not None
     assert state.state == "Eco"
     assert state.attributes["options"] == ["Eco", "Boost"]
-    assert state.attributes["icon"] == "mdi:leaf"
+    assert state.attributes["icon"] == "mdi:home"
     # The form's metadata is not repeated in the state
     assert not {"options_metadata", "description"} & state.attributes.keys()

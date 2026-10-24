@@ -51,7 +51,7 @@ FOREIGN_AUTOMATION = {
     ],
 }
 MODE_ON_OLD_GRID_ID = {
-    "options": [{"name": "Grid on", "icon": "mdi:home"}],
+    "options": [{"name": "Grid on"}],
     "ac_load_limits": {
         "ac_power_sensor": "sensor.mock_grid_grid_power",
         "ac_load_limit_w": 5000,

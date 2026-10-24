@@ -28,7 +28,6 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_ESTIMATED_POWER,
     CONF_LOAD_PRIORITIES,
-    CONF_MODE_OPTIONS_SNAPSHOT,
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_RESET_POWER_MEMORY,
@@ -372,7 +371,7 @@ class BestiariumDevicesFlowHandler(
     """Config flow for Bestiarium Devices."""
 
     VERSION = 1
-    MINOR_VERSION = 3
+    MINOR_VERSION = 4
 
     @staticmethod
     @callback
@@ -630,7 +629,6 @@ class BestiariumDevicesFlowHandler(
             CONF_DEVICE_TYPE: self._device_type,
             **self._relay_data(),
             CONF_LOAD_PRIORITIES: self._load_priorities,
-            CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
             CONF_OVERLOAD_FIRST_QUEUE: self._overload_first_queue,
             CONF_THERMOSTAT_DRIVEN: self._thermostat_driven,
         }

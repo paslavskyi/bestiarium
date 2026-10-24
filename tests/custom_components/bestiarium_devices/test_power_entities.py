@@ -213,7 +213,7 @@ async def test_migration_removes_the_setting_entities(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert entry.minor_version == 3
+    assert entry.minor_version == 4
     assert dict(entry.options) == options
     assert not [
         e

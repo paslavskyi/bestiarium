@@ -67,6 +67,24 @@ def _remove_zone_sensors(hass: HomeAssistant) -> None:
             registry.async_remove(entity_id)
 
 
+async def async_migrate_entry(
+    hass: HomeAssistant,
+    entry: BestiariumModeConfigEntry,
+) -> bool:
+    """
+    Migrate the mode entry to version 1.2.
+
+    1.2: a mode is its name; the description and the icon of each mode go
+    (DEV-008 stage B, docs/concepts/necessity.md: nothing read them).
+    """
+    if entry.minor_version < 2:  # noqa: PLR2004
+        options = [{"name": option["name"]} for option in entry.data.get("options", [])]
+        hass.config_entries.async_update_entry(
+            entry, data={**entry.data, "options": options}, minor_version=2
+        )
+    return True
+
+
 async def async_unload_entry(
     hass: HomeAssistant,
     entry: BestiariumModeConfigEntry,

@@ -21,7 +21,6 @@ from custom_components.bestiarium_devices.const import (
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
-    CONF_MODE_OPTIONS_SNAPSHOT,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_SWITCH_ENTITY_ID,
     DEVICE_TYPE_VIRTUAL,
@@ -45,7 +44,7 @@ async def _modes(hass: HomeAssistant, *names: str) -> MockConfigEntry:
         domain=DOMAIN_BESTIARIUM_MODE,
         unique_id="bestiarium_mode",
         data={
-            "options": [{"name": name, "icon": "mdi:home"} for name in names],
+            "options": [{"name": name} for name in names],
             "ac_load_limits": {
                 "ac_power_sensor": "sensor.grid",
                 "ac_load_limit_w": 5000,
@@ -62,14 +61,13 @@ def _device(hass: HomeAssistant, switch: str) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=switch,
-        minor_version=3,
+        minor_version=4,
         data={
             CONF_DEVICE_TYPE: DEVICE_TYPE_VIRTUAL,
             CONF_DEVICE_NAME: switch,
             CONF_SWITCH_ENTITY_ID: switch,
             CONF_POWER_SENSOR_ENTITY_ID: f"sensor.{switch.split('.')[1]}_power",
             CONF_LOAD_PRIORITIES: PRIORITIES,
-            CONF_MODE_OPTIONS_SNAPSHOT: list(PRIORITIES),
         },
     )
     entry.add_to_hass(hass)
@@ -93,9 +91,7 @@ async def test_renamed_mode_keeps_the_priorities(
         context={"source": SOURCE_RECONFIGURE, "entry_id": modes.entry_id},
     )
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_0"})
-    result = await flow.async_configure(
-        result["flow_id"], {"name": "Economy", "icon": "mdi:leaf"}
-    )
+    result = await flow.async_configure(result["flow_id"], {"name": "Economy"})
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_1"})
     result = await flow.async_configure(
         result["flow_id"], {"name": "Boost", "delete": True}
@@ -108,7 +104,6 @@ async def test_renamed_mode_keeps_the_priorities(
         CONF_DEFAULT_PRIORITY: 5000,
         "Economy": LOAD_PRIORITY_OFF,
     }
-    assert boiler.data[CONF_MODE_OPTIONS_SNAPSHOT] == [CONF_DEFAULT_PRIORITY, "Economy"]
 
 
 async def _start_with_mode(
