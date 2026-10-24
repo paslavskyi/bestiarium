@@ -6,7 +6,7 @@
 
 Core capabilities:
 
-1. **Virtual switches** — Action-based switch entities that execute HA service calls (heating action, cooling action, off action) and derive their on/off state from a power sensor.
+1. **Virtual switches** — Switch entities whose heating, cooling and off actions are full HA script sequences; heating or cooling comes from the thermostats that control them; the on/off state comes from a power sensor with a hysteresis and a delay.
 2. **Virtual thermostats** — Climate entities with hysteresis-based temperature demand, preset modes, and state restoration. Thermostats do NOT directly control switches — they set an `expected_switch_state` flag that the balancer reads.
 3. **Capacity-limited balancing** — A `BalancingCoordinator` runs every 60 seconds, allocating a limited number of simultaneous device slots to thermostats with the most demand, rotating devices fairly based on working time.
 4. **Capacity number entity** — A runtime-adjustable `number` entity (0–100) that controls how many devices can run simultaneously, with state restoration.
@@ -53,7 +53,7 @@ tests/custom_components/bestiarium_climate/
 ## Platforms
 
 ```python
-PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SWITCH]
+PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
 ```
 
 ---
@@ -83,12 +83,13 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SWITCH]
 ```python
 {
     "name": str,                         # Display name
-    "mode": "heating" | "cooling",       # ClimateMode enum
-    "heating_action": dict | None,       # HA action dict (service call) for heating
-    "cooling_action": dict | None,       # HA action dict (service call) for cooling
-    "off_action": dict,                  # HA action dict (service call) for turning off
+    "heating_action": list,              # Optional — HA script sequence for heating
+    "cooling_action": list,              # Optional — HA script sequence for cooling (one of the two required)
+    "off_action": list,                  # HA script sequence for turning off
     "power_entity": str,                 # Entity ID of power sensor (device_class=power)
-    "min_power": float,                  # Watts threshold — above = "on" (default 0.0)
+    "min_power": float,                  # Watts — at or above = "on" (default 0.0)
+    "power_hysteresis_percent": int,     # "on" → "off" only below min_power minus this share (default 20, 0–90)
+    "power_delay_seconds": int,          # A change of state, and no power data, shown after this (default 10, 0–600)
 }
 ```
 
@@ -176,16 +177,18 @@ Two subentry flows registered via `async_get_supported_subentry_types`:
 
 #### `SwitchSubentryFlowHandler`
 
-Single step: name, mode (heating/cooling), power_entity, min_power, heating_action, cooling_action, off_action.
+Single step: name, power_entity, min_power, power_hysteresis_percent, power_delay_seconds, heating_action, cooling_action, off_action.
 
 Validation:
 - Name required
-- Heating mode requires `heating_action`; cooling mode requires `cooling_action`
+- A heating or a cooling action required (`heating_or_cooling_required`)
+- Each action validated as HA validates a script (`invalid_action`)
+- Reconfigure: the action a thermostat of this switch needs cannot be removed (`needed_by_thermostat`)
 - `off_action` always required
 - `power_entity` required
 - `min_power` must be a number
 
-Reconfigure reuses the same form, merging existing subentry data to preserve both actions.
+Reconfigure reuses the same form; the saved heating and cooling actions are suggested values, so one cleared in the form goes. Before DEV-008 stage B the switch had its own `mode` field; entry migration 1.2 removes it.
 
 #### `ThermostatSubentryFlowHandler`
 
@@ -195,6 +198,8 @@ Two-step flow:
 
 Both steps accumulate into `_options` dict. Reconfigure loads existing subentry data into `_options` before showing forms.
 
+The basic step refuses a switch that already serves the other mode (`switch_serves_other_mode`: one switch, one mode) and a virtual switch of this integration without the action of the thermostat's mode (`switch_has_no_action`).
+
 ---
 
 ## Virtual Switch (`switch.py`)
@@ -203,17 +208,12 @@ Class: `VirtualSwitch(SwitchEntity)`
 
 ### Key Behavior
 
-- **Turn on**: Executes `heating_action` (if mode=heating) or `cooling_action` (if mode=cooling) via `_execute_action`
-- **Turn off**: Executes `off_action` via `_execute_action`
-- **State derivation**: `is_on` is derived from the power sensor — if power reading >= `min_power`, switch is ON; otherwise OFF
-- **No power data** (the sensor unavailable, unknown, missing or not a number): the switch is **unavailable**, not off (DEV-008 stage B); one `info` when the data goes and when it is back. The balancer sees "Switch unavailable" after the tolerance. It stays a building block of the integration ([necessity](concepts/necessity.md)): one per heater, actions per mode, a threshold, part of the control.
-- **Power tracking**: Subscribes to power sensor state changes; updates `is_on` reactively
-
-### Action Execution (`_execute_action`)
-
-Parses an HA action dict: extracts `action` (e.g. `"switch.turn_on"`), splits into domain + service, merges `target` into `data`, calls `hass.services.async_call` with `blocking=False`.
-
-Handles both dict and single-item list formats for the action payload.
+- **Actions**: each is a full HA script sequence (actions, conditions, delays), run by HA's script machinery (`helpers.script.Script`, mode `restart`), validated at setup as HA validates a script. A command stops the sequence of the other command still running. The command waits for its sequence to finish: keep delays in the actions short, the balancer waits too. An action that fails fails the command (`HomeAssistantError`); the balancer counts it as an attempt.
+- **Turn on**: the heating or the cooling sequence by the **mode of the thermostats** whose `target_switch` is this switch (`thermostat_modes`). Without a thermostat: heating if it has a heating action, else cooling. Thermostats of both modes (only possible in a configuration made before DEV-008 stage B; the forms now refuse it): the command fails with `thermostat_modes_differ`.
+- **Turn off**: the off sequence
+- **State**: from the power sensor — on at or above `min_power`; on stays on down to `min_power × (1 − power_hysteresis_percent / 100)`. A change is shown only once it has lasted `power_delay_seconds` (a shorter dip or spike is not shown).
+- **No power data** (the sensor unavailable, unknown, missing or not a number) for `power_delay_seconds`: the switch is **unavailable**, not off; data back → shown at once. One `info` when the data goes and when it is back. The balancer sees "Switch unavailable" after its tolerance.
+- **Why it is in the integration** ([necessity](concepts/necessity.md), refinement 4): compared with HA's template switch it takes heating or cooling from its thermostats, has a hysteresis and a delay on the power threshold and is unavailable without power data, set up in one form per heater.
 
 ### Device Info
 
@@ -293,7 +293,8 @@ Coverage:
 - Main config flow: user and reconfigure steps
 - Switch subentry flow: user and reconfigure steps
 - Thermostat subentry flow: basic and presets steps
-- Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`
+- Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`, `heating_or_cooling_required`, `invalid_action`, `needed_by_thermostat`, `switch_serves_other_mode`, `switch_has_no_action`
+- Exceptions: `thermostat_modes_differ`, `no_action`
 - Abort reasons: `reconfigure_successful` — passed explicitly to `async_update_and_abort` in the entry and both subentry reconfigure flows. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet.
 - Entity names: `Capacity` (number entity)
 
@@ -304,8 +305,8 @@ Coverage:
 ### `test_config_flow.py`
 - Create main entry with custom values and defaults
 - Reconfigure main entry (no capacity field); control settings in the options; translations of states and settings
-- Switch subentry: create (heating mode), validation (heating requires heating_action, cooling requires cooling_action)
-- Thermostat subentry: two-step flow (basic + presets)
+- Switch subentry: create (no mode, hysteresis and delay defaults), a heating or cooling action required, an invalid action refused, the action a thermostat needs kept
+- Thermostat subentry: two-step flow (basic + presets); one switch serves one mode; a virtual switch needs the mode's action
 
 ### `test_climate.py`
 - Thermostat creation from subentry
@@ -315,10 +316,11 @@ Coverage:
 - Set hvac_mode updates state
 
 ### `test_switch.py`
-- Switch creation from subentry
-- Turn on executes heating_action
-- Turn off executes off_action
-- Power below min_power = off; above = on
+- The whole heating sequence runs; the mode comes from the thermostat; without a thermostat its only action
+- Thermostats of both modes: the command fails, nothing runs
+- Off stops a sequence still in its delay
+- Hysteresis and delay; a short glitch is not shown; no power data → unavailable after the delay, back at once
+- Migration 1.2 removes the switch's mode
 
 ### `test_number.py`
 - Capacity number creation, initial value from config

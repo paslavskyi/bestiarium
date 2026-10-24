@@ -97,7 +97,6 @@ Each device gets its own config entry. The data shape depends on device type:
         "Boost": int,                     # Optional per-mode override
         # ... one key per mode name
     },
-    "mode_options_snapshot": list[str],   # Snapshot of priority keys at save time
     "overload_first_queue": bool,         # Turn off in first wave during overload
     "thermostat_driven": bool,            # Only turned off by the balancer (missing = False)
 }
@@ -113,7 +112,6 @@ Each device gets its own config entry. The data shape depends on device type:
     "switch_entity_id": str,              # Selected switch entity
     "power_sensor_entity_id": str,        # Selected power sensor entity
     "load_priorities": { ... },           # Same structure as virtual
-    "mode_options_snapshot": list[str],
     "overload_first_queue": bool,
     "thermostat_driven": bool,
 }
@@ -142,7 +140,7 @@ Options hold runtime state set by the family, not configuration. No migration wa
 | `CONF_SWITCH_ENTITY_ID` | `"switch_entity_id"` |
 | `CONF_POWER_SENSOR_ENTITY_ID` | `"power_sensor_entity_id"` |
 | `CONF_LOAD_PRIORITIES` | `"load_priorities"` |
-| `CONF_MODE_OPTIONS_SNAPSHOT` | `"mode_options_snapshot"` |
+| `CONF_MODE_OPTIONS_SNAPSHOT` | `"mode_options_snapshot"` (only for migration 1.4, which removes it) |
 | `CONF_OVERLOAD_FIRST_QUEUE` | `"overload_first_queue"` |
 | `CONF_THERMOSTAT_DRIVEN` | `"thermostat_driven"` |
 | `CONF_ALLOWED` (options) | `"allowed"` |
@@ -353,7 +351,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 
 **After HA has started** the mode is applied again (`async_apply_mode(restart=True)`, the owner's choice: restarts are rare, and the mode's duties do not survive one). Only the devices that are on get a turn-off; `bestiarium_devices_mode_applied` with `reason: "restart"` fires only if one was turned off, and lists only those.
 
-**Renamed modes**: the mode form sends `bestiarium_mode_options_renamed`; every device entry moves its priority keys (and `mode_options_snapshot`), a removed mode's key goes.
+**Renamed modes**: the mode form sends `bestiarium_mode_options_renamed`; every device entry moves its priority keys, a removed mode's key goes.
 
 **Mode changes** (`_on_mode_changed`), only when the select goes from one mode to another (a select that goes `unavailable` and comes back with a reload of the mode entry is no change):
 - `Strategies.async_apply_mode()` goes over the devices set up:
@@ -649,7 +647,7 @@ Translation keys cover:
 
 7. **Overload two-step design**: The `overload_first_queue` flag allows designating less-critical devices for immediate shutdown while giving more-critical devices a 5-second grace period. If the first queue resolves the overload, the second queue stays on.
 
-8. **Mode options snapshot**: `mode_options_snapshot` stores the list of priority keys at config save time. This tracks which modes existed when priorities were configured.
+8. **Mode options snapshot** (removed in DEV-008 stage B): `mode_options_snapshot` was written at save time and never read; migration 1.4 removes it from the entries.
 
 9. **Power sensor validation**: Must have `device_class=power` and `unit_of_measurement=W`. The validation runs at config flow time, not continuously.
 

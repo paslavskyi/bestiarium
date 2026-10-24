@@ -81,6 +81,11 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         for e in reg.entities
         if e["platform"] == CLIMATE and e["entity_id"].startswith("climate.")
     ]
+    capacity = [
+        e["entity_id"]
+        for e in reg.entities
+        if e["platform"] == CLIMATE and e["entity_id"].startswith("number.")
+    ]
 
     def heat(hvac_mode: str) -> list[dict[str, Any]]:
         """Every stand thermostat heats to 25 °C (above the thermometers), or off."""
@@ -127,6 +132,11 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
                 *heat("off"),
+                {
+                    "action": "number.set_value",
+                    "target": {"entity_id": capacity},
+                    "data": {"value": 2},
+                },
                 mode("Grid on"),
                 cooker(400),
                 turn("turn_off", *(s for s in all_sockets if s not in always_on)),
