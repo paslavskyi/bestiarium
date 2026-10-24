@@ -22,22 +22,23 @@ Registers physical and virtual devices with **per-mode load priorities** and run
 - Device option "switched on by its own thermostat" — the balancer only turns such devices off
 - Headroom: the balancer turns a device on only if the grid load plus the device's expected power stays below the red zone; the expected power is learned from the device's runs
 - Device control: the balancer waits for each device's own response time, defers a device that does not respond so the queue goes on, and shows confirmed problems as a diagnostic "Control state" sensor and "Control events" entity; the thresholds are the device's options
-- `sensor` "Expected power", `number` "Estimated power" (used until 3 runs are seen), `button` "Reset power memory" per device
+- `sensor` "Expected power" per device; the estimated power and the reset of the power memory are in the device's settings form
 
 ### bestiarium_climate
 
 Provides **capacity-limited rotation** of heating/cooling devices through virtual thermostats and virtual switches.
 
-- Virtual thermostats compute temperature demand (hysteresis) and expose an `expected_switch_state` flag.
-- A `BalancingCoordinator` allocates a limited number of simultaneous device slots, rotating fairly by working time.
-- Handles switch retry, non-responding switch recovery, and fires `bestiarium_climate_switch_failed` events.
+- Virtual thermostats compute temperature demand (hysteresis); the balancer controls their switches.
+- A `BalancingCoordinator` allocates a limited number of simultaneous device slots, rotating fairly by working time, and follows the load zones of `bestiarium_mode` (yellow starts nothing, red turns heaters off one by one).
+- Each thermostat has a "Control state" sensor: switch unavailable, not responding (retried, then deferred), no temperature.
+- Virtual switches run HA script sequences and read their state from a power sensor.
 - Uses HA subentries — switches and thermostats are added under a single config entry.
 
 Depends on `bestiarium_mode`.
 
 ### bestiarium_mock
 
-Standalone test stand that simulates **12 smart sockets** (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor** with a time-delayed overload alarm. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
+Standalone test stand that simulates **12 smart sockets** (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor**, with reading fault profiles for the thermometers and the grid. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
 
 ## Installation
 

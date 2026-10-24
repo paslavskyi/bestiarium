@@ -17,7 +17,14 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_devices.const import DOMAIN as DEVICES
 from custom_components.bestiarium_mock.const import DOMAIN as MOCK
-from scripts.stand.layout import DASHBOARD, SCRIPT_PREFIX, STAND_DEVICES, THERMOSTATS
+from scripts.stand.ha import Registry
+from scripts.stand.layout import (
+    CLIMATE,
+    DASHBOARD,
+    SCRIPT_PREFIX,
+    STAND_DEVICES,
+    THERMOSTATS,
+)
 from scripts.stand.scenarios import scenario_scripts
 from scripts.stand_setup import setup_stand
 
@@ -262,6 +269,9 @@ def test_reset_leaves_always_on_devices_on() -> None:
         def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
             return f"{domain}.{unique_id}"
 
+        def stand_climate(self) -> list:
+            return []
+
     reset = scenario_scripts(_Registry())["reset"]["sequence"]
     switched = {
         step["action"]: step["target"]["entity_id"]
@@ -273,3 +283,19 @@ def test_reset_leaves_always_on_devices_on() -> None:
         "switch.mock_fridge",
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
+
+
+def test_stand_climate_is_only_the_stand_entry() -> None:
+    """The reset and the dashboard touch the stand's climate entry, no other."""
+    reg = Registry(
+        devices=[
+            {"name": "Stand floor 1", "config_entries": ["stand"]},
+            {"name": "Living room", "config_entries": ["home"]},
+        ],
+        entities=[
+            {"platform": CLIMATE, "config_entry_id": "stand", "entity_id": "climate.a"},
+            {"platform": CLIMATE, "config_entry_id": "home", "entity_id": "climate.b"},
+        ],
+    )
+
+    assert [e["entity_id"] for e in reg.stand_climate()] == ["climate.a"]

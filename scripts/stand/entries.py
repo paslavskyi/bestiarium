@@ -201,7 +201,8 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         CLIMATE,
         {
             "capacity": 2,
-            "min_working_time": {"hours": 0, "minutes": 10, "seconds": 0},
+            # Three minutes: a rotation shows on the stand in minutes
+            "min_working_time": {"hours": 0, "minutes": 3, "seconds": 0},
             "recovery_timeout": {"hours": 1, "minutes": 0, "seconds": 0},
         },
     )

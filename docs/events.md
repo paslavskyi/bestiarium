@@ -277,6 +277,8 @@ action:
 
 **When**: Capacity slot removed from a thermostat that was previously ON (deficit path).
 
+In the yellow zone a rotation fires only `rotated_out` (no one starts); the red zone's turn-offs one by one are not a rotation and fire nothing (an `info` line each), nor do the pause, no data and the overload ([climate zones](bestiarium_climate.md#load-zones-the-owners-rules-dev-008-review-13)).
+
 | Field                    | Type   | Description                    |
 |--------------------------|--------|--------------------------------|
 | `thermostat`             | string | Thermostat entity ID or label  |

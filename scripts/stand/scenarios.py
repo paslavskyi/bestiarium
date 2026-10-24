@@ -18,7 +18,7 @@ from custom_components.bestiarium_mock.const import (
 )
 
 from .ha import StandError
-from .layout import CLIMATE, MODE, RED_W, SCRIPT_PREFIX, STAND_DEVICES, YELLOW_W
+from .layout import MODE, RED_W, SCRIPT_PREFIX, STAND_DEVICES, YELLOW_W
 
 if TYPE_CHECKING:
     from .ha import HomeAssistant, Registry
@@ -76,16 +76,11 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
     def wait(seconds: int) -> dict[str, Any]:
         return {"delay": {"seconds": seconds}}
 
+    climate = reg.stand_climate()
     thermostats = [
-        e["entity_id"]
-        for e in reg.entities
-        if e["platform"] == CLIMATE and e["entity_id"].startswith("climate.")
+        e["entity_id"] for e in climate if e["entity_id"].startswith("climate.")
     ]
-    capacity = [
-        e["entity_id"]
-        for e in reg.entities
-        if e["platform"] == CLIMATE and e["entity_id"].startswith("number.")
-    ]
+    capacity = [e["entity_id"] for e in climate if e["entity_id"].startswith("number.")]
 
     def heat(hvac_mode: str) -> list[dict[str, Any]]:
         """Every stand thermostat heats to 25 °C (above the thermometers), or off."""
@@ -253,6 +248,26 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 wait(90),
                 reading("thermo_2", ReadingProfile.NO_DATA),
             ],
+        },
+        "climate_zones": {
+            "alias": "Стенд: клімат за зонами — старт (далі навантаження кнопками)",
+            "icon": "mdi:radiator",
+            "sequence": [reset, *heat("heat")],
+        },
+        "load_green": {
+            "alias": "Стенд: навантаження — зелена",
+            "icon": "mdi:circle-slice-2",
+            "sequence": [grid_at(YELLOW_W, -900)],
+        },
+        "load_yellow": {
+            "alias": "Стенд: навантаження — жовта",
+            "icon": "mdi:circle-slice-5",
+            "sequence": [grid_at(YELLOW_W, 200)],
+        },
+        "load_red": {
+            "alias": "Стенд: навантаження — червона",
+            "icon": "mdi:circle-slice-8",
+            "sequence": [grid_at(RED_W, 200)],
         },
         "grid_no_data": {
             "alias": "Стенд: мережа без даних",

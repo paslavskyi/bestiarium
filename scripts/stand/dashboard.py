@@ -13,7 +13,6 @@ from custom_components.bestiarium_mock.const import MOCK_DEVICES
 
 from .ha import StandError
 from .layout import (
-    CLIMATE,
     DASHBOARD,
     MODE,
     STAND_DEVICES,
@@ -38,7 +37,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
         reg.mock("sensor", "mock_grid_power"),
         reg.mock("select", "mock_grid_reading_profile"),
     ]
-    climate = [e for e in reg.entities if e["platform"] == CLIMATE and e["device_id"]]
+    climate = [e for e in reg.stand_climate() if e["device_id"]]
     thermostats = [
         (thermostat, reg.mock("sensor", f"mock_{thermometer}_temperature"), thermometer)
         for thermostat, (_, thermometer, _) in zip(

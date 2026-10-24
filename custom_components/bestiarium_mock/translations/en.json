@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bestiarium Mock Devices",
-        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring with an overload alarm)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
+        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
       }
     },
     "abort": {

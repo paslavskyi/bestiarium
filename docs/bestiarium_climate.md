@@ -7,7 +7,7 @@
 Core capabilities:
 
 1. **Virtual switches** — Switch entities whose heating, cooling and off actions are full HA script sequences; heating or cooling comes from the thermostats that control them; the on/off state comes from a power sensor with a hysteresis and a delay.
-2. **Virtual thermostats** — Climate entities with hysteresis-based temperature demand, preset modes, and state restoration. Thermostats do NOT directly control switches — they set an `expected_switch_state` flag that the balancer reads.
+2. **Virtual thermostats** — Climate entities with hysteresis-based temperature demand, preset modes, and state restoration. Thermostats do NOT directly control switches — the balancer decides and sends each switch what it wants (`ThermostatControl`).
 3. **Capacity-limited balancing** — A `BalancingCoordinator` runs every 60 seconds, allocating a limited number of simultaneous device slots to thermostats with the most demand, rotating devices fairly based on working time.
 4. **Capacity number entity** — A runtime-adjustable `number` entity (0–100) that controls how many devices can run simultaneously, with state restoration.
 
@@ -89,7 +89,8 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH
     "power_entity": str,                 # Entity ID of power sensor (device_class=power)
     "min_power": float,                  # Watts — at or above = "on" (default 0.0)
     "power_hysteresis_percent": int,     # "on" → "off" only below min_power minus this share (default 20, 0–90)
-    "power_delay_seconds": int,          # A change of state, and no power data, shown after this (default 10, 0–600)
+    "power_delay_seconds": int,          # A change of on/off shown after this (default 10, 0–600)
+    "power_tolerance_seconds": int,      # No power data shown (unavailable) after this (default 60, 0–600)
 }
 ```
 
@@ -177,7 +178,7 @@ Two subentry flows registered via `async_get_supported_subentry_types`:
 
 #### `SwitchSubentryFlowHandler`
 
-Single step: name, power_entity, min_power, power_hysteresis_percent, power_delay_seconds, heating_action, cooling_action, off_action.
+Single step: name, power_entity, min_power, power_tolerance_seconds, power_hysteresis_percent, power_delay_seconds, heating_action, cooling_action, off_action.
 
 Validation:
 - Name required
@@ -198,7 +199,7 @@ Two-step flow:
 
 Both steps accumulate into `_options` dict. Reconfigure loads existing subentry data into `_options` before showing forms.
 
-The basic step refuses a switch that already serves the other mode (`switch_serves_other_mode`: one switch, one mode) and a virtual switch of this integration without the action of the thermostat's mode (`switch_has_no_action`).
+The basic step refuses a switch another thermostat already controls (`switch_taken`: one switch, one thermostat — any switch, not only a virtual one) and a virtual switch of this integration without the action of the thermostat's mode (`switch_has_no_action`).
 
 ---
 
@@ -209,10 +210,12 @@ Class: `VirtualSwitch(SwitchEntity)`
 ### Key Behavior
 
 - **Actions**: each is a full HA script sequence (actions, conditions, delays), run by HA's script machinery (`helpers.script.Script`, mode `restart`), validated at setup as HA validates a script. A command stops the sequence of the other command still running. The command waits for its sequence to finish: keep delays in the actions short, the balancer waits too. An action that fails fails the command (`HomeAssistantError`); the balancer counts it as an attempt.
-- **Turn on**: the heating or the cooling sequence by the **mode of the thermostats** whose `target_switch` is this switch (`thermostat_modes`). Without a thermostat: heating if it has a heating action, else cooling. Thermostats of both modes (only possible in a configuration made before DEV-008 stage B; the forms now refuse it): the command fails with `thermostat_modes_differ`.
+- **Turn on**: the heating or the cooling sequence by the **mode of the thermostat** whose `target_switch` is this switch (`thermostats_of`). Without a thermostat: heating if it has a heating action, else cooling. Several thermostats on one switch (only possible in a configuration made before DEV-008 stage B; the forms now refuse it): the command fails with `switch_shared`, the balancer leaves those thermostats out, and the Repairs issue `switch_shared` tells to give each its own switch.
+- **Errors**: whatever fails in a sequence fails the command as a `HomeAssistantError` (`action_failed`); the balancer counts it as an attempt. A saved sequence HA no longer accepts (an integration it used removed) leaves that switch out at setup with the fixable Repairs issue `invalid_action`, whose fix shows the switch's actions; the other switches are set up.
+- **Migration 1.2** turned a switch's own "cooling" into "from the thermostat": a cooling switch with a heating action and no thermostat now heats — the Repairs issue `switch_now_heats` says so (no silent change); it goes once the switch has a thermostat or no heating action.
 - **Turn off**: the off sequence
 - **State**: from the power sensor — on at or above `min_power`; on stays on down to `min_power × (1 − power_hysteresis_percent / 100)`. A change is shown only once it has lasted `power_delay_seconds` (a shorter dip or spike is not shown).
-- **No power data** (the sensor unavailable, unknown, missing or not a number) for `power_delay_seconds`: the switch is **unavailable**, not off; data back → shown at once. One `info` when the data goes and when it is back. The balancer sees "Switch unavailable" after its tolerance.
+- **No power data** (the sensor unavailable, unknown, missing or not a number) for `power_tolerance_seconds` (60 s): the switch is **unavailable**, not off; a shorter dropout is silent; data back → shown at once. Once HA runs, one `info` when the data goes and when it is back (none at the start). The balancer sees "Switch unavailable" after its own tolerance.
 - **Why it is in the integration** ([necessity](concepts/necessity.md), refinement 4): compared with HA's template switch it takes heating or cooling from its thermostats, has a hysteresis and a delay on the power threshold and is unavailable without power data, set up in one form per heater.
 
 ### Device Info
@@ -238,7 +241,7 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 
 ### State Restoration
 
-`RestoreEntity` restores the HVAC mode, the target and the preset. The rest lives in the Store `bestiarium_climate.thermostats` (`ThermostatMemory`, by subentry id): `saved_temperature` of the thermostat, and `expected_on`, `expected_changed_at`, `tries`, `deferred_until` of its control.
+`RestoreEntity` restores the HVAC mode, the target and the preset — from its extra data (`extra_restore_state_data`), because a thermostat unavailable at shutdown (no temperature) has a state without attributes; a state saved before DEV-008 stage B is read from its attributes. The rest lives in the Store `bestiarium_climate.thermostats` (`ThermostatMemory`, by subentry id): `saved_temperature` of the thermostat, and `expected_on`, `expected_changed_at`, `tries`, `deferred_until` of its control.
 
 ---
 
@@ -269,9 +272,22 @@ One set for all thermostats of the entry (the owner's choice), defaults: `attemp
 
 `BalancingCoordinator` — one per climate entry, made before the platforms (they show its controls), started after them.
 
-### Balance Cycle (`async_balance`, every 60 s, on a thermostat's change and on a control's new state)
+### Balance Cycle (`async_request_balance`: every 60 s, on a thermostat's change, a capacity change, a zone change and a control's new state)
 
-One cycle at a time (a lock): a cycle asked for meanwhile runs after it. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second, not a minute later.
+A request runs the cycle at once; one asked for during a cycle makes one more after it. The cycle never waits for a switch: each command is its own task, one at a time per switch, so a slow switch (an IR remote) holds back neither the others nor the next decisions, and a switch's sequence may call a climate service. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second.
+
+### Load zones (the owner's rules, DEV-008 review 13)
+
+Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It reads the four zone sensors, found by their unique_id `power_load_{zone}` in `bestiarium_mode` (the whole contract between the two, [necessity](concepts/necessity.md) refinement 5): the one on is the zone; all four off and available is the pause; one unavailable is no data; none registered (no load limits) is "none", treated as green.
+
+| Zone | Climate |
+|---|---|
+| green (or no load limits) | the capacity applies; rotation |
+| yellow | the ones heating go on; a rotation turns the one going out off but starts no other; no new starts |
+| pause, no data, overload | nothing starts and nothing rotates; the ones heating go on (the overload's emergency queue of the devices turns off what it must) |
+| red | no starts; every 5 s one heater goes off, the room that needs it least first (the smallest difference between the target and the temperature) |
+
+Out of green, a switch wanted on but found off (the devices' load protection turned it off) is wanted off: it is no failed attempt and is not turned on again until green. A thermostat that stops wanting heat (idle, off) is turned off in every zone. The capacity entity (FR-019: an automation lowering it in red) stays a finer setting; the rules above work without it.
 
 1. **Allocate.** The working thermostats are those in the rotation that want heat or cold. Every other one is not wanted on. If the capacity is short (the normal state of a home that needs Bestiarium Climate), the ones that worked least go first: working-time coefficient ascending (time on / minimum working time, the thermostat's own or the entry's), then the temperature difference descending. In a deficit a change fires `bestiarium_climate_device_rotated_in` / `_out`.
 2. **Sync.** Each switch gets the state wanted (`ThermostatControl.to_command`); a command HA refuses counts as an attempt and the cycle goes on with the other switches — one switch never stops the others. The same command is repeated at most once a cycle; a new wanted state (the thermostat off and back to heat) is sent at once and starts the count of attempts again.
@@ -295,8 +311,10 @@ Coverage:
 - Main config flow: user and reconfigure steps
 - Switch subentry flow: user and reconfigure steps
 - Thermostat subentry flow: basic and presets steps
-- Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`, `heating_or_cooling_required`, `invalid_action`, `needed_by_thermostat`, `switch_serves_other_mode`, `switch_has_no_action`
-- Exceptions: `thermostat_modes_differ`, `no_action`
+- Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`, `heating_or_cooling_required`, `invalid_action`, `needed_by_thermostat`, `switch_taken`, `switch_has_no_action`
+- Exceptions: `switch_shared`, `action_failed`, `no_action`
+- Repairs: `switch_shared`, `switch_now_heats`, `invalid_action` (fixable: the switch's actions)
+- `strings.json` removed: the translations are the only source of the texts
 - Abort reasons: `reconfigure_successful` — passed explicitly to `async_update_and_abort` in the entry and both subentry reconfigure flows. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet.
 - Entity names: `Capacity` (number entity)
 
@@ -319,7 +337,9 @@ Coverage:
 
 ### `test_switch.py`
 - The whole heating sequence runs; the mode comes from the thermostat; without a thermostat its only action
-- Thermostats of both modes: the command fails, nothing runs
+- A shared switch (an old setting): Repairs, the command fails, nothing runs
+- A failing sequence fails the command (`action_failed`); an invalid saved action: the switch left out, a fixable issue, the fix saves the actions
+- A cooling switch that now heats: Repairs; the options reload nothing
 - Off stops a sequence still in its delay
 - Hysteresis and delay; a short glitch is not shown; no power data → unavailable after the delay, back at once
 - Migration 1.2 removes the switch's mode
