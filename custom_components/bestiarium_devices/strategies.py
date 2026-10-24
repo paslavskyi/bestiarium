@@ -161,8 +161,9 @@ class Strategies:
         (async_mode_duties).
 
         After a restart of HA the mode is applied again (the owner's choice:
-        restarts are rare); only the devices that are on get a turn-off, and
-        the event tells them, so the family can turn on what it needs.
+        restarts are rare); only the devices that are on get a turn-off, only
+        the always-on ones that are off a turn-on, and the event tells them,
+        so the family can turn on what it needs.
         """
         devices_turned_off: list[str] = []
         devices_turned_on: list[str] = []
@@ -174,6 +175,7 @@ class Strategies:
             priority = get_current_priority(self._hass, entry)
             if priority != LOAD_PRIORITY_OFF:
                 control.end_mode_off()
+            is_on = state is not None and state.state == STATE_ON
 
             if priority == LOAD_PRIORITY_OFF:
                 LOGGER.debug(
@@ -181,7 +183,6 @@ class Strategies:
                     device_name,
                     device_id,
                 )
-                is_on = state is not None and state.state == STATE_ON
                 if is_on:
                     control.start_mode_off()
                     control.command_sent(
@@ -197,7 +198,9 @@ class Strategies:
                     device_name,
                     device_id,
                 )
-                if await self._async_command(entry, Direction.TURN_ON):
+                if (not is_on or not restart) and await self._async_command(
+                    entry, Direction.TURN_ON
+                ):
                     devices_turned_on.append(device_id)
 
         if devices_turned_off or (devices_turned_on and not restart):

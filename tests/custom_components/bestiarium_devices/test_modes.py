@@ -28,6 +28,7 @@ from custom_components.bestiarium_devices.const import (
     DOMAIN_BESTIARIUM_MODE,
     EVENT_MODE_APPLIED,
     ISSUE_NO_MODE_SELECT,
+    LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
     MODE_SELECT_UNIQUE_ID,
 )
@@ -57,7 +58,9 @@ async def _modes(hass: HomeAssistant, *names: str) -> MockConfigEntry:
     return entry
 
 
-def _device(hass: HomeAssistant, switch: str) -> MockConfigEntry:
+def _device(
+    hass: HomeAssistant, switch: str, priorities: dict[str, int] = PRIORITIES
+) -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=switch,
@@ -67,7 +70,7 @@ def _device(hass: HomeAssistant, switch: str) -> MockConfigEntry:
             CONF_DEVICE_NAME: switch,
             CONF_SWITCH_ENTITY_ID: switch,
             CONF_POWER_SENSOR_ENTITY_ID: f"sensor.{switch.split('.')[1]}_power",
-            CONF_LOAD_PRIORITIES: PRIORITIES,
+            CONF_LOAD_PRIORITIES: priorities,
         },
     )
     entry.add_to_hass(hass)
@@ -114,6 +117,8 @@ async def _start_with_mode(
     modes = await _modes(hass, "Eco", "Boost")
     relays.add("switch.boiler", on=on)
     boiler = _device(hass, "switch.boiler")
+    relays.add("switch.fridge", on=True)
+    _device(hass, "switch.fridge", {CONF_DEFAULT_PRIORITY: LOAD_PRIORITY_ALWAYS_ON})
     applied: list[dict] = []
 
     @callback
@@ -147,6 +152,8 @@ async def test_mode_applied_again_after_a_restart(
     assert len(restart) == 1
     assert restart[0]["mode"] == "Eco"
     assert len(restart[0]["devices_turned_off"]) == 1
+    # The fridge, always on, was on: it is not told as turned on
+    assert restart[0]["devices_turned_on"] == []
 
 
 async def test_restart_tells_nothing_when_nothing_was_on(
