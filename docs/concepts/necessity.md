@@ -26,9 +26,12 @@ the case:
 | Influence | Does it take part in control, not only show something? |
 | Quality | In the integration it is set up in a few clicks and covered by tests; in configuration it is copied by hand, untested |
 
-Example: the virtual switch of Bestiarium Climate (actions per mode, its
-state from a power sensor, a threshold; one per heater; it drives the
-balancing) meets all four.
+Example: the virtual switch of Bestiarium Climate meets all four, and since
+DEV-008 stage B it is more capable than HA's template switch (refinement 4):
+it runs the full action sequences through HA's script machinery, takes
+heating or cooling from the thermostat that controls it, reads its state
+from a power sensor with a hysteresis and a delay, and is unavailable without
+power data.
 
 ## Convenience — in the home's configuration
 
@@ -39,6 +42,27 @@ gives a ready example instead.
 Example: one "load zone" value from the four zone sensors is a template
 sensor ([../bestiarium_mode.md](../bestiarium_mode.md#one-zone-value-a-template-sensor)),
 not an entity of `bestiarium_mode`.
+
+## How to judge (the owner's refinements, DEV-008 review 11)
+
+1. **Events.** An event is an interface only when it tells the integration's
+   own **decision or action** (it sent a command, gave a place in the
+   capacity, ran the emergency queue). An event that repeats a change of
+   state already visible as an entity is a convenience.
+2. **Function, not wiring.** Internal signals stay internal (dispatcher); a
+   public bus event is always judged as an interface.
+3. **Display at no cost** — no entities in the registry, no rows in the
+   history, no migrations (for example the logbook descriptions of the
+   events) — may stay when the home's alternative is more than one copy.
+4. **A building block is compared with the best built-in alternative of
+   HA** (UI helpers, blueprints), not with hand-written YAML; it stays only
+   if it is **more capable or safer** than that.
+5. **"Its own logic" includes the other Bestiarium integrations**; the
+   contract between them is minimal.
+6. **The person's need is judged**, not the exact shape of a feature.
+7. **Attributes** only if something reads them, or they are runtime data
+   visible nowhere else; **configuration is never copied into attributes**.
+8. **Interface events only on transitions.**
 
 ## Rules for every change
 
@@ -55,12 +79,18 @@ not an entity of `bestiarium_mode`.
 
 ## Applied in DEV-008 stage B
 
-Removed: the climate event `capacity_exhausted` (a deficit of capacity is
+Removed (review 10): the climate event `capacity_exhausted` (a deficit of capacity is
 the normal state of a home that needs Bestiarium Climate), `switch_failed` /
 `switch_recovered` (the thermostat's control state tells it), the balancer's
 `zone_changed` (the zone sensors' changes tell it), attributes that repeat
 other entities (`limit_w` and `zone` of the zone sensors, the thresholds of
 other zones, the mode select's option metadata, `manual_power_*` of the
-expected power), the test grid's overload alarm. Kept: the four zone
-sensors, `load_limit_changed`, the overload events, `device_turned_on/off`,
-`mode_applied`, the control events, the climate virtual switch.
+expected power), the test grid's overload alarm. Removed (review 11):
+`recovery_pending` and `yellow_threshold` of the zone sensors, the
+description and icon of a mode (form fields, attributes, the icon changing
+with the mode), `mode_options_snapshot` of the device entries (written,
+never read), the switch's own heating/cooling field. Kept: the four zone
+sensors, `red_threshold` of the red one (the balancer reads it),
+`load_limit_changed`, the overload events, `device_turned_on/off`,
+`mode_applied`, the control events, the logbook descriptions, the climate
+virtual switch.

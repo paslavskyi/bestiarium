@@ -47,9 +47,11 @@ Ask in this order:
 - [ ] **Entities:** new entities are things people operate or need to see;
   display-only ones are `diagnostic`, test knobs are `config`.
 - [ ] **Necessity:** each new entity, attribute, event, service or form field
-  is stated as necessary, the only interface or a building block; no attribute
-  or event repeats another entity's state; every removed element is listed in
-  the report.
+  is stated as necessary, the only interface or a building block (compared
+  with HA's best built-in alternative); events only for the integration's own
+  decisions and only on transitions; attributes only if read or runtime data
+  seen nowhere else, never configuration; internal signals stay internal;
+  every removed element is listed in the report.
 - [ ] **Stability:** a problem is confirmed by tolerance and cleared by
   hysteresis; response waits adapt to the device, with a hard limit in the
   red zone; frequently changing details are not recorded; memory is bounded.
