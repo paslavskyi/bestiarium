@@ -9,6 +9,7 @@ routes a change to the documents it touches.
 | [problem-reporting.md](problem-reporting.md) (DEC-012) | handles a failure, missing data, a wrong setting, a failed user action or a safety event |
 | [settings-vs-entities.md](settings-vs-entities.md) (DEC-013) | adds or moves a parameter, an option or an entity |
 | [stability.md](stability.md) (DEC-014) | reacts to the state, availability or response of a device |
+| [necessity.md](necessity.md) (DEC-015) | adds an entity, attribute, event, service or form field, or removes one |
 
 A change usually touches more than one: a device that stops answering is a
 stability question (when is it a problem?), a problem-reporting question (how

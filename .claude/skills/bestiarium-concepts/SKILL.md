@@ -1,6 +1,6 @@
 ---
 name: bestiarium-concepts
-description: Use before planning or committing any Bestiarium change that handles a failure or missing data, adds or moves a parameter, option or entity, or reacts to the state, availability or response of a device. Routes to the concept documents in docs/concepts/ and gives the pre-commit checklist.
+description: Use before planning or committing any Bestiarium change that handles a failure or missing data, adds, moves or removes a parameter, option, entity, attribute or event, or reacts to the state, availability or response of a device. Routes to the concept documents in docs/concepts/ and gives the pre-commit checklist.
 ---
 
 # Bestiarium concepts
@@ -17,6 +17,7 @@ Any change in `custom_components/` that:
 | handles a device failure, unavailable data, a wrong setting, a failed user action, a safety event | `docs/concepts/problem-reporting.md` |
 | adds or moves a parameter, option, threshold or entity | `docs/concepts/settings-vs-entities.md` |
 | reacts to a device's state, availability or response time | `docs/concepts/stability.md` |
+| adds an entity, attribute, event, service or form field, or removes one | `docs/concepts/necessity.md` |
 
 Usually more than one applies. Read all that do before writing the plan.
 
@@ -29,6 +30,8 @@ Ask in this order:
    (Repairs), or did a person's action fail (raised error)? (problem reporting)
 3. Is each new value something people or automations change in daily life
    (entity) or an algorithm parameter (configuration)? (settings vs entities)
+4. Is the new element needed — necessary, the only interface, or a repeated
+   building block — or a convenience for the home's configuration? (necessity)
 
 ## Checklist before committing
 
@@ -43,6 +46,10 @@ Ask in this order:
   their value.
 - [ ] **Entities:** new entities are things people operate or need to see;
   display-only ones are `diagnostic`, test knobs are `config`.
+- [ ] **Necessity:** each new entity, attribute, event, service or form field
+  is stated as necessary, the only interface or a building block; no attribute
+  or event repeats another entity's state; every removed element is listed in
+  the report.
 - [ ] **Stability:** a problem is confirmed by tolerance and cleared by
   hysteresis; response waits adapt to the device, with a hard limit in the
   red zone; frequently changing details are not recorded; memory is bounded.
