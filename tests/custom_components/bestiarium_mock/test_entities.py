@@ -71,7 +71,6 @@ async def test_thermometer_and_grid_entities(
         assert _category(hass, temperature) is None
         assert _category(hass, knob) is EntityCategory.CONFIG
     assert _category(hass, entity_id("sensor", "mock_grid_power")) is None
-    assert _category(hass, entity_id("binary_sensor", "mock_grid_alarm")) is None
 
 
 async def test_initial_states(hass: HomeAssistant, entity_id: EntityId) -> None:
@@ -82,8 +81,6 @@ async def test_initial_states(hass: HomeAssistant, entity_id: EntityId) -> None:
         assert hass.states.get(entity_id("sensor", f"{mock_id}_power")).state == "0"
         profile = hass.states.get(entity_id("select", f"{mock_id}_fault_profile"))
         assert profile.state == spec.profile
-    alarm = hass.states.get(entity_id("binary_sensor", "mock_grid_alarm"))
-    assert alarm.state == STATE_OFF
 
 
 async def test_reliable_socket_turns_on_and_off(

@@ -13,7 +13,6 @@ from homeassistant.const import EntityCategory, UnitOfPower
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import (
-    CONF_ESTIMATED_POWER,
     DATA_COORDINATOR,
     DOMAIN,
     SIGNAL_CONTROL_CHANGED,
@@ -29,9 +28,6 @@ if TYPE_CHECKING:
 
     from .control import DeviceControl
     from .data import BestiariumDevicesConfigEntry
-
-# Translated attribute value explaining when the manual value stops counting
-MANUAL_POWER_NOTE = "counts_until_real_runs"
 
 
 async def async_setup_entry(
@@ -58,6 +54,8 @@ class ExpectedPowerSensor(BestiariumDeviceEntity, SensorEntity):
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    # The runs change with each run: shown, not recorded
+    _unrecorded_attributes = frozenset({"runs"})
 
     def __init__(
         self,
@@ -93,8 +91,6 @@ class ExpectedPowerSensor(BestiariumDeviceEntity, SensorEntity):
                 record.as_dict()
                 for record in self._memory.records(self._entry.entry_id)
             ],
-            "manual_power_w": self._entry.options.get(CONF_ESTIMATED_POWER) or None,
-            "manual_power_note": MANUAL_POWER_NOTE,
         }
 
 

@@ -131,11 +131,10 @@ async def test_raising_limit_recalculates_zones_without_power_change(
     assert _zones_on(hass) == {"yellow"}
     assert float(hass.states.get(LIMIT_ENTITY).state) == 8800  # noqa: PLR2004
     assert entry.data[CONF_AC_LOAD_LIMITS][CONF_AC_LOAD_LIMIT_W] == 8800  # noqa: PLR2004
-    for entity_id in _zone_entity_ids(hass).values():
-        attributes = hass.states.get(entity_id).attributes
-        assert attributes["limit_w"] == 8800  # noqa: PLR2004
-        assert attributes["yellow_threshold"] == 5280  # noqa: PLR2004
-        assert attributes["red_threshold"] == 7480  # noqa: PLR2004
+    zones = _zone_entity_ids(hass)
+    yellow = hass.states.get(zones["yellow"]).attributes["yellow_threshold"]
+    assert yellow == 5280  # noqa: PLR2004
+    assert hass.states.get(zones["red"]).attributes["red_threshold"] == 7480  # noqa: PLR2004
 
 
 async def test_limit_change_does_not_reload_entry(hass: HomeAssistant) -> None:
@@ -197,9 +196,9 @@ async def test_limit_survives_reload(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
 
     assert float(hass.states.get(LIMIT_ENTITY).state) == 8800  # noqa: PLR2004
-    for entity_id in _zone_entity_ids(hass).values():
-        assert hass.states.get(entity_id).attributes["limit_w"] == 8800  # noqa: PLR2004
-    assert hass.states.get(_zone_entity_ids(hass)["red"]).state == STATE_OFF
+    red = hass.states.get(_zone_entity_ids(hass)["red"])
+    assert red.attributes["red_threshold"] == 8800 * 0.9
+    assert red.state == STATE_OFF
 
 
 @pytest.mark.parametrize("value", [1, 1234, 7777, 100000])
@@ -210,8 +209,8 @@ async def test_any_limit_in_range_is_accepted(hass: HomeAssistant, value: int) -
     await _set_limit(hass, value)
 
     assert entry.data[CONF_AC_LOAD_LIMITS][CONF_AC_LOAD_LIMIT_W] == value
+    assert float(hass.states.get(LIMIT_ENTITY).state) == value
     overload = hass.states.get(_zone_entity_ids(hass)["overload"])
-    assert overload.attributes["limit_w"] == value
     assert overload.state == (STATE_ON if value <= 1000 else STATE_OFF)  # noqa: PLR2004
 
 

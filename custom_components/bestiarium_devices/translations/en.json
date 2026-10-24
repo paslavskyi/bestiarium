@@ -111,15 +111,6 @@
           },
           "runs": {
             "name": "Runs"
-          },
-          "manual_power_w": {
-            "name": "Estimated power"
-          },
-          "manual_power_note": {
-            "name": "Note",
-            "state": {
-              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
-            }
           }
         }
       },
@@ -137,15 +128,6 @@
           },
           "runs": {
             "name": "Runs"
-          },
-          "manual_power_w": {
-            "name": "Estimated power"
-          },
-          "manual_power_note": {
-            "name": "Note",
-            "state": {
-              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
-            }
           }
         }
       },

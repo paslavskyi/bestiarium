@@ -28,7 +28,6 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
     ]
     grid = [
         reg.mock("sensor", "mock_grid_power"),
-        reg.mock("binary_sensor", "mock_grid_alarm"),
     ]
     mode_select = reg.entity_id("select", MODE, "select")
     run = {"action": "perform-action", "perform_action": "script.turn_on"}

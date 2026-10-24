@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 CONF_OPTIONS = "options"
 CONF_NAME = "name"
-CONF_DESCRIPTION = "description"
 CONF_ICON = "icon"
 DEFAULT_ICON = "mdi:home"
 
@@ -57,34 +56,6 @@ class BestiariumModeSelect(SelectEntity, RestoreEntity):
     def current_option(self) -> str | None:
         """Return the currently selected option."""
         return self._current_option
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        """Return extra state attributes."""
-        attrs: dict[str, Any] = {}
-        if self._current_option:
-            # Find the option data for the current option
-            for opt in self._options_data:
-                if opt.get(CONF_NAME) == self._current_option:
-                    if opt.get(CONF_DESCRIPTION):
-                        attrs["description"] = opt[CONF_DESCRIPTION]
-                    if opt.get(CONF_ICON):
-                        attrs["icon"] = opt[CONF_ICON]
-                    break
-
-        # Also provide a mapping of all options with their metadata
-        options_metadata: dict[str, dict[str, str]] = {}
-        for opt in self._options_data:
-            name = opt.get(CONF_NAME)
-            if name:
-                options_metadata[name] = {}
-                if opt.get(CONF_DESCRIPTION):
-                    options_metadata[name]["description"] = opt[CONF_DESCRIPTION]
-                if opt.get(CONF_ICON):
-                    options_metadata[name]["icon"] = opt[CONF_ICON]
-        attrs["options_metadata"] = options_metadata
-
-        return attrs
 
     @property
     def icon(self) -> str | None:

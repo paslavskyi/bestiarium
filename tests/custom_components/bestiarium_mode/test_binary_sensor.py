@@ -394,11 +394,40 @@ async def test_extra_state_attributes(hass: HomeAssistant) -> None:
     expected_yellow = limit_w * AC_LOAD_LIMITS_CONFIG["ac_yellow_zone_percent"] / 100
     expected_red = limit_w * AC_LOAD_LIMITS_CONFIG["ac_red_zone_percent"] / 100
 
-    state = hass.states.get(green_id)
-    assert state.attributes["zone"] == "green"
-    assert state.attributes["yellow_threshold"] == expected_yellow
-    assert state.attributes["red_threshold"] == expected_red
-    assert state.attributes["limit_w"] == limit_w
+    # Each sensor tells only its own: the limit is the limit entity's
+    assert dict(hass.states.get(green_id).attributes).keys() >= {"recovery_pending"}
+    for zone, own in (
+        ("green", {"recovery_pending"}),
+        ("yellow", {"yellow_threshold"}),
+        ("red", {"red_threshold"}),
+        ("overload", set()),
+    ):
+        entity_id = entity_registry.async_get_entity_id(
+            "binary_sensor", DOMAIN, f"power_load_{zone}"
+        )
+        attributes = hass.states.get(entity_id).attributes
+        assert not {"zone", "limit_w"} & attributes.keys()
+        assert {
+            "yellow_threshold",
+            "red_threshold",
+            "recovery_pending",
+        } & attributes.keys() == own
+    assert (
+        hass.states.get(
+            entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, "power_load_yellow"
+            )
+        ).attributes["yellow_threshold"]
+        == expected_yellow
+    )
+    assert (
+        hass.states.get(
+            entity_registry.async_get_entity_id(
+                "binary_sensor", DOMAIN, "power_load_red"
+            )
+        ).attributes["red_threshold"]
+        == expected_red
+    )
 
 
 # ==================== Recovery Timeout Tests ====================

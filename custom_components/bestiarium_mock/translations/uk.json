@@ -31,9 +31,6 @@
     "binary_sensor": {
       "state": {
         "name": "Стан"
-      },
-      "grid_alarm": {
-        "name": "Тривога перевантаження мережі"
       }
     },
     "number": {

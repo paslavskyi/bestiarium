@@ -31,9 +31,6 @@
     "binary_sensor": {
       "state": {
         "name": "State"
-      },
-      "grid_alarm": {
-        "name": "Grid Overload Alarm"
       }
     },
     "number": {

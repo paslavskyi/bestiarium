@@ -19,14 +19,12 @@ from homeassistant.helpers.start import async_at_started
 
 from .const import (
     DOMAIN,
-    EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
     ISSUE_NO_LOAD_ZONES,
     LOGGER,
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
     ZONE_SENSOR_UNIQUE_ID,
-    ZoneChangedData,
 )
 from .control import DeviceControl, ResponseMemory, async_get_response_memory
 from .helpers import mode_entity_id
@@ -416,10 +414,6 @@ class BalancingCoordinator:
                 new_zone,
             )
             self._active_zone = new_zone
-            self._hass.bus.async_fire(
-                EVENT_ZONE_CHANGED,
-                ZoneChangedData(previous_zone=previous_zone.value, zone=new_zone.value),
-            )
             # Handle zone change (stop/start periodic jobs, execute overload)
             self._hass.async_create_task(self._handle_zone_change(new_zone))
 

@@ -24,13 +24,11 @@ from .const import (
     EVENT_OVERLOAD_CLEARED,
     EVENT_OVERLOAD_FIRST_QUEUE,
     EVENT_OVERLOAD_SECOND_QUEUE,
-    EVENT_ZONE_CHANGED,
     DeviceSwitchedData,
     ModeAppliedData,
     OverloadClearedData,
     OverloadFirstQueueData,
     OverloadSecondQueueData,
-    ZoneChangedData,
 )
 
 if TYPE_CHECKING:
@@ -40,15 +38,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 BALANCER = "Bestiarium balancer"
-
-
-def _zone_changed(data: ZoneChangedData) -> dict[str, Any]:
-    return {
-        LOGBOOK_ENTRY_NAME: BALANCER,
-        LOGBOOK_ENTRY_MESSAGE: (
-            f"zone changed from {data['previous_zone']} to {data['zone']}"
-        ),
-    }
 
 
 def _device_switched(action: str) -> Callable[[DeviceSwitchedData], dict[str, Any]]:
@@ -107,7 +96,6 @@ def _mode_applied(data: ModeAppliedData) -> dict[str, Any]:
 
 
 DESCRIBERS: dict[str, Callable[[Any], dict[str, Any]]] = {
-    EVENT_ZONE_CHANGED: _zone_changed,
     EVENT_DEVICE_TURNED_ON: _device_switched("turned on"),
     EVENT_DEVICE_TURNED_OFF: _device_switched("turned off"),
     EVENT_OVERLOAD_FIRST_QUEUE: _overload_first_queue,

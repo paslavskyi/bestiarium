@@ -133,7 +133,6 @@ RED_INTERVAL_SECONDS = 5
 OVERLOAD_WAIT_SECONDS = 5
 
 # Event types for automations
-EVENT_ZONE_CHANGED = "bestiarium_devices_zone_changed"
 EVENT_DEVICE_TURNED_ON = "bestiarium_devices_device_turned_on"
 EVENT_DEVICE_TURNED_OFF = "bestiarium_devices_device_turned_off"
 EVENT_OVERLOAD_FIRST_QUEUE = "bestiarium_devices_overload_first_queue"
@@ -147,13 +146,6 @@ ISSUE_MISSING_ENTITY = "missing_entity"
 
 
 # Payloads of the events: a contract with the owner's automations (docs/events.md)
-class ZoneChangedData(TypedDict):
-    """Payload of EVENT_ZONE_CHANGED."""
-
-    previous_zone: str
-    zone: str
-
-
 class DeviceSwitchedData(TypedDict):
     """Payload of EVENT_DEVICE_TURNED_ON and EVENT_DEVICE_TURNED_OFF."""
 
@@ -198,7 +190,6 @@ class ModeAppliedData(TypedDict):
 
 
 EVENT_DATA: dict[str, type] = {
-    EVENT_ZONE_CHANGED: ZoneChangedData,
     EVENT_DEVICE_TURNED_ON: DeviceSwitchedData,
     EVENT_DEVICE_TURNED_OFF: DeviceSwitchedData,
     EVENT_OVERLOAD_FIRST_QUEUE: OverloadFirstQueueData,

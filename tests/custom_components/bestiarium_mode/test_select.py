@@ -45,9 +45,5 @@ async def test_select_entity_state_and_attributes(hass: HomeAssistant) -> None:
     assert state.state == "Eco"
     assert state.attributes["options"] == ["Eco", "Boost"]
     assert state.attributes["icon"] == "mdi:leaf"
-
-    options_metadata = state.attributes["options_metadata"]
-    assert options_metadata["Eco"]["description"] == "Energy saving"
-    assert options_metadata["Eco"]["icon"] == "mdi:leaf"
-    assert options_metadata["Boost"]["description"] == "High priority"
-    assert options_metadata["Boost"]["icon"] == "mdi:flash"
+    # The form's metadata is not repeated in the state
+    assert not {"options_metadata", "description"} & state.attributes.keys()
