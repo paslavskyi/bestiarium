@@ -70,43 +70,49 @@
       "step": {
         "user": {
           "title": "Add Virtual Switch",
-          "description": "Configure a virtual switch with heating/cooling and off actions, and power monitoring.",
+          "description": "A switch for a thermostat: its actions run as Home Assistant scripts (sequences, conditions, delays). Heating or cooling comes from the thermostats that control it. Its state is read from the power sensor.",
           "data": {
             "name": "Name",
-            "mode": "Heating or cooling mode",
             "heating_action": "Heating action",
             "cooling_action": "Cooling action",
             "off_action": "Off action",
             "power_entity": "Power sensor",
-            "min_power": "Minimum power (W) to treat device as on"
+            "min_power": "Minimum power (W) to treat device as on",
+            "power_hysteresis_percent": "Hysteresis (%)",
+            "power_delay_seconds": "Delay (s)"
           },
           "data_description": {
             "name": "Friendly name for this switch",
-            "mode": "Whether this switch is used for heating or cooling",
-            "heating_action": "Action to run when switch is turned on in heating mode",
-            "cooling_action": "Action to run when switch is turned on in cooling mode",
+            "heating_action": "Runs on \"on\" when the thermostats of this switch heat (or without a thermostat)",
+            "cooling_action": "Runs on \"on\" when the thermostats of this switch cool",
             "off_action": "Action to run when switch is turned off",
             "power_entity": "Sensor that measures device power (W)",
-            "min_power": "Power above this value is considered \"on\""
+            "min_power": "At or above this power the switch is on",
+            "power_hysteresis_percent": "On goes to off only below the minimum power minus this share of it",
+            "power_delay_seconds": "A change of the state (and no power data) is shown only after it has lasted this long"
           }
         },
         "reconfigure": {
           "title": "Reconfigure Virtual Switch",
           "data": {
             "name": "Name",
-            "mode": "Heating or cooling mode",
             "heating_action": "Heating action",
             "cooling_action": "Cooling action",
             "off_action": "Off action",
             "power_entity": "Power sensor",
-            "min_power": "Minimum power (W) to treat device as on"
+            "min_power": "Minimum power (W) to treat device as on",
+            "power_hysteresis_percent": "Hysteresis (%)",
+            "power_delay_seconds": "Delay (s)"
           }
         }
       },
       "error": {
         "name_required": "Name is required",
         "required": "This field is required",
-        "invalid_min_power": "Minimum power must be a number"
+        "invalid_min_power": "Minimum power must be a number",
+        "heating_or_cooling_required": "Give a heating or a cooling action",
+        "invalid_action": "The action is not valid",
+        "needed_by_thermostat": "A thermostat of this switch needs this action"
       },
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"
@@ -160,7 +166,9 @@
       },
       "error": {
         "name_required": "Name is required",
-        "required": "This field is required"
+        "required": "This field is required",
+        "switch_serves_other_mode": "Another thermostat controls this switch in the other mode",
+        "switch_has_no_action": "This virtual switch has no action for this mode"
       },
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"
@@ -183,6 +191,14 @@
           "hysteresis_seconds": "A problem ends only after this long without it"
         }
       }
+    }
+  },
+  "exceptions": {
+    "thermostat_modes_differ": {
+      "message": "Thermostats with different modes control {switch}; give each its own switch"
+    },
+    "no_action": {
+      "message": "{switch} has no {action}"
     }
   }
 }

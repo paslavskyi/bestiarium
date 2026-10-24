@@ -61,6 +61,7 @@ class Floors:
             self.hass.states.async_set(f"sensor.{floor}_temperature", "18")
         self.entry = MockConfigEntry(
             domain=DOMAIN,
+            minor_version=2,
             data={
                 CONF_CAPACITY: capacity,
                 CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 10, "seconds": 0},

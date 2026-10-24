@@ -11,11 +11,14 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
     ConfigSubentryFlow,
     OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
@@ -33,16 +36,19 @@ from .const import (
     CONF_MIN_TEMP,
     CONF_MIN_WORKING_TIME,
     CONF_OFF_ACTION,
+    CONF_POWER_DELAY,
     CONF_POWER_ENTITY,
+    CONF_POWER_HYSTERESIS,
     CONF_PRESETS,
     CONF_RECOVERY_TIMEOUT,
-    CONF_SWITCH_MODE,
     CONF_SWITCH_NAME,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
     CONF_THERMOSTAT_MODE,
     CONF_THERMOSTAT_NAME,
     DEFAULT_CAPACITY,
+    DEFAULT_POWER_DELAY_SECONDS,
+    DEFAULT_POWER_HYSTERESIS_PERCENT,
     DEFAULT_TOLERANCE,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
@@ -54,6 +60,12 @@ from .const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
     ControlSettings,
+)
+from .switch import (
+    ACTION_OF_MODE,
+    ACTIONS,
+    async_validate_actions,
+    thermostat_modes,
 )
 
 
@@ -81,6 +93,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
     """Main config flow for Bestiarium Climate."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self,
@@ -227,19 +240,26 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Handle adding or editing a switch subentry."""
         errors: dict[str, str] = {}
+        subentry = self._get_reconfigure_subentry() if self.source != "user" else None
 
         if user_input is not None:
             name = (user_input.get(CONF_SWITCH_NAME) or "").strip()
             if not name:
                 errors[CONF_SWITCH_NAME] = "name_required"
 
-            mode = user_input.get(CONF_SWITCH_MODE)
-            if mode == ClimateMode.HEATING and not user_input.get(CONF_HEATING_ACTION):
-                errors[CONF_HEATING_ACTION] = "required"
-            elif mode == ClimateMode.COOLING and not user_input.get(
-                CONF_COOLING_ACTION
+            if not (
+                user_input.get(CONF_HEATING_ACTION)
+                or user_input.get(CONF_COOLING_ACTION)
             ):
-                errors[CONF_COOLING_ACTION] = "required"
+                errors["base"] = "heating_or_cooling_required"
+            if subentry:
+                errors.update(self._actions_needed(subentry, user_input))
+            for key in ACTIONS:
+                if user_input.get(key):
+                    try:
+                        await async_validate_actions(self.hass, user_input[key])
+                    except (vol.Invalid, HomeAssistantError):
+                        errors[key] = "invalid_action"
 
             if not user_input.get(CONF_OFF_ACTION):
                 errors[CONF_OFF_ACTION] = "required"
@@ -257,30 +277,19 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     errors[CONF_MIN_POWER] = "invalid_min_power"
 
             if not errors:
-                # Reuse existing subentry data when reconfiguring to keep both actions
-                subentry = (
-                    self._get_reconfigure_subentry() if self.source != "user" else None
-                )
-                data: dict[str, Any] = dict(subentry.data) if subentry else {}
-                data.update(
-                    {
-                        CONF_SWITCH_NAME: name,
-                        CONF_SWITCH_MODE: mode,
-                        CONF_OFF_ACTION: user_input[CONF_OFF_ACTION],
-                        CONF_POWER_ENTITY: user_input[CONF_POWER_ENTITY],
-                        CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
-                    }
-                )
-                # Always store both actions when provided so neither is lost
-                if user_input.get(CONF_HEATING_ACTION) is not None:
-                    data[CONF_HEATING_ACTION] = user_input[CONF_HEATING_ACTION]
-                if user_input.get(CONF_COOLING_ACTION) is not None:
-                    data[CONF_COOLING_ACTION] = user_input[CONF_COOLING_ACTION]
+                data: dict[str, Any] = {
+                    CONF_SWITCH_NAME: name,
+                    CONF_POWER_ENTITY: user_input[CONF_POWER_ENTITY],
+                    CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
+                    CONF_POWER_HYSTERESIS: int(user_input[CONF_POWER_HYSTERESIS]),
+                    CONF_POWER_DELAY: int(user_input[CONF_POWER_DELAY]),
+                }
+                for key in ACTIONS:
+                    if user_input.get(key):
+                        data[key] = user_input[key]
 
-                if self.source == "user":
+                if subentry is None:
                     return self.async_create_entry(title=name, data=data)
-
-                subentry = self._get_reconfigure_subentry()
                 return self.async_update_and_abort(
                     self._get_entry(),
                     subentry,
@@ -289,19 +298,14 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     reason="reconfigure_successful",
                 )
 
-        subentry = self._get_reconfigure_subentry() if self.source != "user" else None
-        default_mode = (
-            subentry.data.get(CONF_SWITCH_MODE, ClimateMode.HEATING)
-            if subentry
-            else ClimateMode.HEATING
-        )
-
-        # Defaults for reconfigure (action fields need default to show saved value)
-        off_default = subentry.data.get(CONF_OFF_ACTION) if subentry else None
-        heat_default = subentry.data.get(CONF_HEATING_ACTION) if subentry else None
-        cool_default = subentry.data.get(CONF_COOLING_ACTION) if subentry else None
-
-        # Order: name, mode, power_entity, min_power, heating, cooling, off_action
+        saved = subentry.data if subentry else {}
+        # Suggested, not default: an action cleared in the form goes
+        actions = {
+            vol.Optional(
+                key, description={"suggested_value": saved.get(key)}
+            ): selector.ActionSelector()
+            for key in (CONF_HEATING_ACTION, CONF_COOLING_ACTION)
+        }
         schema_dict: dict[vol.Marker, Any] = {
             vol.Required(
                 CONF_SWITCH_NAME,
@@ -310,24 +314,8 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                 selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
             ),
             vol.Required(
-                CONF_SWITCH_MODE,
-                default=default_mode,
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=ClimateMode.HEATING, label="Heating"
-                        ),
-                        selector.SelectOptionDict(
-                            value=ClimateMode.COOLING, label="Cooling"
-                        ),
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                ),
-            ),
-            vol.Required(
                 CONF_POWER_ENTITY,
-                default=subentry.data.get(CONF_POWER_ENTITY) if subentry else None,
+                default=saved.get(CONF_POWER_ENTITY),
             ): selector.EntitySelector(
                 selector.EntitySelectorConfig(
                     domain=DOMAIN_SENSOR,
@@ -336,7 +324,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             ),
             vol.Required(
                 CONF_MIN_POWER,
-                default=subentry.data.get(CONF_MIN_POWER, 0.0) if subentry else 0.0,
+                default=saved.get(CONF_MIN_POWER, 0.0),
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0,
@@ -344,13 +332,26 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     mode=selector.NumberSelectorMode.BOX,
                 ),
             ),
-            vol.Optional(CONF_HEATING_ACTION, default=heat_default): (
-                selector.ActionSelector()
+            vol.Required(
+                CONF_POWER_HYSTERESIS,
+                default=saved.get(
+                    CONF_POWER_HYSTERESIS, DEFAULT_POWER_HYSTERESIS_PERCENT
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=90, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
             ),
-            vol.Optional(CONF_COOLING_ACTION, default=cool_default): (
-                selector.ActionSelector()
+            vol.Required(
+                CONF_POWER_DELAY,
+                default=saved.get(CONF_POWER_DELAY, DEFAULT_POWER_DELAY_SECONDS),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
             ),
-            vol.Required(CONF_OFF_ACTION, default=off_default): (
+            **actions,
+            vol.Required(CONF_OFF_ACTION, default=saved.get(CONF_OFF_ACTION)): (
                 selector.ActionSelector()
             ),
         }
@@ -360,6 +361,21 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
+
+    def _actions_needed(
+        self, subentry: ConfigSubentry, user_input: dict[str, Any]
+    ) -> dict[str, str]:
+        """Return an error for an action a thermostat of this switch needs."""
+        switch = er.async_get(self.hass).async_get_entity_id(
+            DOMAIN_SWITCH, DOMAIN, subentry.subentry_id
+        )
+        if switch is None:
+            return {}
+        return {
+            ACTION_OF_MODE[mode]: "needed_by_thermostat"
+            for mode in thermostat_modes(self.hass, switch)
+            if not user_input.get(ACTION_OF_MODE[mode])
+        }
 
     async def async_step_reconfigure(
         self,
@@ -381,6 +397,25 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
     def _is_new(self) -> bool:
         """True if creating a new subentry."""
         return self.source == "user"
+
+    def _switch_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
+        """
+        Return an error if the switch cannot serve this thermostat's mode.
+
+        A switch serves one mode; a virtual switch needs the mode's action.
+        """
+        switch = user_input[CONF_TARGET_SWITCH]
+        mode = ClimateMode(user_input.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
+        besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
+        if thermostat_modes(self.hass, switch, besides=besides) - {mode}:
+            return {CONF_THERMOSTAT_MODE: "switch_serves_other_mode"}
+        entity = er.async_get(self.hass).async_get(switch)
+        if entity is None or entity.platform != DOMAIN:
+            return {}
+        subentry = self._get_entry().subentries.get(entity.unique_id)
+        if subentry and not subentry.data.get(ACTION_OF_MODE[mode]):
+            return {CONF_TARGET_SWITCH: "switch_has_no_action"}
+        return {}
 
     async def async_step_user(
         self,
@@ -414,6 +449,8 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 errors[CONF_TEMPERATURE_SENSOR] = "required"
             if not user_input.get(CONF_TARGET_SWITCH):
                 errors[CONF_TARGET_SWITCH] = "required"
+            else:
+                errors.update(self._switch_errors(user_input))
 
             if not errors:
                 self._options.update(user_input)

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from homeassistant.const import Platform
 
 from .balancer import BalancingCoordinator
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, LOGGER, SUBENTRY_TYPE_SWITCH
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -41,6 +41,28 @@ async def async_setup_entry(
     coordinator.start()
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    return True
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant,
+    entry: BestiariumClimateConfigEntry,
+) -> bool:
+    """
+    Migrate the entry to version 1.2.
+
+    1.2: a virtual switch takes heating or cooling from its thermostats; its
+    own mode field goes (DEV-008 stage B).
+    """
+    if entry.minor_version < 2:  # noqa: PLR2004
+        for subentry in entry.subentries.values():
+            if (
+                subentry.subentry_type == SUBENTRY_TYPE_SWITCH
+                and "mode" in subentry.data
+            ):
+                data = {k: v for k, v in subentry.data.items() if k != "mode"}
+                hass.config_entries.async_update_subentry(entry, subentry, data=data)
+        hass.config_entries.async_update_entry(entry, minor_version=2)
     return True
 
 

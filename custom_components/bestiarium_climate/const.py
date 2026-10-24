@@ -27,12 +27,15 @@ CONF_RECOVERY_TIMEOUT = "recovery_timeout"
 
 # Config keys — switch subentry
 CONF_SWITCH_NAME = "name"
-CONF_SWITCH_MODE = "mode"
 CONF_HEATING_ACTION = "heating_action"
 CONF_COOLING_ACTION = "cooling_action"
 CONF_OFF_ACTION = "off_action"
 CONF_POWER_ENTITY = "power_entity"
 CONF_MIN_POWER = "min_power"
+CONF_POWER_HYSTERESIS = "power_hysteresis_percent"
+CONF_POWER_DELAY = "power_delay_seconds"
+DEFAULT_POWER_HYSTERESIS_PERCENT = 20
+DEFAULT_POWER_DELAY_SECONDS = 10
 
 # Config keys — thermostat subentry
 CONF_THERMOSTAT_NAME = "name"
@@ -119,7 +122,7 @@ DEVICE_CLASS_TEMPERATURE = "temperature"
 
 
 class ClimateMode(StrEnum):
-    """Heating or cooling mode for a switch or thermostat."""
+    """Heating or cooling mode of a thermostat."""
 
     HEATING = "heating"
     COOLING = "cooling"
