@@ -184,3 +184,73 @@ async def test_no_mode_select_is_a_repair(
     await hass.async_block_till_done()
     assert issues.async_get_issue(DOMAIN, ISSUE_NO_MODE_SELECT) is None
     assert hass.states.get("switch.boiler").state == STATE_ON
+
+
+async def test_the_current_mode_renamed_stays_current(
+    hass: HomeAssistant, relays: FakeRelays
+) -> None:
+    """Review 13, 6: Boost (not the first) renamed Turbo: the home stays in it."""
+    modes = await _modes(hass, "Eco", "Boost")
+    relays.add("switch.boiler", on=False)
+    _device(hass, "switch.boiler")
+    assert await hass.config_entries.async_setup(modes.entry_id)
+    await hass.async_block_till_done()
+    select = er.async_get(hass).async_get_entity_id(
+        "select", DOMAIN_BESTIARIUM_MODE, MODE_SELECT_UNIQUE_ID
+    )
+    await hass.services.async_call(
+        "select",
+        "select_option",
+        {"entity_id": select, "option": "Boost"},
+        blocking=True,
+    )
+
+    flow = hass.config_entries.flow
+    result = await flow.async_init(
+        DOMAIN_BESTIARIUM_MODE,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": modes.entry_id},
+    )
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_1"})
+    result = await flow.async_configure(result["flow_id"], {"name": "Turbo"})
+    result = await flow.async_configure(result["flow_id"], {"next_step_id": "complete"})
+    await hass.async_block_till_done()
+
+    assert hass.states.get(select).state == "Turbo"
+
+
+async def test_a_mode_name_is_unique(hass: HomeAssistant) -> None:
+    """Two modes of one name would merge the devices' priorities: refused."""
+    modes = await _modes(hass, "Eco", "Boost")
+    assert await hass.config_entries.async_setup(modes.entry_id)
+    flow = hass.config_entries.flow
+    result = await flow.async_init(
+        DOMAIN_BESTIARIUM_MODE,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": modes.entry_id},
+    )
+    edit = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_1"})
+    edit = await flow.async_configure(edit["flow_id"], {"name": "Eco"})
+    assert edit["errors"] == {"name": "name_exists"}
+
+
+async def test_an_unknown_relay_gets_the_mode_after_a_restart(
+    hass: HomeAssistant, relays: FakeRelays
+) -> None:
+    """Review 13, 7: a cloud relay still unknown at the start gets the turn-off."""
+    hass.set_state(CoreState.not_running)
+    modes = await _modes(hass, "Eco", "Boost")
+    relays.add("switch.boiler", on=True)
+    hass.states.async_set("switch.boiler", "unknown")
+    boiler = _device(hass, "switch.boiler")
+    assert await hass.config_entries.async_setup(modes.entry_id)
+    await hass.async_block_till_done()
+    select = er.async_get(hass).async_get_entity_id(
+        "select", DOMAIN_BESTIARIUM_MODE, MODE_SELECT_UNIQUE_ID
+    )
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": select, "option": "Eco"}, blocking=True
+    )
+    assert await hass.config_entries.async_setup(boiler.entry_id)
+    await hass.async_start()
+    await hass.async_block_till_done()
+
+    assert ("turn_off", "switch.boiler") in relays.calls

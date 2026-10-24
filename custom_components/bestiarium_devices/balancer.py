@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import Event, callback
+from homeassistant.core import CoreState, Event, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 from homeassistant.helpers.event import (
@@ -255,6 +255,12 @@ class BalancingCoordinator:
         control = DeviceControl(self._hass, entry, self._response_memory)
         control.async_start()
         self._controls[entry.entry_id] = control
+        # Reloaded after the start (the owner's decision): its duties are gone,
+        # as after a restart of HA; the mode is applied again to it alone
+        if self._hass.state is CoreState.running and _mode(get_mode_state(self._hass)):
+            self._hass.async_create_task(
+                self._async_apply_mode(restart=True, only=entry.entry_id)
+            )
 
         @callback
         def remove() -> None:
@@ -470,9 +476,11 @@ class BalancingCoordinator:
         # Apply mode priorities: turn off OFF, turn on ALWAYS_ON
         self._hass.async_create_task(self._async_apply_mode())
 
-    async def _async_apply_mode(self, *, restart: bool = False) -> None:
-        """Apply the mode, then repeat its turn-offs until they are done."""
-        await self._strategies.async_apply_mode(restart=restart)
+    async def _async_apply_mode(
+        self, *, restart: bool = False, only: str | None = None
+    ) -> None:
+        """Apply the mode (to one device entry only), then repeat its turn-offs."""
+        await self._strategies.async_apply_mode(restart=restart, only=only)
         self._repeat_mode_duties()
 
     def _repeat_mode_duties(self) -> None:

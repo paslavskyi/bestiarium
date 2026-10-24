@@ -200,7 +200,8 @@
       "name_required": "Name is required",
       "yellow_zone_min": "Yellow zone must be at least 50%",
       "red_zone_must_exceed_yellow": "Red zone must be higher than yellow zone",
-      "no_options": "At least one option must be configured before completing"
+      "no_options": "At least one option must be configured before completing",
+      "name_exists": "A mode with this name exists"
     },
     "abort": {
       "already_configured": "Bestiarium Mode is already configured. Only one instance is allowed.",

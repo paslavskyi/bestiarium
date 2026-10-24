@@ -182,3 +182,18 @@ async def test_red_turn_off_of_a_device_off_by_mode_is_the_mode_duty(
     assert len(commands) > 3  # noqa: PLR2004 - more than the first series
     assert set(commands) == {"turn_off"}
     assert home.state(heater) == ControlState.MODE_OFF_FAILED
+
+
+async def test_a_reloaded_device_gets_the_mode_again(home: Home) -> None:
+    """The owner's decision: a reloaded device entry, as after a restart."""
+    await home.mode("1000")
+    heater = await home.device(HEATER, 5000, priorities=OFF_IN_ALWAYS)
+    await _select(home, "Always")
+    home.set(HEATER, "on")
+    await home.tick(1)
+
+    await home.hass.config_entries.async_reload(heater.entry_id)
+    await home.tick(1)
+
+    assert home.relays.is_on(HEATER) is False
+    assert home.commands(HEATER) == ["turn_off", "turn_off"]

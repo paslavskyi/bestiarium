@@ -124,6 +124,8 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input.get(CONF_NAME, "").strip()
             if not name:
                 errors[CONF_NAME] = "name_required"
+            elif name in (option[CONF_NAME] for option in self._options):
+                errors[CONF_NAME] = "name_exists"
             else:
                 self._options.append({CONF_NAME: name})
                 self._origins.append(None)
@@ -423,6 +425,12 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             name = user_input.get(CONF_NAME, "").strip()
             if not name:
                 errors[CONF_NAME] = "name_required"
+            elif name in (
+                option[CONF_NAME]
+                for index, option in enumerate(self._options)
+                if index != edit_index
+            ):
+                errors[CONF_NAME] = "name_exists"
             else:
                 self._options[edit_index] = {CONF_NAME: name}
                 return await self._async_step_options_list()
