@@ -275,9 +275,10 @@ Entities of this integration (the "Allowed" switches, which sit on the relay's d
 `get_current_priority(hass, entry)` — The core priority lookup, read from the device's own config entry:
 
 1. Reads the bestiarium_mode select state for current mode (`get_mode_state`)
-2. Falls back to `LOAD_PRIORITY_DEFAULT` (5000) if mode entity is missing/unknown/unavailable
-3. Returns the entry's mode-specific priority if configured, otherwise its `"default"` priority
-4. Final fallback: `LOAD_PRIORITY_DEFAULT`
+2. Returns the entry's priority for that mode if configured, otherwise its `"default"` priority — also when the mode select is missing, unknown or unavailable (before DEV-008 stage B every device then got 5000)
+3. Final fallback: `LOAD_PRIORITY_DEFAULT` (an entry without priorities)
+
+Without the mode select, once HA has started, the Repairs issue `no_mode_select` says so; it goes when the select appears.
 
 It takes the entry, not a `device_id`: two entries can share a device (a two-relay device extended twice), and each must keep its own priority.
 
@@ -330,7 +331,7 @@ Each read resolves the sensor's entity_id from the registry by unique_id at that
 
 ### Following Renamed Entities
 
-State listeners need entity_ids, so `_subscribe()` tracks the zone sensors and the mode select by their current entity_ids and also tracks their entity registry updates (`async_track_entity_registry_updated_event`, which matches renames by `old_entity_id`). When one is renamed, the coordinator drops and re-creates the listeners with the new entity_ids. It does not re-evaluate the zone on a rename: the entity's state is unchanged, and the re-added entity's new state goes through the normal `_on_zone_changed` path (same zone → no `zone_changed` event).
+State listeners need entity_ids, so `_subscribe()` tracks the zone sensors and the mode select by their current entity_ids and also tracks their entity registry updates (`async_track_entity_registry_updated_event`, which matches renames by `old_entity_id`). When one is renamed, the coordinator drops and re-creates the listeners with the new entity_ids. It does not re-evaluate the zone on a rename: the entity's state is unchanged, and the re-added entity's new state goes through the normal `_on_zone_changed` path (same zone → nothing to do).
 
 This relies only on the registry update event, so it works both with the HA 2026.10 rename model (entity removed and re-added) and with in-place renames.
 
@@ -342,12 +343,17 @@ This relies only on the registry update event, so it works both with the HA 2026
 4. Determines initial active zone
 5. If initial zone is OVERLOAD → executes overload strategy immediately
 6. Otherwise → starts periodic job (waits for first interval before executing)
+7. Zone sensors removed (the load limits removed) → it stops following them, the zone is no data, and `no_load_zones` again
 
 ### State Change Handling
 
 **Zone changes** (`_on_zone_changed`):
 - Recalculates active zone via `_determine_active_zone()`
 - If zone changed: cancels old periodic job, handles new zone
+
+**After HA has started** the mode is applied again (`async_apply_mode(restart=True)`, the owner's choice: restarts are rare, and the mode's duties do not survive one). Only the devices that are on get a turn-off; `bestiarium_devices_mode_applied` with `reason: "restart"` fires only if one was turned off, and lists only those.
+
+**Renamed modes**: the mode form sends `bestiarium_mode_options_renamed`; every device entry moves its priority keys (and `mode_options_snapshot`), a removed mode's key goes.
 
 **Mode changes** (`_on_mode_changed`), only when the select goes from one mode to another (a select that goes `unavailable` and comes back with a reload of the mode entry is no change):
 - `Strategies.async_apply_mode()` goes over the devices set up:
@@ -534,7 +540,7 @@ All entities of a device share `BestiariumDeviceEntity` (`entity.py`): `has_enti
 
 | Entity | Key | Category | What it does |
 |---|---|---|---|
-| sensor "Expected power" / «Очікуване споживання» | `expected_power` | diagnostic | state = expected power (W, `power`, `measurement`); attributes `estimate_source`, `runs` (start, duration_s, power_w, source), `manual_power_w`, `manual_power_note` (translated: the estimated power counts until 3 real runs) |
+| sensor "Expected power" / «Очікуване споживання» | `expected_power` | diagnostic | state = expected power (W, `power`, `measurement`); attributes `estimate_source`, `runs` (start, duration_s, power_w, source; not recorded) |
 The estimated power and the reset were a number and a button until DEV-008; they are in the settings form now ([settings vs entities](concepts/settings-vs-entities.md)). Migration 1.3 removes their entities from the registry; the value already was in `entry.options`. Dashboards and automations that used `number.…_estimated_power` or `button.…_reset_power_memory` find no entity.
 
 The sensor updates on `SIGNAL_EXPECTED_POWER_CHANGED`, which the memory and the settings form send. It does not use an entry update listener: HA expects those to reload the entry.
@@ -569,7 +575,7 @@ Translation keys cover:
 - Config flow field `thermostat_driven` (label + description)
 - Entity names: `Allowed`, `Expected power`, `Control state`, `Control events` (each also as `{device_name} …`), `Default Load Priority`, `{mode_name} Load Priority`
 - Repairs issues `missing_entity` (with its fix flow) and `no_load_zones`
-- Attribute names and values of "Expected power": `estimate_source` (`memory`, `history`, `manual`, `large_device_default`), `runs`, `manual_power_w`, `manual_power_note`
+- Attribute names and values of "Expected power": `estimate_source` (`memory`, `history`, `manual`, `large_device_default`), `runs` (`manual_power_w` / `manual_power_note` removed in DEV-008 stage B: they repeated the settings form)
 
 ---
 
@@ -635,7 +641,7 @@ Translation keys cover:
 
 3. **Device ID semantics**: Virtual devices use `entry.entry_id` as their device ID (since they have no pre-existing HA device). Extended devices use the actual HA `device_id`. This distinction matters for priority lookups.
 
-4. **Priority resolution chain**: Mode-specific → default from entry → `LOAD_PRIORITY_DEFAULT` (5000). The mode select entity must be in a valid state for mode-specific priorities to apply.
+4. **Priority resolution chain**: Mode-specific → default from entry → `LOAD_PRIORITY_DEFAULT` (5000, only for an entry without priorities). Without a valid mode select each device has its own default.
 
 5. **One device per cycle**: Green and red strategies each affect only ONE device per execution cycle. This gradual approach prevents power oscillation.
 
@@ -648,5 +654,9 @@ Translation keys cover:
 9. **Power sensor validation**: Must have `device_class=power` and `unit_of_measurement=W`. The validation runs at config flow time, not continuously.
 
 10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive, with the Repairs issue `no_load_zones`. Sensors that appear later (limits configured on a running system) bring it alive at once.
+
+12. **One relay, one device** (`helpers.switch_taken`): the create, reconfigure and Repairs forms refuse a switch another Bestiarium device controls (`switch_taken`); one device with two relays may have two Bestiarium devices. Migration 1.2 uses the same rule.
+
+13. **The memories** (`store.py`): `PowerMemory` and `ResponseMemory` are `EntryStore`s — a value per device entry in a Store, saved a little later, forgotten with the entry.
 
 11. **Repairs of a device** (`repairs.py`): once HA has fully started, a relay or power sensor with no state at all (removed, disabled) is the issue `missing_entity_<entry_id>` ("Fix": the fields of the reconfigure form — device, or switch and sensor of a virtual device); it goes when the entity is back or another is picked. Unavailable is the control state "Switch unavailable", not an issue. A renamed relay or sensor is followed: the entry takes the new entity_id and reloads. Disabled entries are not set up, so not checked.

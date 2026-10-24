@@ -133,7 +133,7 @@ There are 10 hard-coded `async_step_edit_N` methods (N = 0..9), each delegating 
 
 ### Reconfigure Flow
 
-Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry. On save, calls `async_update_reload_and_abort(..., reason="reconfigure_successful")` to update and reload the entry. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet. The load limit field defaults to the current limit, including changes made through the limit entity.
+Uses `SOURCE_RECONFIGURE`. Loads existing `entry.data` into `_options` and `_ac_load_limits` on first entry, and remembers each option's name (`_origins`). On save it sends the dispatcher signal `bestiarium_mode_options_renamed` with the renamed modes (`{old: new}`) and the removed ones: `bestiarium_devices` moves the devices' priority keys, so a renamed mode keeps them. Then it calls `async_update_reload_and_abort(..., reason="reconfigure_successful")` to update and reload the entry. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet. The load limit field defaults to the current limit, including changes made through the limit entity.
 
 ---
 
@@ -156,10 +156,7 @@ Class: `BestiariumModeSelect(SelectEntity, RestoreEntity)`
 - **Current option**: Stored in `_current_option`, defaults to first option on startup
 - **State restore**: On `async_added_to_hass`, restores previous selection if it still exists in the current options list; falls back to first option otherwise
 - **Icon**: Dynamically returns the icon of the currently selected mode option
-- **Extra attributes**:
-  - `description` — description of the currently selected mode (if present)
-  - `icon` — icon of the currently selected mode
-  - `options_metadata` — dict mapping each option name to its `{description, icon}` metadata
+- **No extra attributes** (DEV-008 stage B, [necessity](concepts/necessity.md)): `description`, `icon` and `options_metadata` repeated the form; the icon of the current mode is the entity's icon
 
 ### Select Action
 
@@ -205,13 +202,43 @@ red_threshold    = limit_w * red_zone_percent / 100
 
 ### Entity Attributes
 
-| Attribute | Scope | Description |
+Each sensor tells only its own (DEV-008 stage B, [necessity](concepts/necessity.md)); the limit is the limit entity's.
+
+| Attribute | Sensor | Description |
 |---|---|---|
-| `zone` | All zones | Zone name string ("green", "yellow", "red", "overload") |
-| `yellow_threshold` | All zones | Calculated yellow threshold in watts |
-| `red_threshold` | All zones | Calculated red threshold in watts |
-| `limit_w` | All zones | Current watt limit (follows the limit entity) |
-| `recovery_pending` | Green only | Boolean — whether the zone is the pause before green |
+| `recovery_pending` | green | whether the zone is the pause before green |
+| `yellow_threshold` | yellow | its threshold in watts |
+| `red_threshold` | red | its threshold in watts; the balancer of `bestiarium_devices` reads it |
+
+Removed in DEV-008 stage B: `zone` and `limit_w` on every sensor, the other zones' thresholds.
+
+### One zone value: a template sensor
+
+Bestiarium has no "load zone" entity: it would repeat the four sensors. A
+template sensor gives one value with all six states:
+
+```yaml
+template:
+  - sensor:
+      - name: "Load zone"
+        unique_id: load_zone
+        state: >
+          {% if is_state('binary_sensor.power_load_overload', 'on') %}overload
+          {% elif is_state('binary_sensor.power_load_red', 'on') %}red
+          {% elif is_state('binary_sensor.power_load_yellow', 'on') %}yellow
+          {% elif is_state('binary_sensor.power_load_green', 'on') %}green
+          {% elif is_state('binary_sensor.power_load_green', 'off') %}pause
+          {% else %}no_data{% endif %}
+```
+
+- **pause** — all four off and available: the load is below the yellow threshold, the pause before green runs (green's `recovery_pending` is true); the balancer turns nothing on or off.
+- **no data** — all four unavailable: the power sensor gave no data for longer than the tolerance; the balancer turns nothing on or off; a `warning` in the log.
+
+### Without load limits
+
+The entry removes its zone sensors from the registry (orphans would stay
+unavailable); `bestiarium_devices` stops following them and shows the
+Repairs issue "Balancing waits for the load zones".
 
 ### Unique IDs and Translation Keys
 
@@ -241,7 +268,7 @@ Class: `PowerLoadLimitNumber(NumberEntity)`
 | `unique_id` | `power_load_limit` |
 | `entity_id` | `number.power_load_limit` (from the English name "Power Load Limit") |
 | `translation_key` | `power_load_limit` (en "Power Load Limit", uk "Ліміт навантаження") |
-| `entity_category` | `config` |
+| `entity_category` | none: automations operate it (DEV-008 stage B; it was `config`) |
 | `device_class` | `power`, unit `W` |
 | Range | `LOAD_LIMIT_MIN_W`–`LOAD_LIMIT_MAX_W` (1–100000), step 1, box mode — same range as the config flow |
 
@@ -314,7 +341,7 @@ Translation keys cover:
 
 ### `test_select.py`
 - Entity creation, initial state (first option), options list
-- Icon and `options_metadata` extra attributes
+- The icon of the current mode; no metadata attributes
 
 ---
 

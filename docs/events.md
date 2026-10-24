@@ -1,6 +1,6 @@
 # Bestiarium Automation Events
 
-This document describes all Home Assistant bus events fired by `bestiarium_mode`, `bestiarium_devices` and `bestiarium_climate`. Use these events to build automations that react to load limit changes, zone changes, device shedding/restoring, capacity rotation, overload shutdowns, and recovery.
+This document describes all Home Assistant bus events fired by `bestiarium_mode`, `bestiarium_devices` and `bestiarium_climate`. Use these events to build automations that react to load limit changes, zone changes, device shedding/restoring, capacity rotation and overload shutdowns.
 
 **Event naming convention**: `{domain}_{what_happened}` (snake_case).
 
@@ -52,30 +52,12 @@ The values and the relay entity above are examples of a user's automation; Besti
 
 All events are fired from `custom_components/bestiarium_devices/balancer.py`. Their payloads are a contract: each has a `TypedDict` in `const.py` (`EVENT_DATA` maps an event to it), the logbook descriptions are typed with them, and the balancer tests check every fired payload against them.
 
-### `bestiarium_devices_zone_changed`
+### `bestiarium_devices_zone_changed` — removed in DEV-008 stage B
 
-**When**: Active power load zone transitions (e.g. green → red).
-
-| Field           | Type   | Description                    |
-|-----------------|--------|--------------------------------|
-| `previous_zone` | string | Previous active zone value     |
-| `zone`          | string | New active zone value          |
-
-Values: `green`, `yellow`, `red`, `overload`, and since DEV-008 `pause` (green on pause: below the yellow threshold, before the pause before green is over) and `no_data` (no power data for longer than the tolerance) — before DEV-008 both were `none`. In `pause` and `no_data` the balancer runs no strategy.
-
-**Example automation** — Notify when entering red zone:
-
-```yaml
-trigger:
-  - platform: event
-    event_type: bestiarium_devices_zone_changed
-    event_data:
-      zone: red
-action:
-  - service: notify.persistent_notification
-    data:
-      message: "Power load entered red zone"
-```
+The zone sensors of `bestiarium_mode` tell the same: trigger on their state
+(for example `binary_sensor.power_load_red` turning `on`). See
+[necessity](concepts/necessity.md). For one zone value see the template
+example in [bestiarium_mode.md](bestiarium_mode.md#one-zone-value-a-template-sensor).
 
 ---
 
@@ -214,24 +196,34 @@ action:
 
 ### `bestiarium_devices_mode_applied`
 
-**When**: Mode priorities have been applied after a mode change.
+**When**: Mode priorities have been applied: after a mode change, and again
+after HA has started (the owner's choice: restarts are rare).
 
 | Field               | Type | Description                    |
 |---------------------|------|--------------------------------|
-| `mode`              | str  | New mode name (e.g. `"Night"`) |
+| `mode`              | str  | Mode name (e.g. `"Night"`)     |
 | `devices_turned_off`| list | Device IDs turned off         |
 | `devices_turned_on` | list | Device IDs turned on          |
+| `reason`            | str  | `"selected"` — a person or an automation chose the mode; `"restart"` — applied again after HA started (DEV-008 stage B) |
 
-**Example automation** — Confirm mode switch:
+After a restart the event fires **only if a device was turned off**, and
+`devices_turned_off` lists only the devices that were on: the family can turn
+on what it needs.
+
+**Example automation** — Tell the family what a restart turned off:
 
 ```yaml
 trigger:
   - platform: event
     event_type: bestiarium_devices_mode_applied
+    event_data:
+      reason: restart
 action:
-  - service: logbook.log
+  - service: notify.family_tablet
     data:
-      message: "Mode {{ trigger.event.data.mode }} applied"
+      message: >
+        After a restart the mode {{ trigger.event.data.mode }} turned off
+        {{ trigger.event.data.devices_turned_off | length }} devices
 ```
 
 ---
@@ -252,32 +244,9 @@ trigger:
 
 ## bestiarium_climate Events
 
-All events are fired from `custom_components/bestiarium_climate/balancer.py`.
+All events are fired from `custom_components/bestiarium_climate/balancer.py`, only in a deficit of capacity, when a thermostat goes in or out of the rotation.
 
-### `bestiarium_climate_switch_failed`
-
-**When**: A switch exceeds `MAX_SWITCH_RETRIES` (switch not responding to turn on/off).
-
-| Field              | Type   | Description                    |
-|--------------------|--------|--------------------------------|
-| `entity_id`        | string | Thermostat entity ID           |
-| `thermostat`       | string | Thermostat label               |
-| `switch_entity_id` | string | Target switch entity ID        |
-
-**Example automation** — Alert on switch failure:
-
-```yaml
-trigger:
-  - platform: event
-    event_type: bestiarium_climate_switch_failed
-action:
-  - service: notify.persistent_notification
-    data:
-      title: "Climate switch failed"
-      message: "{{ trigger.event.data.thermostat }} — switch {{ trigger.event.data.switch_entity_id }} not responding"
-```
-
----
+Removed in DEV-008 stage B ([necessity](concepts/necessity.md)): `bestiarium_climate_switch_failed` and `_switch_recovered` (the thermostat's "Control state" sensor tells it), `bestiarium_climate_capacity_exhausted` (fired every minute of a deficit, which is the normal state).
 
 ### `bestiarium_climate_device_rotated_in`
 
@@ -328,52 +297,6 @@ action:
 ```
 
 ---
-
-### `bestiarium_climate_switch_recovered`
-
-**When**: `_handle_recovery` clears `switch_not_responding` because the switch is now OFF.
-
-| Field              | Type   | Description                    |
-|--------------------|--------|--------------------------------|
-| `thermostat`       | string | Thermostat entity ID or label  |
-| `switch_entity_id` | string | Target switch entity ID        |
-
-**Example automation** — Confirm device back online:
-
-```yaml
-trigger:
-  - platform: event
-    event_type: bestiarium_climate_switch_recovered
-action:
-  - service: notify.persistent_notification
-    data:
-      message: "{{ trigger.event.data.thermostat }} switch recovered"
-```
-
----
-
-### `bestiarium_climate_capacity_exhausted`
-
-**When**: Demand exceeds capacity (deficit branch in `_calculate_expected_state`).
-
-| Field               | Type | Description                          |
-|---------------------|------|--------------------------------------|
-| `capacity`          | int  | Current capacity (simultaneous slots) |
-| `demand`            | int  | Number of thermostats requesting heat |
-| `thermostats_on`    | list | Entity IDs with allocated slots      |
-| `thermostats_waiting` | list | Entity IDs waiting for a slot      |
-
-**Example automation** — Dashboard indicator:
-
-```yaml
-trigger:
-  - platform: event
-    event_type: bestiarium_climate_capacity_exhausted
-action:
-  - service: input_boolean.turn_on
-    target:
-      entity_id: input_boolean.capacity_exhausted
-```
 
 ---
 

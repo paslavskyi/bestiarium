@@ -2,6 +2,10 @@
 
 # ruff: noqa: S101
 
+import json
+from dataclasses import fields
+from pathlib import Path
+
 import pytest
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
@@ -12,7 +16,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+import custom_components.bestiarium_climate as climate
 from custom_components.bestiarium_climate.const import (
+    ControlSettings,
+    ControlState,
     CONF_CAPACITY,
     CONF_MIN_WORKING_TIME,
     CONF_RECOVERY_TIMEOUT,
@@ -406,3 +413,40 @@ async def test_reconfigure_thermostat_subentry_message_from_integration_translat
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert result.get("translation_domain") is None
+
+
+async def test_control_settings_in_the_options(hass: HomeAssistant) -> None:
+    """Stage B: attempts, tolerance and hysteresis in the entry's options."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_CAPACITY: 1,
+            CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
+            CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
+        },
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    defaults = {key.schema: key.default() for key in result["data_schema"].schema}
+    assert defaults == {
+        "attempts": 7,
+        "tolerance_seconds": 60,
+        "hysteresis_seconds": 60,
+    }
+
+    await hass.config_entries.options.async_configure(
+        result["flow_id"], {**defaults, "attempts": 3}
+    )
+    assert entry.options["attempts"] == 3
+
+
+@pytest.mark.parametrize("language", ["en", "uk"])
+def test_control_texts_are_translated(language: str) -> None:
+    """Every control state and setting has a text in both languages."""
+    path = Path(climate.__file__).parent / "translations" / f"{language}.json"
+    texts = json.loads(path.read_text(encoding="utf-8"))
+    states = texts["entity"]["sensor"]["control_state"]["state"]
+    assert set(states) == {state.value for state in ControlState}
+    assert set(texts["options"]["step"]["init"]["data"]) == {
+        f.name for f in fields(ControlSettings)
+    }

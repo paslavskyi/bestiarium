@@ -13,7 +13,7 @@ Core capabilities:
 
 The integration uses **HA subentries** — switches and thermostats are added as subentries under a single parent config entry.
 
-**Automation events**: The balancer fires HA bus events at capacity exhaustion, device rotation, switch failure, and recovery. See [Automation Events](events.md) for event types, payloads, and automation examples.
+**Automation events**: The balancer fires HA bus events at device rotation in a deficit; the thermostat's control state tells switch and temperature problems. See [Automation Events](events.md) for event types, payloads, and automation examples.
 
 ---
 
@@ -30,6 +30,8 @@ custom_components/bestiarium_climate/
 ├── climate.py           # VirtualThermostat entity (ClimateEntity + RestoreEntity)
 ├── switch.py            # VirtualSwitch entity (SwitchEntity)
 ├── number.py            # CapacityNumber entity (NumberEntity + RestoreEntity)
+├── sensor.py            # ControlStateSensor — "Control state" of each thermostat
+├── control.py           # ThermostatControl, ThermostatMemory (Store)
 ├── balancer.py          # BalancingCoordinator — capacity-limited device rotation
 ├── strings.json         # Default translation strings
 └── translations/
@@ -125,8 +127,7 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SWITCH]
 | `DEFAULT_TOLERANCE` | `0.3` |
 | `CAPACITY_MIN` / `CAPACITY_MAX` | `0` / `100` |
 | `BALANCING_INTERVAL_SECONDS` | `60` |
-| `MAX_SWITCH_RETRIES` | `7` |
-| `EVENT_SWITCH_FAILED` | `"bestiarium_climate_switch_failed"` |
+| `ControlSettings` (options) | `attempts` 7, `tolerance_seconds` 60, `hysteresis_seconds` 60 |
 | `PRESET_KEYS` | `("away", "comfort", "eco", "home", "sleep", "activity")` |
 
 ### ClimateMode Enum
@@ -205,6 +206,7 @@ Class: `VirtualSwitch(SwitchEntity)`
 - **Turn on**: Executes `heating_action` (if mode=heating) or `cooling_action` (if mode=cooling) via `_execute_action`
 - **Turn off**: Executes `off_action` via `_execute_action`
 - **State derivation**: `is_on` is derived from the power sensor — if power reading >= `min_power`, switch is ON; otherwise OFF
+- **No power data** (the sensor unavailable, unknown, missing or not a number): the switch is **unavailable**, not off (DEV-008 stage B); one `info` when the data goes and when it is back. The balancer sees "Switch unavailable" after the tolerance. It stays a building block of the integration ([necessity](concepts/necessity.md)): one per heater, actions per mode, a threshold, part of the control.
 - **Power tracking**: Subscribes to power sensor state changes; updates `is_on` reactively
 
 ### Action Execution (`_execute_action`)
@@ -224,136 +226,62 @@ Each switch subentry creates its own device:
 
 ## Virtual Thermostat (`climate.py`)
 
-Class: `VirtualThermostat(ClimateEntity, RestoreEntity)`
+Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat subentry.
 
 ### Key Behavior
 
-- **Does NOT directly control switches** — sets `expected_switch_state` flag, which the balancer reads
-- **Temperature demand**: Uses hysteresis with cold/hot tolerance
-  - Heating: demand when `current_temp < target_temp - cold_tolerance`
-  - Cooling: demand when `current_temp > target_temp + hot_tolerance`
-- **HVAC modes**: `[HEAT, OFF]` for heating mode; `[COOL, OFF]` for cooling mode
-- **HVAC action**: Computed from temperature demand — HEATING/COOLING when demand exists, IDLE when no demand, OFF when mode is OFF
-- **Presets**: Supports 6 preset keys (away, comfort, eco, home, sleep, activity). Selecting a preset saves the current target temp and applies the preset temp. Clearing restores saved temp.
-- **Rebalance trigger**: When hvac_action changes to IDLE or OFF, triggers an immediate balancer cycle via `_trigger_rebalance()`
+- Tracks the temperature sensor; `hvac_action` is HEATING / COOLING when the temperature is beyond the target and the tolerance, IDLE otherwise, OFF when the mode is off.
+- A missing reading keeps the last temperature: the thermostat's control (below) decides when the temperature is gone too long. Then the climate entity is **unavailable** (`available = False`) and the thermostat leaves the rotation.
+- Presets set the target; `none` leaves a preset and goes back to the target set before it (`saved_temperature`, kept in the Store — before DEV-008 it was read on restore but never written).
+- It asks the balancer for an immediate cycle on a change of mode, target or demand.
+- Its state holds only climate data: the balancer's internals (`expected_switch_state`, tries, deferral) are not attributes (DEV-008 stage B; they lived in the history).
 
 ### State Restoration
 
-Restores from `RestoreEntity`:
-- hvac_mode, target_temperature, preset_mode, saved_temperature
-- expected_switch_state, expected_switch_state_changed_at
-- switch_state_change_tries, switch_not_responding, recovery_time
+`RestoreEntity` restores the HVAC mode, the target and the preset. The rest lives in the Store `bestiarium_climate.thermostats` (`ThermostatMemory`, by subentry id): `saved_temperature` of the thermostat, and `expected_on`, `expected_changed_at`, `tries`, `deferred_until` of its control.
 
-### Extra State Attributes
+---
 
-| Attribute | Type | Description |
-|---|---|---|
-| `expected_switch_state` | `bool` | Whether the balancer wants the target switch ON |
-| `expected_switch_state_changed_at` | `str` (ISO) | When expected state last changed |
-| `switch_state_change_tries` | `int` | Consecutive failed sync attempts |
-| `switch_not_responding` | `bool` | True when max retries exceeded |
-| `recovery_time` | `str` (ISO) or null | When recovery period ends |
+## Thermostat control (`control.py`) and "Control state" (`sensor.py`)
 
-### Setter Methods (Called by Balancer)
+`ThermostatControl` — one per thermostat, made by the coordinator; the pattern of `bestiarium_devices` DEV-007 ([stability](concepts/stability.md)):
 
-The thermostat exposes setter methods for the balancer to mutate state:
-- `set_expected_switch_state(value: bool)`
-- `set_switch_state_change_tries(value: int)`
-- `set_switch_not_responding(value: bool)`
-- `set_recovery_time(value: datetime | None)`
+- It follows the thermostat's switch and temperature sensor; their availability counts only once HA has started.
+- **Switch unavailable / no temperature**: gone (unavailable, unknown, missing; for the temperature also not a number) for longer than `tolerance_seconds` → a confirmed problem; it ends after `hysteresis_seconds` without it.
+- **Not responding**: each balancing cycle in which the switch is not as wanted counts an attempt; after `attempts` the switch is **deferred** for the entry's `recovery_timeout`, turned off once, and then tried again. It ends when the switch takes the wanted state (after the hysteresis).
+- **In the rotation** only if none of these: a gone switch, a deferred switch and no temperature all free the thermostat's place for the others.
 
-### Device Info
+`ControlStateSensor` — `sensor.<thermostat>_control_state`, enum, diagnostic, on the thermostat's device: `switch_unavailable` > `unresponsive` > `no_temperature` > `normal`. Attributes `failed_attempts`, `next_attempt` (unrecorded). One `warning` when a problem starts, one `info` when it ends.
 
-Each thermostat subentry creates its own device:
-- `identifiers`: `{(DOMAIN, subentry.subentry_id)}`
-- `model`: `"Virtual Thermostat"`
-- `entry_type`: `DeviceEntryType.SERVICE`
+### Settings (options flow)
+
+One set for all thermostats of the entry (the owner's choice), defaults: `attempts` 7, `tolerance_seconds` 60, `hysteresis_seconds` 60.
 
 ---
 
 ## Capacity Number (`number.py`)
 
-Class: `CapacityNumber(NumberEntity, RestoreEntity)`
-
-- **Range**: 0–100, step 1
-- **Translation key**: `"capacity"`
-- **Unique ID**: `f"{entry.entry_id}_capacity"`
-- **State restore**: Restores last value on startup; falls back to config entry's `capacity` value
-- **Runtime adjustable**: User can change capacity via the HA UI; balancer reads it each cycle
+`CapacityNumber` — how many thermostats may work at once, 0–100. **The one source of the capacity**: a power automation changes it, and a change shares the capacity again at once. The entry's `capacity` is only its initial value (the setup form); the reconfigure form has no capacity field (before DEV-008 its value was silently ignored, because the entity restores its last state). No entity category: it is operated.
 
 ---
 
 ## Balancing Coordinator (`balancer.py`)
 
-Class: `BalancingCoordinator`
+`BalancingCoordinator` — one per climate entry, made before the platforms (they show its controls), started after them.
 
-### Lifecycle
+### Balance Cycle (`async_balance`, every 60 s and on a thermostat's change)
 
-- One coordinator **per config entry** (not shared)
-- Runs every 60 seconds (`BALANCING_INTERVAL_SECONDS`)
-- Also triggered on-demand by thermostats when hvac_action changes to IDLE/OFF
+1. **Allocate.** The working thermostats are those in the rotation that want heat or cold. Every other one is not wanted on. If the capacity is short (the normal state of a home that needs Bestiarium Climate), the ones that worked least go first: working-time coefficient ascending (time on / minimum working time, the thermostat's own or the entry's), then the temperature difference descending. In a deficit a change fires `bestiarium_climate_device_rotated_in` / `_out`.
+2. **Sync.** Each switch gets the state wanted (`ThermostatControl.to_command`); a command HA refuses counts as an attempt and the cycle goes on with the other switches — one switch never stops the others.
 
-### Balance Cycle (`_async_balance`)
+### Capacity Reading
 
-Each cycle runs four phases in order:
+The state of the capacity number, by its unique_id; an unreadable value is `DEFAULT_CAPACITY`.
 
-#### Phase 1: Recovery (`_handle_recovery`)
+### Removed in DEV-008 stage B ([necessity](concepts/necessity.md))
 
-For each thermostat with `recovery_time` in the past:
-- If target switch is still ON: send turn_off, increment tries. If tries >= `MAX_SWITCH_RETRIES` (7), fire `EVENT_SWITCH_FAILED`.
-- If target switch is OFF: clear `switch_not_responding`, `recovery_time`, and tries (recovery complete).
-
-#### Phase 2: Turn Off Idle (`_turn_off_idle`)
-
-For each thermostat with `hvac_action` IDLE or OFF and `expected_switch_state` True:
-- Set `expected_switch_state = False`, reset tries to 0.
-
-This frees capacity slots for thermostats that actually have demand.
-
-#### Phase 3: Calculate Expected State (`_calculate_expected_state`)
-
-Collects all thermostats with `hvac_action` HEATING or COOLING and `switch_not_responding` False.
-
-Three strategies based on capacity vs. demand:
-
-| Condition | Strategy |
-|---|---|
-| `capacity <= 0` | Turn off all working thermostats |
-| `capacity >= count` | Turn on all working thermostats |
-| `capacity < count` (deficit) | Sort by working_time_coefficient ASC then temperature_diff DESC; allocate top `capacity` slots |
-
-**Working time coefficient**: `actual_working_seconds / min_required_seconds`. Lower values = less time worked = higher priority for getting a slot. This drives fair rotation.
-
-**Temperature diff**: `abs(target - current)`. Higher diff = more demand = tiebreaker when coefficients are equal.
-
-#### Phase 4: Sync Switches (`_sync_switches`)
-
-For each thermostat (skipping `switch_not_responding`):
-- If actual switch state matches expected: reset tries to 0
-- If mismatch: send turn_on/turn_off, increment tries
-- If tries >= `MAX_SWITCH_RETRIES` (7): fire `EVENT_SWITCH_FAILED`, force turn off, mark `switch_not_responding = True`, set `recovery_time = now + recovery_timeout`, clear expected state
-
-### Capacity Reading (`_get_capacity`)
-
-1. Tries `number.bestiarium_climate_capacity` entity
-2. Falls back to entity registry lookup by unique_id `f"{entry_id}_capacity"`
-3. Final fallback: `DEFAULT_CAPACITY` (1)
-
-### Thermostat Discovery (`_get_thermostats`)
-
-Reads from `hass.data[CLIMATE_DATA_COMPONENT]`, filters for `VirtualThermostat` instances belonging to this config entry.
-
-### Event: `bestiarium_climate_switch_failed`
-
-Fired when a switch exceeds `MAX_SWITCH_RETRIES` (during sync or recovery). Payload:
-
-```python
-{
-    "entity_id": str,            # thermostat entity_id
-    "thermostat": str,           # same
-    "switch_entity_id": str,     # target_switch entity_id
-}
-```
+- `bestiarium_climate_capacity_exhausted` — fired every minute of a deficit (~1440 a day) while a deficit is the normal state; nobody listened.
+- `bestiarium_climate_switch_failed` / `_switch_recovered` — the control state tells the same.
 
 ---
 
@@ -375,7 +303,7 @@ Coverage:
 
 ### `test_config_flow.py`
 - Create main entry with custom values and defaults
-- Reconfigure main entry
+- Reconfigure main entry (no capacity field); control settings in the options; translations of states and settings
 - Switch subentry: create (heating mode), validation (heating requires heating_action, cooling requires cooling_action)
 - Thermostat subentry: two-step flow (basic + presets)
 
@@ -383,7 +311,7 @@ Coverage:
 - Thermostat creation from subentry
 - Temperature tracking updates current_temp and hvac_action
 - IDLE hvac_action when temp meets target
-- Extra state attributes present
+- No balancer internals in the attributes; the target before a preset survives a reload
 - Set hvac_mode updates state
 
 ### `test_switch.py`
@@ -398,17 +326,17 @@ Coverage:
 - Restore fallback to config entry value
 
 ### `test_balancer.py`
-- Coordinator start/stop
-- `_turn_off_idle`: clears expected when hvac_action is IDLE
-- `_calculate_expected_state`: capacity=0 turns off all
-- `_sync_switches`: resets tries when match, calls turn_on when mismatch
-- `_handle_recovery`: clears not_responding when switch is off
+- Three heaters, capacity 2: two on; a dead switch is deferred and the third takes its place, one warning
+- A refused command does not stop the other switches
+- No temperature for more than a minute: off, unavailable, its place to another; back after the hysteresis
+- The capacity entity applies at once; nothing repeats every minute; no internals in the attributes; a deferral survives a reload
+- A virtual switch without power data is unavailable
 
 ---
 
 ## Design Notes & Gotchas
 
-1. **Indirect switch control**: Thermostats NEVER directly call switch services. They set `expected_switch_state`, and the balancer's `_sync_switches` phase does the actual switching. This decoupling enables capacity limiting.
+1. **Indirect switch control**: Thermostats NEVER directly call switch services. The balancer sets what each control wants (`expected_on`) and sends the switches. This decoupling enables capacity limiting.
 
 2. **Subentry architecture**: Unlike the other bestiarium integrations, this one uses HA's `ConfigSubentryFlow` API. Switches and thermostats are subentries under one parent config entry, not separate config entries.
 
@@ -418,7 +346,7 @@ Coverage:
 
 5. **Fair rotation via working_time_coefficient**: When demand exceeds capacity, devices that have worked the least get priority. The coefficient `actual_time / min_required_time` ensures each device gets at least `min_working_time` before being rotated out.
 
-6. **Non-responding switch handling**: After 5 failed sync attempts, the switch is marked `not_responding`, forced off, and enters a recovery period (`recovery_timeout`, default 1 hour). During recovery, the balancer periodically retries turning the switch off. The `bestiarium_climate_switch_failed` event can be used for automations/notifications.
+6. **Non-responding switch handling**: After `attempts` (default 7) cycles in which the switch is not as wanted, it is deferred for `recovery_timeout` (default 1 hour), turned off once and tried again; its thermostat's control state is "Not responding" and its place goes to the others (see [Thermostat control](#thermostat-control-controlpy-and-control-state-sensorpy)).
 
 7. **On-demand rebalancing**: Beyond the 60s periodic cycle, thermostats trigger immediate rebalance when their hvac_action changes to IDLE or OFF. This ensures freed capacity is reallocated promptly.
 
