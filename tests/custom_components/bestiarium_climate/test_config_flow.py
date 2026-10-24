@@ -104,7 +104,6 @@ async def test_config_flow_reconfigure(hass: HomeAssistant) -> None:
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_CAPACITY: 5,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 30, "seconds": 0},
             CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 30, "seconds": 0},
         },
@@ -114,7 +113,8 @@ async def test_config_flow_reconfigure(hass: HomeAssistant) -> None:
 
     updated = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated is not None
-    assert updated.data[CONF_CAPACITY] == 5
+    # The capacity is its entity's: the form keeps the initial value
+    assert updated.data[CONF_CAPACITY] == 1
     assert updated.data[CONF_MIN_WORKING_TIME]["minutes"] == 30
     assert updated.data[CONF_RECOVERY_TIMEOUT]["minutes"] == 30
 
@@ -360,7 +360,6 @@ async def test_reconfigure_entry_message_from_integration_translations(
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
-            CONF_CAPACITY: 2,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
             CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
         },

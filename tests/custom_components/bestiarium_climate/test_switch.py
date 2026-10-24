@@ -17,6 +17,7 @@ async def test_switch_creation_from_subentry(
     climate_entry_with_switch,
 ) -> None:
     """Test VirtualSwitch is created from switch subentry (hass, entry, subentry)."""
+    hass.states.async_set("sensor.power", "0")
     await hass.config_entries.async_setup(climate_entry_with_switch.entry_id)
     await hass.async_block_till_done()
 
@@ -30,6 +31,7 @@ async def test_switch_turn_on_executes_heating_action(
     climate_entry_with_switch,
 ) -> None:
     """Test async_turn_on runs heating_action when mode is heating."""
+    hass.states.async_set("sensor.power", "0")
     await hass.config_entries.async_setup(climate_entry_with_switch.entry_id)
     await hass.async_block_till_done()
 
@@ -55,6 +57,7 @@ async def test_switch_turn_off_executes_off_action(
     climate_entry_with_switch,
 ) -> None:
     """Test async_turn_off runs off_action."""
+    hass.states.async_set("sensor.power", "0")
     await hass.config_entries.async_setup(climate_entry_with_switch.entry_id)
     await hass.async_block_till_done()
 
@@ -84,6 +87,7 @@ async def test_switch_power_below_min_is_off(
         "30",  # below min_power 50 in fixture
         {"device_class": "power", "unit_of_measurement": "W"},
     )
+    hass.states.async_set("sensor.power", "0")
     await hass.config_entries.async_setup(climate_entry_with_switch.entry_id)
     await hass.async_block_till_done()
 

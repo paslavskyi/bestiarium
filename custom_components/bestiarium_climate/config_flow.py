@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from typing import Any
 
 import voluptuous as vol
@@ -11,6 +12,7 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import callback
@@ -51,6 +53,7 @@ from .const import (
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
+    ControlSettings,
 )
 
 
@@ -112,7 +115,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(
                         CONF_CAPACITY,
-                        default=self._get_default_capacity(),
+                        default=DEFAULT_CAPACITY,
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
                             min=CAPACITY_MIN,
@@ -134,14 +137,6 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    def _get_default_capacity(self) -> int:
-        """Get default capacity for form (reconfigure or initial)."""
-        if self.source == SOURCE_RECONFIGURE:
-            entry = self._get_reconfigure_entry()
-            if entry and isinstance(entry.data.get(CONF_CAPACITY), (int, float)):
-                return int(entry.data[CONF_CAPACITY])
-        return DEFAULT_CAPACITY
-
     def _get_default_min_working_time(self) -> dict[str, int]:
         """Get default min working time for form."""
         if self.source == SOURCE_RECONFIGURE:
@@ -162,70 +157,53 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Handle reconfiguration of the main entry."""
+        """
+        Change the entry's times; the capacity is its entity's.
+
+        The capacity in the form is only the initial value: a power
+        automation changes the entity, so the form would not be the source.
+        """
+        entry = self._get_reconfigure_entry()
         if user_input is not None:
-            capacity = user_input.get(CONF_CAPACITY, DEFAULT_CAPACITY)
-            if not isinstance(capacity, (int, float)):
-                try:
-                    capacity = int(capacity)
-                except (TypeError, ValueError):
-                    return self.async_show_form(
-                        step_id="reconfigure",
-                        data_schema=self._reconfigure_schema(),
-                        errors={CONF_CAPACITY: "invalid_capacity"},
-                    )
-            if not (CAPACITY_MIN <= capacity <= CAPACITY_MAX):
-                return self.async_show_form(
-                    step_id="reconfigure",
-                    data_schema=self._reconfigure_schema(),
-                    errors={CONF_CAPACITY: "invalid_capacity"},
-                )
-
-            entry = self._get_reconfigure_entry()
-            data = dict(entry.data)
-            data[CONF_CAPACITY] = int(capacity)
-            data[CONF_MIN_WORKING_TIME] = _dict_to_timedelta(
-                user_input.get(CONF_MIN_WORKING_TIME) or {},
-            )
-            data[CONF_RECOVERY_TIMEOUT] = _dict_to_timedelta(
-                user_input.get(CONF_RECOVERY_TIMEOUT) or {},
-            )
             return self.async_update_and_abort(
-                entry, data_updates=data, reason="reconfigure_successful"
+                entry,
+                data_updates={
+                    CONF_MIN_WORKING_TIME: _dict_to_timedelta(
+                        user_input.get(CONF_MIN_WORKING_TIME) or {}
+                    ),
+                    CONF_RECOVERY_TIMEOUT: _dict_to_timedelta(
+                        user_input.get(CONF_RECOVERY_TIMEOUT) or {}
+                    ),
+                },
+                reason="reconfigure_successful",
             )
-
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self._reconfigure_schema(),
-            errors={},
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_MIN_WORKING_TIME,
+                        default=_timedelta_to_dict(
+                            entry.data.get(CONF_MIN_WORKING_TIME)
+                        ),
+                    ): selector.DurationSelector(),
+                    vol.Required(
+                        CONF_RECOVERY_TIMEOUT,
+                        default=_timedelta_to_dict(
+                            entry.data.get(CONF_RECOVERY_TIMEOUT)
+                        ),
+                    ): selector.DurationSelector(),
+                },
+            ),
         )
 
-    def _reconfigure_schema(self) -> vol.Schema:
-        """Build schema for reconfigure step."""
-        entry = self._get_reconfigure_entry()
-        return vol.Schema(
-            {
-                vol.Required(
-                    CONF_CAPACITY,
-                    default=entry.data.get(CONF_CAPACITY, DEFAULT_CAPACITY),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=CAPACITY_MIN,
-                        max=CAPACITY_MAX,
-                        step=CAPACITY_STEP,
-                        mode=selector.NumberSelectorMode.BOX,
-                    ),
-                ),
-                vol.Required(
-                    CONF_MIN_WORKING_TIME,
-                    default=_timedelta_to_dict(entry.data.get(CONF_MIN_WORKING_TIME)),
-                ): selector.DurationSelector(),
-                vol.Required(
-                    CONF_RECOVERY_TIMEOUT,
-                    default=_timedelta_to_dict(entry.data.get(CONF_RECOVERY_TIMEOUT)),
-                ): selector.DurationSelector(),
-            },
-        )
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,  # noqa: ARG004
+    ) -> ControlOptionsFlow:
+        """Return the form of how the balancer controls the switches."""
+        return ControlOptionsFlow()
 
     @classmethod
     @callback
@@ -625,4 +603,42 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             step_id="presets",
             data_schema=vol.Schema(schema_dict),
             errors={},
+        )
+
+
+class ControlOptionsFlow(OptionsFlow):
+    """
+    How the balancer controls the thermostats' switches.
+
+    Algorithm parameters live in the entry's options, not in entities
+    (docs/concepts/settings-vs-entities.md); one set for all thermostats of
+    the entry.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show and store the control settings."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={key: int(value) for key, value in user_input.items()}
+            )
+        settings = ControlSettings.of(self.config_entry)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        setting.name, default=getattr(settings, setting.name)
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=setting.metadata["min"],
+                            max=setting.metadata["max"],
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    )
+                    for setting in fields(ControlSettings)
+                }
+            ),
         )

@@ -122,15 +122,22 @@ class VirtualSwitch(SwitchEntity):
         self.async_write_ha_state()
 
     def _update_from_power(self, state: Any) -> None:
-        """Update is_on from power sensor state."""
-        if state is None or state.state in ("unknown", "unavailable", ""):
-            self._attr_is_on = False
-            return
+        """
+        Update is_on from the power sensor; without its data, unavailable.
+
+        The switch's state is the power it reads (docs/concepts/problem-reporting.md:
+        own data gone), one info line when it goes and when it is back.
+        """
         try:
             power = float(state.state)
-        except (TypeError, ValueError):
-            self._attr_is_on = False
+        except (AttributeError, TypeError, ValueError):
+            if self._attr_available:
+                LOGGER.info("%s: no power data from %s", self.name, self._power_entity)
+            self._attr_available, self._attr_is_on = False, False
             return
+        if not self._attr_available:
+            LOGGER.info("%s: power data is back", self.name)
+        self._attr_available = True
         self._attr_is_on = power >= self._min_power
 
     @callback

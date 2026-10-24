@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 PLATFORMS: list[Platform] = [
     Platform.CLIMATE,
     Platform.NUMBER,
+    Platform.SENSOR,
     Platform.SWITCH,
 ]
 
@@ -33,12 +34,11 @@ async def async_setup_entry(
     """Set up Bestiarium Climate from a config entry."""
     LOGGER.debug("Setting up Bestiarium Climate for entry %s", entry.entry_id)
 
-    hass.data.setdefault(DOMAIN, {})
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
     coordinator = BalancingCoordinator(hass, entry)
+    await coordinator.async_load()
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     coordinator.start()
-    hass.data[DOMAIN][entry.entry_id] = coordinator
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -59,9 +59,7 @@ async def async_unload_entry(
     """Unload a config entry."""
     LOGGER.debug("Unloading Bestiarium Climate entry %s", entry.entry_id)
 
-    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if isinstance(coordinator, BalancingCoordinator):
-        coordinator.stop()
+    hass.data[DOMAIN][entry.entry_id].stop()
 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:

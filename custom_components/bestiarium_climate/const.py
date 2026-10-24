@@ -1,8 +1,15 @@
 """Constants for bestiarium_climate."""
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field, fields
 from datetime import timedelta
 from enum import StrEnum
 from logging import Logger, getLogger
+from typing import TYPE_CHECKING, Any, Self
+
+if TYPE_CHECKING:
+    from homeassistant.config_entries import ConfigEntry
 
 LOGGER: Logger = getLogger(__package__)
 
@@ -49,12 +56,55 @@ CAPACITY_STEP = 1
 
 # Balancing
 BALANCING_INTERVAL_SECONDS = 60
-MAX_SWITCH_RETRIES = 7
-EVENT_SWITCH_FAILED = "bestiarium_climate_switch_failed"
 EVENT_DEVICE_ROTATED_IN = "bestiarium_climate_device_rotated_in"
 EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
-EVENT_SWITCH_RECOVERED = "bestiarium_climate_switch_recovered"
-EVENT_CAPACITY_EXHAUSTED = "bestiarium_climate_capacity_exhausted"
+SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
+
+# The thermostats' state the balancer keeps across restarts (Store)
+STORAGE_KEY = f"{DOMAIN}.thermostats"
+STORAGE_VERSION = 1
+SAVE_DELAY_SECONDS = 10
+
+
+def _setting(default: int, low: int, high: int) -> Any:
+    """Return a control setting with the bounds of its field in the options form."""
+    return field(default=default, metadata={"min": low, "max": high})
+
+
+@dataclass(frozen=True)
+class ControlSettings:
+    """
+    How the balancer controls the thermostats' switches: options of the entry.
+
+    See docs/concepts/stability.md. A switch that does not take the expected
+    state for `attempts` balancing cycles is deferred for the recovery
+    timeout of the entry.
+    """
+
+    attempts: int = _setting(7, 1, 20)
+    tolerance_seconds: int = _setting(60, 0, 600)
+    hysteresis_seconds: int = _setting(60, 0, 600)
+
+    @classmethod
+    def of(cls, entry: ConfigEntry) -> Self:
+        """Return the settings of the entry; a missing option is its default."""
+        return cls(
+            **{
+                f.name: entry.options[f.name]
+                for f in fields(cls)
+                if f.name in entry.options
+            }
+        )
+
+
+class ControlState(StrEnum):
+    """The control state of a thermostat, the most important problem first."""
+
+    SWITCH_UNAVAILABLE = "switch_unavailable"
+    UNRESPONSIVE = "unresponsive"
+    NO_TEMPERATURE = "no_temperature"
+    NORMAL = "normal"
+
 
 # Presets (same keys as generic_thermostat)
 PRESET_KEYS = ("away", "comfort", "eco", "home", "sleep", "activity")

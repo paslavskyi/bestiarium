@@ -17,9 +17,8 @@
       },
       "reconfigure": {
         "title": "Reconfigure Bestiarium Climate",
-        "description": "Update capacity and timing settings.",
+        "description": "Update the timing settings. The capacity is changed with the Capacity entity (for example by a power automation); the setup form gives only its initial value.",
         "data": {
-          "capacity": "Capacity",
           "min_working_time": "Minimum working time",
           "recovery_timeout": "Recovery timeout"
         }
@@ -39,6 +38,25 @@
     "number": {
       "capacity": {
         "name": "Capacity"
+      }
+    },
+    "sensor": {
+      "control_state": {
+        "name": "Control state",
+        "state": {
+          "switch_unavailable": "Switch unavailable",
+          "unresponsive": "Not responding",
+          "no_temperature": "No temperature data",
+          "normal": "Normal"
+        },
+        "state_attributes": {
+          "failed_attempts": {
+            "name": "Failed attempts"
+          },
+          "next_attempt": {
+            "name": "Next attempt"
+          }
+        }
       }
     }
   },
@@ -146,6 +164,24 @@
       },
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Switch control",
+        "description": "How the balancer controls the thermostats' switches, for all thermostats of this entry.",
+        "data": {
+          "attempts": "Attempts before deferring",
+          "tolerance_seconds": "Tolerance, seconds",
+          "hysteresis_seconds": "Hysteresis, seconds"
+        },
+        "data_description": {
+          "attempts": "Balancing cycles (a minute each) a switch may stay unlike the expected state before it is deferred for the recovery timeout",
+          "tolerance_seconds": "A switch or temperature sensor gone for less than this is a short dropout, not a problem",
+          "hysteresis_seconds": "A problem ends only after this long without it"
+        }
       }
     }
   }
