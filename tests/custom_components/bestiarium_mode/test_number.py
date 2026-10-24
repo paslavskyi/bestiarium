@@ -12,7 +12,7 @@ from homeassistant.components.number import (
 from homeassistant.components.number import (
     DOMAIN as NUMBER_DOMAIN,
 )
-from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON, EntityCategory
+from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF, STATE_ON
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -90,7 +90,8 @@ async def test_limit_entity_from_existing_entry(hass: HomeAssistant) -> None:
     registry_entry = er.async_get(hass).async_get(LIMIT_ENTITY)
     assert registry_entry is not None
     assert registry_entry.unique_id == "power_load_limit"
-    assert registry_entry.entity_category is EntityCategory.CONFIG
+    # Operated by automations: on dashboards, no config category (DEV-008 B)
+    assert registry_entry.entity_category is None
 
     state = hass.states.get(LIMIT_ENTITY)
     assert float(state.state) == 5000  # noqa: PLR2004

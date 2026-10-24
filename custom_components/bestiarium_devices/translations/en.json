@@ -362,6 +362,10 @@
     "no_load_zones": {
       "title": "Balancing waits for the load zones",
       "description": "Bestiarium Devices does not turn devices on or off: Bestiarium Mode has no load zones. Set its AC load limits (Settings → Devices & services → Bestiarium Mode → Reconfigure → Configure AC load limits). Balancing starts as soon as the zones appear, without a restart."
+    },
+    "no_mode_select": {
+      "title": "Balancing has no mode select",
+      "description": "Bestiarium Mode has no mode select (Bestiarium Mode is not set up, or its select is removed or disabled). Each device works with its own default priority until the select is back; modes do not apply."
     }
   }
 }

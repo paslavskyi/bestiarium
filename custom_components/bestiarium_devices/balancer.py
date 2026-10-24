@@ -21,13 +21,14 @@ from .const import (
     DOMAIN,
     GREEN_INTERVAL_SECONDS,
     ISSUE_NO_LOAD_ZONES,
+    ISSUE_NO_MODE_SELECT,
     LOGGER,
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
     ZONE_SENSOR_UNIQUE_ID,
 )
 from .control import DeviceControl, ResponseMemory, async_get_response_memory
-from .helpers import mode_entity_id
+from .helpers import get_mode_state, mode_entity_id
 from .power_memory import async_get_power_memory
 from .strategies import Strategies
 
@@ -136,6 +137,8 @@ class BalancingCoordinator:
         entity_id = event.data["entity_id"]
         if event.data["action"] != "create":
             return
+        if entity_id == mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID):
+            ir.async_delete_issue(self._hass, DOMAIN, ISSUE_NO_MODE_SELECT)
         if self._active and entity_id in self._mode_entity_ids():
             self._unsubscribe()
             self._subscribe()
@@ -144,7 +147,24 @@ class BalancingCoordinator:
 
     @callback
     def _on_started(self, _hass: HomeAssistant) -> None:
-        """Tell the owner, once HA has started, that there are no zones."""
+        """
+        Once HA has started: apply the mode again; tell what is missing.
+
+        The mode's duties do not survive a restart; applying the mode again
+        (the owner's choice) turns off what it says off.
+        """
+        mode = get_mode_state(self._hass)
+        if _mode(mode) is not None:
+            self._hass.async_create_task(self._async_apply_mode(restart=True))
+        if mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID) is None:
+            ir.async_create_issue(
+                self._hass,
+                DOMAIN,
+                ISSUE_NO_MODE_SELECT,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_NO_MODE_SELECT,
+            )
         if not self._active:
             ir.async_create_issue(
                 self._hass,
@@ -432,9 +452,9 @@ class BalancingCoordinator:
         # Apply mode priorities: turn off OFF, turn on ALWAYS_ON
         self._hass.async_create_task(self._async_apply_mode())
 
-    async def _async_apply_mode(self) -> None:
+    async def _async_apply_mode(self, *, restart: bool = False) -> None:
         """Apply the mode, then repeat its turn-offs until they are done."""
-        await self._strategies.async_apply_mode()
+        await self._strategies.async_apply_mode(restart=restart)
         self._repeat_mode_duties()
 
     def _repeat_mode_duties(self) -> None:

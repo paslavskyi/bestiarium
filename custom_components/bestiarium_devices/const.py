@@ -142,6 +142,9 @@ EVENT_MODE_APPLIED = "bestiarium_devices_mode_applied"
 
 # Repairs issues (docs/concepts/problem-reporting.md)
 ISSUE_NO_LOAD_ZONES = "no_load_zones"
+ISSUE_NO_MODE_SELECT = "no_mode_select"
+# Of bestiarium_mode: ({old name: new name}, [removed names])
+SIGNAL_MODES_RENAMED = "bestiarium_mode_options_renamed"
 ISSUE_MISSING_ENTITY = "missing_entity"
 
 
@@ -182,11 +185,18 @@ class OverloadClearedData(TypedDict):
 
 
 class ModeAppliedData(TypedDict):
-    """Payload of EVENT_MODE_APPLIED."""
+    """
+    Payload of EVENT_MODE_APPLIED.
+
+    reason: "selected" (a person or an automation chose the mode) or
+    "restart" (applied again after HA started; only if it turned a device
+    off, and then devices_turned_off lists only the devices that were on).
+    """
 
     mode: str
     devices_turned_off: list[str]
     devices_turned_on: list[str]
+    reason: str
 
 
 EVENT_DATA: dict[str, type] = {

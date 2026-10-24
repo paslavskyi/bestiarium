@@ -151,7 +151,7 @@ class Strategies:
         if await self._async_command(entry, direction):
             self._fire_switched(entry, direction, strategy, priority)
 
-    async def async_apply_mode(self) -> None:
+    async def async_apply_mode(self, *, restart: bool = False) -> None:
         """
         Apply mode-specific priorities (turn off/on devices based on priority).
 
@@ -159,6 +159,10 @@ class Strategies:
         too. A device that is on and should be off gets the mode's duty: its
         turn-off is repeated like any balancer command until it is off
         (async_mode_duties).
+
+        After a restart of HA the mode is applied again (the owner's choice:
+        restarts are rare); only the devices that are on get a turn-off, and
+        the event tells them, so the family can turn on what it needs.
         """
         devices_turned_off: list[str] = []
         devices_turned_on: list[str] = []
@@ -177,12 +181,15 @@ class Strategies:
                     device_name,
                     device_id,
                 )
-                if state is not None and state.state == STATE_ON:
+                is_on = state is not None and state.state == STATE_ON
+                if is_on:
                     control.start_mode_off()
                     control.command_sent(
                         Direction.TURN_OFF, now, step_s=RED_INTERVAL_SECONDS, red=False
                     )
-                if await self._async_command(entry, Direction.TURN_OFF):
+                if (is_on or not restart) and await self._async_command(
+                    entry, Direction.TURN_OFF
+                ):
                     devices_turned_off.append(device_id)
             elif priority == LOAD_PRIORITY_ALWAYS_ON and balancer_may_turn_on(entry):
                 LOGGER.debug(
@@ -193,7 +200,7 @@ class Strategies:
                 if await self._async_command(entry, Direction.TURN_ON):
                     devices_turned_on.append(device_id)
 
-        if devices_turned_off or devices_turned_on:
+        if devices_turned_off or (devices_turned_on and not restart):
             mode_state = get_mode_state(self._hass)
             mode = mode_state.state if mode_state else ""
             self._hass.bus.async_fire(
@@ -202,6 +209,7 @@ class Strategies:
                     mode=mode,
                     devices_turned_off=devices_turned_off,
                     devices_turned_on=devices_turned_on,
+                    reason="restart" if restart else "selected",
                 ),
             )
 

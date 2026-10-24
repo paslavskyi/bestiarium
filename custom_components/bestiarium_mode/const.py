@@ -26,3 +26,5 @@ LOAD_LIMIT_MAX_W = 100000
 
 EVENT_LOAD_LIMIT_CHANGED = f"{DOMAIN}_load_limit_changed"
 SIGNAL_ZONE_CHANGED = f"{DOMAIN}_zone_changed_{{}}"
+# Sent by the reconfigure form: ({old name: new name}, [removed names])
+SIGNAL_MODES_RENAMED = f"{DOMAIN}_options_renamed"

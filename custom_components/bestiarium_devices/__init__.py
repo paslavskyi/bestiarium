@@ -10,20 +10,25 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .balancer import BalancingCoordinator
 from .const import (
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
+    CONF_LOAD_PRIORITIES,
+    CONF_MODE_OPTIONS_SNAPSHOT,
     CONF_SWITCH_ENTITY_ID,
     DATA_COORDINATOR,
     DEVICE_TYPE_EXTENDED,
     DOMAIN,
     LOGGER,
+    SIGNAL_MODES_RENAMED,
 )
 from .control import async_get_response_memory
 from .helpers import get_device_id_from_entry
@@ -35,6 +40,8 @@ from .power_memory import (
 from .repairs import async_watch_entities
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from homeassistant.core import Event, HomeAssistant
     from homeassistant.helpers.typing import ConfigType
 
@@ -65,6 +72,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa:
     coordinator = BalancingCoordinator(hass)
     hass.data[DOMAIN] = {DATA_COORDINATOR: coordinator}
     await coordinator.async_start()
+    async_dispatcher_connect(hass, SIGNAL_MODES_RENAMED, _follow_renamed_modes(hass))
 
     async def stop(_event: Event) -> None:
         await coordinator.async_stop()
@@ -74,6 +82,37 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa:
 
 
 RECORDER_DOMAIN = "recorder"
+
+
+def _follow_renamed_modes(
+    hass: HomeAssistant,
+) -> Callable[[dict[str, str], list[str]], None]:
+    """
+    Return the handler that moves the priorities to renamed modes.
+
+    The priorities are kept by mode name: a renamed mode would leave a stale
+    key and the device would get its default priority in it.
+    """
+
+    @callback
+    def follow(renamed: dict[str, str], removed: list[str]) -> None:
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            priorities = {
+                renamed.get(mode, mode): priority
+                for mode, priority in entry.data.get(CONF_LOAD_PRIORITIES, {}).items()
+                if mode not in removed
+            }
+            if priorities != entry.data.get(CONF_LOAD_PRIORITIES, {}):
+                hass.config_entries.async_update_entry(
+                    entry,
+                    data={
+                        **entry.data,
+                        CONF_LOAD_PRIORITIES: priorities,
+                        CONF_MODE_OPTIONS_SNAPSHOT: list(priorities),
+                    },
+                )
+
+    return follow
 
 
 async def async_migrate_entry(

@@ -8,6 +8,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import SOURCE_RECONFIGURE
 from homeassistant.helpers import selector
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .const import (
     CONF_AC_LOAD_LIMIT_W,
@@ -24,6 +25,7 @@ from .const import (
     DOMAIN,
     LOAD_LIMIT_MAX_W,
     LOAD_LIMIT_MIN_W,
+    SIGNAL_MODES_RENAMED,
 )
 
 CONF_OPTIONS = "options"
@@ -52,6 +54,8 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         super().__init__()
         self._options: list[dict[str, str]] = []
+        # The name each option had when the form opened (None: added now)
+        self._origins: list[str | None] = []
         self._ac_load_limits: dict[str, Any] | None = None
 
     def _build_menu_options(self) -> dict[str, str]:
@@ -103,6 +107,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # Load existing options from the config entry
         if not self._options:
             self._options = entry.data.get(CONF_OPTIONS, []).copy()
+            self._origins = [option[CONF_NAME] for option in self._options]
         if self._ac_load_limits is None:
             self._ac_load_limits = entry.data.get(CONF_AC_LOAD_LIMITS)
 
@@ -126,6 +131,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ICON: user_input.get(CONF_ICON, DEFAULT_ICON),
                 }
                 self._options.append(option)
+                self._origins.append(None)
                 return await self._async_step_options_list()
 
         data_schema = vol.Schema(
@@ -162,6 +168,22 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # If this is a reconfigure flow, update the existing entry
         if self.source == SOURCE_RECONFIGURE:
             entry = self._get_reconfigure_entry()
+            names = [option[CONF_NAME] for option in self._options]
+            # The devices keep their priorities by mode name: they follow
+            async_dispatcher_send(
+                self.hass,
+                SIGNAL_MODES_RENAMED,
+                {
+                    origin: name
+                    for origin, name in zip(self._origins, names, strict=True)
+                    if origin is not None and origin != name
+                },
+                [
+                    option[CONF_NAME]
+                    for option in entry.data.get(CONF_OPTIONS, [])
+                    if option[CONF_NAME] not in self._origins
+                ],
+            )
             return self.async_update_reload_and_abort(
                 entry,
                 data_updates={
@@ -402,6 +424,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             # Check if user wants to delete
             if user_input.get("delete"):
                 self._options.pop(edit_index)
+                self._origins.pop(edit_index)
                 return await self._async_step_options_list()
 
             name = user_input.get(CONF_NAME, "").strip()
