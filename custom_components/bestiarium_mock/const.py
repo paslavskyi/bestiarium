@@ -14,7 +14,6 @@ DOMAIN = "bestiarium_mock"
 GRID_MAX_POWER_W = 5000
 GRID_RANDOM_MIN_W = 40
 GRID_RANDOM_MAX_W = 100
-GRID_ALARM_THRESHOLD_SECONDS = 10
 GRID_UPDATE_INTERVAL_SECONDS = 5
 
 
@@ -156,3 +155,18 @@ MOCK_GRID = MockDeviceSpec(
     device_id="grid",
     power_w=GRID_MAX_POWER_W,
 )
+
+
+class ReadingProfile(StrEnum):
+    """How a sensor of the stand (thermometer, grid) misbehaves."""
+
+    RELIABLE = "reliable"
+    UNSTABLE = "unstable"  # short dropouts
+    NO_DATA = "no_data"  # unavailable until the profile changes
+    FROZEN = "frozen"  # the value no longer changes
+
+
+# The dropouts of an unstable reading
+READING_DROPOUTS_PER_HOUR = 6
+READING_DROPOUT_MIN_S = 10
+READING_DROPOUT_MAX_S = 40

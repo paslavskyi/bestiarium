@@ -34,7 +34,6 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.helpers.singleton import singleton
 from homeassistant.helpers.start import async_at_started
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
@@ -50,6 +49,7 @@ from .const import (
     ControlSettings,
 )
 from .helpers import get_device_name_from_entry
+from .store import EntryStore
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -57,7 +57,6 @@ if TYPE_CHECKING:
 
 STORAGE_KEY = f"{DOMAIN}.control"
 STORAGE_VERSION = 1
-SAVE_DELAY_SECONDS = 10
 UNSTABLE_WINDOW = timedelta(hours=1)
 JITTER = timedelta(seconds=STEP_JITTER_SECONDS)
 GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
@@ -97,43 +96,30 @@ class Direction(StrEnum):
         return STATE_ON if self is Direction.TURN_ON else STATE_OFF
 
 
-class ResponseMemory:
+class ResponseMemory(EntryStore[deque[float]]):
     """How long each device took to carry out its last commands, in a Store."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Start empty; call async_load to read the store."""
-        self._store: Store[dict[str, list[float]]] = Store(
-            hass, STORAGE_VERSION, STORAGE_KEY
-        )
-        self._seconds: dict[str, deque[float]] = {}
+        super().__init__(hass, STORAGE_KEY, STORAGE_VERSION)
 
-    async def async_load(self) -> None:
-        """Read the stored response times."""
-        stored = await self._store.async_load() or {}
-        self._seconds = {
-            entry_id: deque(seconds, maxlen=RESPONSE_MEMORY_SIZE)
-            for entry_id, seconds in stored.items()
-        }
+    def _decode(self, value: list[float]) -> deque[float]:
+        return deque(value, maxlen=RESPONSE_MEMORY_SIZE)
+
+    def _encode(self, value: deque[float]) -> list[float]:
+        return list(value)
 
     def longest(self, entry_id: str) -> float | None:
         """Return the longest remembered response time of a device."""
-        seconds = self._seconds.get(entry_id)
+        seconds = self._entries.get(entry_id)
         return max(seconds) if seconds else None
 
     def add(self, entry_id: str, seconds: float) -> None:
         """Remember a response time."""
-        self._seconds.setdefault(entry_id, deque(maxlen=RESPONSE_MEMORY_SIZE)).append(
+        self._entries.setdefault(entry_id, deque(maxlen=RESPONSE_MEMORY_SIZE)).append(
             seconds
         )
-        self._store.async_delay_save(self._data_to_save, SAVE_DELAY_SECONDS)
-
-    def remove(self, entry_id: str) -> None:
-        """Forget a removed device entry."""
-        self._seconds.pop(entry_id, None)
-        self._store.async_delay_save(self._data_to_save, SAVE_DELAY_SECONDS)
-
-    def _data_to_save(self) -> dict[str, list[float]]:
-        return {entry_id: list(seconds) for entry_id, seconds in self._seconds.items()}
+        self._save()
 
 
 @singleton(DATA_RESPONSE_MEMORY, async_=True)

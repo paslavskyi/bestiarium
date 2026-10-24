@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import HomeAssistant, ServiceRegistry
+from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bestiarium_devices.balancer import BalancingCoordinator
@@ -72,13 +72,30 @@ async def bestiarium_mode_entry(hass: HomeAssistant) -> MockConfigEntry:
         unique_id="bestiarium_mode",
         data={
             "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-                {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
+                {"name": "Eco"},
+                {"name": "Boost"},
             ],
         },
     )
     entry.add_to_hass(hass)
     return entry
+
+
+@pytest.fixture
+def zone_changes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record the balancer's zone changes as (previous, new)."""
+    changes: list[tuple[str, str]] = []
+    on_zone_changed = BalancingCoordinator._on_zone_changed  # noqa: SLF001
+
+    @callback
+    def record(self: BalancingCoordinator, event: Event) -> None:
+        before = self.active_zone
+        on_zone_changed(self, event)
+        if self.active_zone != before:
+            changes.append((before.value, self.active_zone.value))
+
+    monkeypatch.setattr(BalancingCoordinator, "_on_zone_changed", record)
+    return changes
 
 
 @pytest.fixture

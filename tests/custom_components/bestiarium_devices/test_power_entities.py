@@ -102,8 +102,7 @@ async def test_expected_power_shows_what_it_is_based_on(
     assert state.attributes["unit_of_measurement"] == "W"
     assert state.attributes["estimate_source"] == "large_device_default"
     assert state.attributes["runs"] == []
-    assert state.attributes["manual_power_w"] is None
-    assert state.attributes["manual_power_note"] == "counts_until_real_runs"
+    assert not {"manual_power_w", "manual_power_note"} & state.attributes.keys()
 
     memory = hass.data[DATA_POWER_MEMORY]
     memory.set_imported(entry.entry_id, [_run(2600, SOURCE_HISTORY)])
@@ -150,7 +149,6 @@ async def test_estimated_power_in_the_settings(
     state = hass.states.get(sensor)
     assert state.state == "1000"
     assert state.attributes["estimate_source"] == "manual"
-    assert state.attributes["manual_power_w"] == 1000
     assert entry.state is ConfigEntryState.LOADED
 
 
@@ -215,7 +213,7 @@ async def test_migration_removes_the_setting_entities(
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert entry.minor_version == 3
+    assert entry.minor_version == 4
     assert dict(entry.options) == options
     assert not [
         e

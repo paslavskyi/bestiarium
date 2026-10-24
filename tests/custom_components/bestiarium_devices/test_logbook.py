@@ -22,13 +22,11 @@ from custom_components.bestiarium_devices.const import (
     EVENT_OVERLOAD_CLEARED,
     EVENT_OVERLOAD_FIRST_QUEUE,
     EVENT_OVERLOAD_SECOND_QUEUE,
-    EVENT_ZONE_CHANGED,
     DeviceSwitchedData,
     ModeAppliedData,
     OverloadClearedData,
     OverloadFirstQueueData,
     OverloadSecondQueueData,
-    ZoneChangedData,
 )
 from custom_components.bestiarium_devices.logbook import (
     DESCRIBERS,
@@ -72,11 +70,6 @@ def test_every_event_of_the_contract_is_described() -> None:
 @pytest.mark.parametrize(
     ("event_type", "data", "message"),
     [
-        (
-            EVENT_ZONE_CHANGED,
-            ZoneChangedData(previous_zone="pause", zone="green"),
-            "zone changed from pause to green",
-        ),
         (
             EVENT_DEVICE_TURNED_ON,
             TURNED,

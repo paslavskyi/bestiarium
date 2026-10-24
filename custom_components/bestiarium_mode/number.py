@@ -9,7 +9,7 @@ from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
 )
-from homeassistant.const import EntityCategory, UnitOfPower
+from homeassistant.const import UnitOfPower
 
 from .const import (
     CONF_AC_LOAD_LIMIT_W,
@@ -48,7 +48,6 @@ class PowerLoadLimitNumber(NumberEntity):
     _attr_has_entity_name = True
     _attr_translation_key = "power_load_limit"
     _attr_unique_id = "power_load_limit"
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_device_class = NumberDeviceClass.POWER
     _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_mode = NumberMode.BOX

@@ -39,7 +39,6 @@ from custom_components.bestiarium_devices.const import (
     EVENT_OVERLOAD_CLEARED,
     EVENT_OVERLOAD_FIRST_QUEUE,
     EVENT_OVERLOAD_SECOND_QUEUE,
-    EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
     ISSUE_NO_LOAD_ZONES,
     LOAD_PRIORITY_ALWAYS_ON,
@@ -91,8 +90,8 @@ def mode_select_entry(hass: HomeAssistant, mode_entities: None) -> MockConfigEnt
         unique_id="bestiarium_mode",
         data={
             "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-                {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
+                {"name": "Eco"},
+                {"name": "Boost"},
             ],
             "ac_load_limits": AC_LOAD_LIMITS,
         },
@@ -1190,35 +1189,6 @@ def _assert_contract(events: list[dict]) -> None:
 class TestEventFiring:
     """Tests for automation event firing."""
 
-    async def test_zone_changed_event(
-        self,
-        hass: HomeAssistant,
-        zone_binary_sensors: None,  # noqa: ARG002
-        mode_select_entry: MockConfigEntry,  # noqa: ARG002
-    ) -> None:
-        """Zone change fires zone_changed with previous_zone and zone."""
-        hass.states.async_set(BINARY_SENSOR_GREEN, STATE_ON)
-        events: list = []
-
-        def record(event: Event) -> None:
-            events.append({"event_type": event.event_type, "data": dict(event.data)})
-
-        hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
-
-        coordinator = await started_coordinator(hass)
-        try:
-            hass.states.async_set(BINARY_SENSOR_RED, STATE_ON)
-            hass.states.async_set(BINARY_SENSOR_GREEN, STATE_OFF)
-            await hass.async_block_till_done()
-
-            assert len(events) == 1
-            assert events[0]["event_type"] == EVENT_ZONE_CHANGED
-            assert events[0]["data"]["previous_zone"] == "green"
-            assert events[0]["data"]["zone"] == "red"
-            _assert_contract(events)
-        finally:
-            await coordinator.async_stop()
-
     async def test_device_turned_on_event(
         self,
         hass: HomeAssistant,
@@ -1525,19 +1495,20 @@ class TestEventFiring:
             (["4600", "4000"], [("green", "red"), ("red", "yellow")]),
         ],
     )
-    async def test_zone_changed_events_from_power_sensor(
+    async def test_zone_changes_from_power_sensor(
         self,
         hass: HomeAssistant,
         power_readings: list[str],
         expected_zone_changes: list[tuple[str, str]],
+        zone_changes: list[tuple[str, str]],
     ) -> None:
-        """Power crossing thresholds fires one zone_changed per real transition."""
+        """Power crossing thresholds: one zone change per real transition."""
         hass.states.async_set("sensor.power_meter", "1000")
         mode_entry = MockConfigEntry(
             domain=DOMAIN_BESTIARIUM_MODE,
             unique_id="bestiarium_mode",
             data={
-                "options": [{"name": "Eco", "icon": "mdi:leaf"}],
+                "options": [{"name": "Eco"}],
                 "ac_load_limits": {
                     "ac_power_sensor": "sensor.power_meter",
                     "ac_load_limit_w": 5000,
@@ -1552,14 +1523,6 @@ class TestEventFiring:
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
         await hass.async_block_till_done()
         assert hass.states.get(BINARY_SENSOR_GREEN).state == STATE_ON
-
-        zone_changes: list[tuple[str, str]] = []
-
-        @callback
-        def record(event: Event) -> None:
-            zone_changes.append((event.data["previous_zone"], event.data["zone"]))
-
-        hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
 
         coordinator = await started_coordinator(hass)
         try:
@@ -1587,7 +1550,7 @@ async def _setup_real_mode(
         domain=DOMAIN_BESTIARIUM_MODE,
         unique_id="bestiarium_mode",
         data={
-            "options": [{"name": name, "icon": "mdi:home"} for name in options],
+            "options": [{"name": name} for name in options],
             "ac_load_limits": {
                 "ac_power_sensor": POWER_SENSOR,
                 "ac_load_limit_w": limit,
@@ -1603,22 +1566,12 @@ async def _setup_real_mode(
     await hass.async_block_till_done()
 
 
-def _record_zone_changes(hass: HomeAssistant) -> list[tuple[str, str]]:
-    zone_changes: list[tuple[str, str]] = []
-
-    @callback
-    def record(event: Event) -> None:
-        zone_changes.append((event.data["previous_zone"], event.data["zone"]))
-
-    hass.bus.async_listen(EVENT_ZONE_CHANGED, record)
-    return zone_changes
-
-
-async def test_zone_changed_tells_pause_and_no_data(hass: HomeAssistant) -> None:
+async def test_zone_tells_pause_and_no_data(
+    hass: HomeAssistant, zone_changes: list[tuple[str, str]]
+) -> None:
     """The balancer's zone: the pause before green and no power data apart."""
     await _setup_real_mode(hass, "3500")
     coordinator = await started_coordinator(hass)
-    zone_changes = _record_zone_changes(hass)
     try:
         hass.states.async_set(POWER_SENSOR, "2000")
         await hass.async_block_till_done()
@@ -1654,18 +1607,18 @@ class TestLoadLimitChange:
             ("4500", 5000, 7000, [("red", "yellow")]),
         ],
     )
-    async def test_limit_change_fires_single_zone_change(
+    async def test_limit_change_fires_single_zone_change(  # noqa: PLR0913
         self,
         hass: HomeAssistant,
         power: str,
         old_limit: int,
         new_limit: int,
         expected_zone_changes: list[tuple[str, str]],
+        zone_changes: list[tuple[str, str]],
     ) -> None:
         """At constant load, a limit change moves straight to the final zone."""
         await _setup_real_mode(hass, power, old_limit)
         coordinator = await started_coordinator(hass)
-        zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, new_limit)
 
@@ -1674,12 +1627,13 @@ class TestLoadLimitChange:
             await coordinator.async_stop()
 
     async def test_raised_limit_waits_for_green_recovery(
-        self, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
+        zone_changes: list[tuple[str, str]],
     ) -> None:
         """Raising the limit above the load waits out the pause before green."""
         await _setup_real_mode(hass, "4500", 5000)
         coordinator = await started_coordinator(hass)
-        zone_changes = _record_zone_changes(hass)
         try:
             await self._set_limit(hass, 8800)
             assert zone_changes == [("red", "pause")]
@@ -1690,7 +1644,9 @@ class TestLoadLimitChange:
         finally:
             await coordinator.async_stop()
 
-    async def test_raised_limit_keeps_devices_on(self, hass: HomeAssistant) -> None:
+    async def test_raised_limit_keeps_devices_on(
+        self, hass: HomeAssistant, zone_changes: list[tuple[str, str]]
+    ) -> None:
         """With the limit raised to 8800 W, 6000 W turns no device off."""
         hass.states.async_set(BESTIARIUM_MODE_SELECT_ENTITY_ID, "Grid on")
         MockConfigEntry(
@@ -1706,7 +1662,6 @@ class TestLoadLimitChange:
         hass.states.async_set("switch.heater", STATE_ON)
         await _setup_real_mode(hass, "4000", 5000)
         coordinator = await started_coordinator(hass)
-        zone_changes = _record_zone_changes(hass)
         turned_off: list[Event] = []
 
         @callback
@@ -1802,7 +1757,9 @@ class TestModeEntitiesByUniqueId:
         assert [call.data["entity_id"] for call in turn_off] == ["switch.boiler"]
 
     async def test_renamed_red_sensor_runs_red_strategy(
-        self, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
+        zone_changes: list[tuple[str, str]],
     ) -> None:
         """After renaming the red zone sensor at runtime, red still sheds load."""
         await _setup_real_mode(hass, "1000")
@@ -1815,7 +1772,6 @@ class TestModeEntitiesByUniqueId:
                 new_entity_id="binary_sensor.zona_chervona",
             )
             await hass.async_block_till_done()
-            zone_changes = _record_zone_changes(hass)
 
             hass.states.async_set(POWER_SENSOR, "4500")
             await hass.async_block_till_done()
@@ -1827,12 +1783,13 @@ class TestModeEntitiesByUniqueId:
         assert [call.data["entity_id"] for call in turn_off] == ["switch.boiler"]
 
     async def test_rename_during_active_zone_keeps_zone(
-        self, hass: HomeAssistant
+        self,
+        hass: HomeAssistant,
+        zone_changes: list[tuple[str, str]],
     ) -> None:
         """Renaming the active zone sensor neither changes nor loses the zone."""
         await _setup_real_mode(hass, "4500")
         coordinator = await started_coordinator(hass)
-        zone_changes = _record_zone_changes(hass)
         try:
             er.async_get(hass).async_update_entity(
                 _mode_entity_id(hass, "binary_sensor", "power_load_red"),
@@ -1896,7 +1853,7 @@ class TestModeEntitiesByUniqueId:
         mode_entry = MockConfigEntry(
             domain=DOMAIN_BESTIARIUM_MODE,
             unique_id="bestiarium_mode",
-            data={"options": [{"name": "Grid on", "icon": "mdi:home"}]},
+            data={"options": [{"name": "Grid on"}]},
         )
         mode_entry.add_to_hass(hass)
         assert await hass.config_entries.async_setup(mode_entry.entry_id)
@@ -2000,3 +1957,33 @@ class TestOverloadFailSafe:
         turned_off = [c[0][2]["entity_id"] for c in mock_call.call_args_list]
         assert turned_off == ["switch.first", "switch.second"]
         assert len(second_queue) == 1
+
+
+async def test_removed_load_limits_leave_no_orphan_zones(hass: HomeAssistant) -> None:
+    """Review 06 debt: the zone sensors go, the balancer waits, Repairs tells."""
+    await _setup_real_mode(hass, "1000")
+    coordinator = await started_coordinator(hass)
+    mode = hass.config_entries.async_entries(DOMAIN_BESTIARIUM_MODE)[0]
+    issues = ir.async_get(hass)
+    try:
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is None
+        hass.config_entries.async_update_entry(
+            mode,
+            data={key: v for key, v in mode.data.items() if key != "ac_load_limits"},
+        )
+        await hass.config_entries.async_reload(mode.entry_id)
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        for zone in ("green", "yellow", "red", "overload"):
+            unique_id = f"power_load_{zone}"
+            assert (
+                registry.async_get_entity_id(
+                    "binary_sensor", DOMAIN_BESTIARIUM_MODE, unique_id
+                )
+                is None
+            )
+        assert coordinator.active_zone == ActiveZone.NO_DATA
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is not None
+    finally:
+        await coordinator.async_stop()

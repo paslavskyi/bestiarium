@@ -12,7 +12,14 @@ from typing import TYPE_CHECKING, Any
 from custom_components.bestiarium_mock.const import MOCK_DEVICES
 
 from .ha import StandError
-from .layout import DASHBOARD, MODE, STAND_DEVICES, ZONE_CHECK_SECONDS, ZONES
+from .layout import (
+    DASHBOARD,
+    MODE,
+    STAND_DEVICES,
+    THERMOSTATS,
+    ZONE_CHECK_SECONDS,
+    ZONES,
+)
 
 if TYPE_CHECKING:
     from .ha import HomeAssistant, Registry
@@ -28,8 +35,22 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
     ]
     grid = [
         reg.mock("sensor", "mock_grid_power"),
-        reg.mock("binary_sensor", "mock_grid_alarm"),
+        reg.mock("select", "mock_grid_reading_profile"),
     ]
+    climate = [e for e in reg.stand_climate() if e["device_id"]]
+    thermostats = [
+        (thermostat, reg.mock("sensor", f"mock_{thermometer}_temperature"), thermometer)
+        for thermostat, (_, thermometer, _) in zip(
+            sorted(
+                e["entity_id"] for e in climate if e["entity_id"].startswith("climate.")
+            ),
+            THERMOSTATS,
+            strict=False,
+        )
+    ]
+    control_states = sorted(
+        e["entity_id"] for e in climate if e["entity_id"].startswith("sensor.")
+    )
     mode_select = reg.entity_id("select", MODE, "select")
     run = {"action": "perform-action", "perform_action": "script.turn_on"}
     sections: list[dict[str, Any]] = [
@@ -40,6 +61,26 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                 *(_tile(entity_id) for entity_id in grid),
                 _tile(mode_select, features=[{"type": "select-options"}]),
                 *(_tile(entity_id) for entity_id in zones),
+            ],
+        },
+        {
+            "type": "grid",
+            "cards": [
+                {"type": "heading", "heading": "Термостати"},
+                *(
+                    tile
+                    for (thermostat, temperature, thermometer), control in zip(
+                        thermostats, control_states, strict=False
+                    )
+                    for tile in (
+                        _tile(thermostat),
+                        _tile(control),
+                        _tile(temperature),
+                        _tile(
+                            reg.mock("select", f"mock_{thermometer}_reading_profile")
+                        ),
+                    )
+                ),
             ],
         },
         {
@@ -57,7 +98,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
             ],
         },
     ]
-    logged = [*zones, mode_select]
+    logged = [*zones, mode_select, *control_states]
     balanced = {device.mock_id for device in STAND_DEVICES}
     for spec in MOCK_DEVICES:
         device = reg.mock_device(spec.device_id)

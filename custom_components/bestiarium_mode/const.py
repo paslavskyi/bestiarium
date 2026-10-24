@@ -16,6 +16,8 @@ CONF_AC_ZONE_HYSTERESIS_PERCENT = "ac_zone_hysteresis_percent"
 CONF_AC_POWER_TOLERANCE_SECONDS = "ac_power_tolerance_seconds"
 
 # Default values
+DEFAULT_YELLOW_ZONE_PERCENT = 75
+DEFAULT_RED_ZONE_PERCENT = 90
 DEFAULT_OVERLOAD_RECOVERY_SECONDS = 30
 DEFAULT_ZONE_HYSTERESIS_PERCENT = 3
 DEFAULT_POWER_TOLERANCE_SECONDS = 60
@@ -26,3 +28,5 @@ LOAD_LIMIT_MAX_W = 100000
 
 EVENT_LOAD_LIMIT_CHANGED = f"{DOMAIN}_load_limit_changed"
 SIGNAL_ZONE_CHANGED = f"{DOMAIN}_zone_changed_{{}}"
+# Sent by the reconfigure form: ({old name: new name}, [removed names])
+SIGNAL_MODES_RENAMED = f"{DOMAIN}_options_renamed"

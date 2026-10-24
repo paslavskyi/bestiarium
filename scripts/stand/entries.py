@@ -112,7 +112,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         missing = [m for m in MODES if m not in select["attributes"]["options"]]
         added: list[dict[str, Any]] = []
         for mode in missing:
-            added += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+            added += [{"next_step_id": "add"}, {"name": mode}]
         await ha.reconfigure(
             entries[0],
             *added,
@@ -124,7 +124,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         return
     steps: list[dict[str, Any]] = []
     for mode in MODES:
-        steps += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+        steps += [{"next_step_id": "add"}, {"name": mode}]
     steps += [
         {"next_step_id": "configure_ac_load_limits"},
         {
@@ -201,11 +201,18 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         CLIMATE,
         {
             "capacity": 2,
-            "min_working_time": {"hours": 0, "minutes": 10, "seconds": 0},
+            # Three minutes: a rotation shows on the stand in minutes
+            "min_working_time": {"hours": 0, "minutes": 3, "seconds": 0},
             "recovery_timeout": {"hours": 1, "minutes": 0, "seconds": 0},
         },
     )
     entry_id = result["result"]["entry_id"]
+    # Three attempts (minutes): a dead switch is deferred quickly on the stand
+    await ha.flow(
+        "options/flow",
+        entry_id,
+        {"attempts": 3, "tolerance_seconds": 60, "hysteresis_seconds": 60},
+    )
     for name, thermometer, socket in THERMOSTATS:
         await ha.flow(
             "subentries/flow",

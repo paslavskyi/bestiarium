@@ -2,382 +2,413 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
-from homeassistant.components.climate import (
-    HVACAction,
-)
-from homeassistant.const import STATE_ON
+from homeassistant.components.climate import HVACAction
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_interval,
+)
+from homeassistant.util import dt as dt_util
 
 from .const import (
     BALANCING_INTERVAL_SECONDS,
     CAPACITY_MAX,
     CAPACITY_MIN,
     CONF_MIN_WORKING_TIME,
-    CONF_RECOVERY_TIMEOUT,
     CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
     DOMAIN,
-    EVENT_CAPACITY_EXHAUSTED,
+    DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
-    EVENT_SWITCH_FAILED,
-    EVENT_SWITCH_RECOVERED,
+    ISSUE_SWITCH_SHARED,
     LOGGER,
-    MAX_SWITCH_RETRIES,
+    RED_STEP_SECONDS,
+    SENSOR_ZONES,
+    SIGNAL_CONTROL_CHANGED,
+    SUBENTRY_TYPE_THERMOSTAT,
+    ZONE_SENSOR_UNIQUE_ID,
+    ControlState,
+    Zone,
 )
+from .control import ThermostatControl, async_get_thermostat_memory
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 
     from .climate import VirtualThermostat
     from .data import BestiariumClimateConfigEntry
 
+# The zones in which the balancer starts heaters; yellow only rotates them out
+STARTING_ZONES = (Zone.GREEN, Zone.NONE)
+
+
+def shared_switches(hass: HomeAssistant) -> set[str]:
+    """Return the switches more than one thermostat controls (any climate entry)."""
+    targets = Counter(
+        subentry.data.get(CONF_TARGET_SWITCH)
+        for entry in hass.config_entries.async_entries(DOMAIN)
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+    )
+    return {switch for switch, count in targets.items() if count > 1}
+
 
 class BalancingCoordinator:
-    """Coordinator for thermostat switch balancing."""
+    """Shares the capacity of a climate entry among its thermostats."""
 
     def __init__(
         self,
         hass: HomeAssistant,
         entry: BestiariumClimateConfigEntry,
     ) -> None:
-        """Initialize the balancing coordinator."""
+        """Initialize the balancing coordinator; call async_load."""
         self._hass = hass
         self._entry = entry
-        data = entry.data or {}
         self._min_working_time = duration_dict_to_timedelta(
-            data.get(CONF_MIN_WORKING_TIME),
+            entry.data.get(CONF_MIN_WORKING_TIME),
         )
-        self._recovery_timeout = duration_dict_to_timedelta(
-            data.get(CONF_RECOVERY_TIMEOUT),
-        )
-        self._unsub: Any = None
+        self.controls: dict[str, ThermostatControl] = {}
+        self._states: dict[str, ControlState] = {}
+        self._shared: set[str] = set()
+        self._unsubscribe: list[CALLBACK_TYPE] = []
+        # One cycle at a time; a request during one makes one more after it
+        self._cycling = False
+        self._pending = False
+        # The switches whose command is under way: one command at a time each
+        self._sending: set[str] = set()
+        self._red_off_at: datetime | None = None
+        self._red_timer: CALLBACK_TYPE | None = None
 
-    def start(self) -> None:
-        """Register periodic balancing (60s interval)."""
-        if self._unsub is not None:
-            LOGGER.warning(
-                "BalancingCoordinator already started for entry %s",
-                self._entry.entry_id,
+    async def async_load(self) -> None:
+        """Make the control of each thermostat with what it kept."""
+        memory = await async_get_thermostat_memory(self._hass)
+        memory.keep_only(
+            {
+                subentry_id
+                for entry in self._hass.config_entries.async_entries(DOMAIN)
+                for subentry_id in entry.subentries
+            }
+        )
+        self.controls = {
+            subentry.subentry_id: ThermostatControl(
+                self._hass, self._entry, subentry, memory
             )
-            return
-        self._unsub = async_track_time_interval(
-            self._hass,
-            self._async_balance,
-            timedelta(seconds=BALANCING_INTERVAL_SECONDS),
-        )
-        LOGGER.debug("BalancingCoordinator started for entry %s", self._entry.entry_id)
-
-    def stop(self) -> None:
-        """Cancel the periodic balancing."""
-        if self._unsub is not None:
-            self._unsub()
-            self._unsub = None
-            LOGGER.debug(
-                "BalancingCoordinator stopped for entry %s",
-                self._entry.entry_id,
-            )
-
-    def _thermostat_label(self, thermostat: VirtualThermostat) -> str:
-        """Return a label for the thermostat (entity_id or subentry_id) for logging."""
-        if hasattr(thermostat, "entity_id") and thermostat.entity_id:
-            return thermostat.entity_id
-        return getattr(thermostat, "_attr_unique_id", "unknown")
-
-    async def _async_balance(self, now: datetime) -> None:
-        """Run one cycle: recovery, turn off idle, calculate expected, sync."""
-        LOGGER.debug("Balance cycle started for entry %s", self._entry.entry_id)
-        await self._handle_recovery(now)
-        await self._turn_off_idle()
-        await self._calculate_expected_state(now)
-        await self._sync_switches(now)
-
-    def _get_capacity(self) -> int:
-        """Read current capacity from number entity."""
-        entity_id = f"number.{DOMAIN}_capacity"
-        state = self._hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", ""):
-            registry = er.async_get(self._hass)
-            capacity_unique_id = f"{self._entry.entry_id}_capacity"
-            for ent in registry.entities.values():
-                if (
-                    ent.domain == "number"
-                    and ent.platform == DOMAIN
-                    and ent.unique_id == capacity_unique_id
-                ):
-                    entity_id = ent.entity_id
-                    state = self._hass.states.get(entity_id)
-                    break
-        if state is None or state.state in ("unknown", "unavailable", ""):
-            return DEFAULT_CAPACITY
-        try:
-            value = int(float(state.state))
-            return max(CAPACITY_MIN, min(CAPACITY_MAX, value))
-        except (TypeError, ValueError):
-            return DEFAULT_CAPACITY
-
-    def _get_thermostats(self) -> list[VirtualThermostat]:
-        """Collect VirtualThermostat entities for this entry."""
-        from .climate import VirtualThermostat  # noqa: PLC0415
-
-        comp = self._hass.data.get(CLIMATE_DATA_COMPONENT)
-        if comp is None:
-            return []
-        # Copy to avoid mutation during iteration (EntityComponent doc)
-        entities = list(getattr(comp, "entities", []))
-        entry_id = self._entry.entry_id
-        return [
-            e
-            for e in entities
-            if isinstance(e, VirtualThermostat)
-            and (ent := getattr(e, "_entry", None)) is not None
-            and ent.entry_id == entry_id
-        ]
-
-    def _get_switch_entity_id(self, thermostat: VirtualThermostat) -> str | None:
-        """Return target_switch entity_id for this thermostat, or None."""
-        subentry = getattr(thermostat, "_subentry", None)
-        if subentry is None:
-            return None
-        return subentry.data.get(CONF_TARGET_SWITCH) or None
-
-    def _event_switch_failed_payload(
-        self, thermostat: VirtualThermostat
-    ) -> dict[str, Any]:
-        """Payload for EVENT_SWITCH_FAILED: entity_id, thermostat, switch_entity_id."""
-        label = self._thermostat_label(thermostat)
-        return {
-            "entity_id": label,
-            "thermostat": label,
-            "switch_entity_id": self._get_switch_entity_id(thermostat),
+            for subentry in self._entry.subentries.values()
+            if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
         }
 
-    def _get_switch_is_on(self, thermostat: VirtualThermostat) -> bool | None:
-        """Read target_switch state. True/False for on/off, None if unknown."""
-        entity_id = self._get_switch_entity_id(thermostat)
-        if not entity_id:
-            return None
-        state = self._hass.states.get(entity_id)
-        if state is None or state.state in ("unknown", "unavailable", ""):
-            return None
-        return state.state == STATE_ON
-
-    async def _async_turn_switch(
-        self,
-        thermostat: VirtualThermostat,
-        turn_on: bool,  # noqa: FBT001
-    ) -> None:
-        """Call switch.turn_on or switch.turn_off for thermostat's target_switch."""
-        entity_id = self._get_switch_entity_id(thermostat)
-        if not entity_id:
-            return
-        service = "turn_on" if turn_on else "turn_off"
-        await self._hass.services.async_call(
-            "switch",
-            service,
-            {"entity_id": entity_id},
-            blocking=True,
+    def start(self) -> None:
+        """Follow the switches and the zones; balance every minute and on changes."""
+        self._report_shared_switches()
+        for control in self.controls.values():
+            control.async_start()
+            self._states[control.subentry_id] = control.state
+            self._unsubscribe.append(
+                async_dispatcher_connect(
+                    self._hass,
+                    SIGNAL_CONTROL_CHANGED.format(control.subentry_id),
+                    self._control_changed(control),
+                )
+            )
+        if sensors := list(self._zone_sensors().values()):
+            self._unsubscribe.append(
+                async_track_state_change_event(
+                    self._hass,
+                    sensors,
+                    callback(lambda _event: self.async_request_balance()),
+                )
+            )
+        self._unsubscribe.append(
+            async_track_time_interval(
+                self._hass,
+                self.async_request_balance,
+                timedelta(seconds=BALANCING_INTERVAL_SECONDS),
+            )
         )
 
-    async def _handle_recovery(self, now: datetime) -> None:
-        """Recovery retry for non-responding switches."""
-        thermostats = self._get_thermostats()
-        for t in thermostats:
-            recovery_time = t.recovery_time
-            if recovery_time is None or now < recovery_time:
-                continue
-            label = self._thermostat_label(t)
-            switch_on = self._get_switch_is_on(t)
-            if switch_on is True:
-                tries = t.switch_state_change_tries
-                if tries >= MAX_SWITCH_RETRIES:
-                    LOGGER.warning(
-                        "Switch still on after %d tries for %s",
-                        tries,
-                        label,
-                    )
-                    self._hass.bus.async_fire(
-                        EVENT_SWITCH_FAILED, self._event_switch_failed_payload(t)
-                    )
-                await self._async_turn_switch(t, turn_on=False)
-                t.set_switch_state_change_tries(tries + 1)
-                LOGGER.debug(
-                    "Recovery: turned off switch for %s (tries=%d)", label, tries + 1
+    def stop(self) -> None:
+        """Stop balancing and following."""
+        while self._unsubscribe:
+            self._unsubscribe.pop()()
+        self._cancel_red_timer()
+        for control in self.controls.values():
+            control.async_stop()
+
+    def _report_shared_switches(self) -> None:
+        """
+        One switch, one thermostat: a shared switch is a setting to fix (Repairs).
+
+        Its thermostats are left out of the balancing until it is fixed; a
+        configuration made before DEV-008 stage B may have one.
+        """
+        self._shared = shared_switches(self._hass)
+        for control in self.controls.values():
+            issue_id = f"{ISSUE_SWITCH_SHARED}_{control.switch}"
+            if control.switch in self._shared:
+                ir.async_create_issue(
+                    self._hass,
+                    DOMAIN,
+                    issue_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key=ISSUE_SWITCH_SHARED,
+                    translation_placeholders={"switch": control.switch},
                 )
             else:
-                t.set_switch_not_responding(False)
-                t.set_recovery_time(None)
-                t.set_switch_state_change_tries(0)
-                self._hass.bus.async_fire(
-                    EVENT_SWITCH_RECOVERED,
-                    {
-                        "thermostat": label,
-                        "switch_entity_id": self._get_switch_entity_id(t),
-                    },
-                )
-                LOGGER.debug("Recovery: cleared for %s (switch is off)", label)
+                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
 
-    async def _turn_off_idle(self) -> None:
-        """Free capacity from idle/off thermostats (no actual switch check)."""
-        thermostats = self._get_thermostats()
-        for t in thermostats:
-            if t.hvac_action not in (HVACAction.IDLE, HVACAction.OFF):
+    def _control_changed(self, control: ThermostatControl) -> CALLBACK_TYPE:
+        """Return the listener that rebalances when the control's state changes."""
+
+        @callback
+        def changed() -> None:
+            if control.state is not self._states[control.subentry_id]:
+                self._states[control.subentry_id] = control.state
+                self.async_request_balance()
+
+        return changed
+
+    @callback
+    def async_request_balance(self, _now: datetime | None = None) -> None:
+        """
+        Run a cycle now; asked for during one, it runs once more after it.
+
+        A cycle never waits for a switch: each command is its own task, so a
+        slow switch (an IR remote) holds back neither the others nor the next
+        decisions, and a switch's sequence may call a climate service.
+        """
+        if self._cycling:
+            self._pending = True
+            return
+        self._cycling = True
+        try:
+            self._pending = True
+            while self._pending:
+                self._pending = False
+                self._cycle(dt_util.utcnow())
+        finally:
+            self._cycling = False
+
+    def _cycle(self, now: datetime) -> None:
+        """Allocate the capacity by the zone, then send the switches."""
+        self._allocate(self._thermostats(), now, self._zone())
+        for control in self.controls.values():
+            if control.switch in self._sending:
                 continue
-            if not t.expected_switch_state:
+            if (on := control.to_command(now)) is None:
                 continue
-            label = self._thermostat_label(t)
-            t.set_expected_switch_state(False)
-            t.set_switch_state_change_tries(0)
-            LOGGER.debug("Turn off idle: cleared expected state for %s", label)
+            self._sending.add(control.switch)
+            self._entry.async_create_task(
+                self._hass, self._async_send(control, on=on), f"switch {control.switch}"
+            )
+
+    def _capacity(self) -> int:
+        """Read the capacity from its entity, the one source of it."""
+        entity_id = er.async_get(self._hass).async_get_entity_id(
+            "number", DOMAIN, f"{self._entry.entry_id}_capacity"
+        )
+        state = self._hass.states.get(entity_id) if entity_id else None
+        try:
+            value = int(float(state.state)) if state else DEFAULT_CAPACITY
+        except ValueError:
+            return DEFAULT_CAPACITY
+        return max(CAPACITY_MIN, min(CAPACITY_MAX, value))
+
+    def _zone_sensors(self) -> dict[Zone, str]:
+        """Return the zone sensors of Bestiarium Mode that exist, by zone."""
+        registry = er.async_get(self._hass)
+        return {
+            zone: entity_id
+            for zone in SENSOR_ZONES
+            if (
+                entity_id := registry.async_get_entity_id(
+                    "binary_sensor",
+                    DOMAIN_BESTIARIUM_MODE,
+                    ZONE_SENSOR_UNIQUE_ID.format(zone=zone),
+                )
+            )
+        }
+
+    def _zone(self) -> Zone:
+        """Return the load zone: the sensor that is on; all off is the pause."""
+        sensors = self._zone_sensors()
+        if not sensors:
+            return Zone.NONE
+        states = {zone: self._hass.states.get(e) for zone, e in sensors.items()}
+        if any(
+            state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
+            for state in states.values()
+        ):
+            return Zone.NO_DATA
+        return next(
+            (zone for zone, state in states.items() if state.state == STATE_ON),
+            Zone.PAUSE,
+        )
+
+    def _thermostats(self) -> dict[str, VirtualThermostat]:
+        """Return the thermostats of this entry, by subentry id."""
+        component = self._hass.data.get(CLIMATE_DATA_COMPONENT)
+        entities = list(component.entities) if component else []
+        return {
+            entity.subentry_id: entity
+            for entity in entities
+            if entity.platform.platform_name == DOMAIN
+            and entity.subentry_id in self.controls
+        }
 
     def _working_time_coefficient(
-        self, thermostat: VirtualThermostat, now: datetime
+        self, thermostat: VirtualThermostat, control: ThermostatControl, now: datetime
     ) -> float:
         """Coefficient for deficit sort (ascending = less time first)."""
-        if not thermostat.expected_switch_state:
+        if not control.expected_on:
             return 1
-        min_required = getattr(thermostat, "_min_cycle_duration", None)
-        if not min_required or min_required.total_seconds() <= 0:
+        min_required = thermostat.min_cycle_duration
+        if min_required.total_seconds() <= 0:
             min_required = self._min_working_time
-        changed_at = thermostat.expected_switch_state_changed_at
-        actual = (now - changed_at).total_seconds()
+        actual = (now - control.expected_changed_at).total_seconds()
         return actual / min_required.total_seconds()
 
-    def _temperature_diff(self, thermostat: VirtualThermostat) -> float:
-        """Temperature difference for sorting (higher = more demand)."""
-        target = thermostat.target_temperature
-        current = thermostat.current_temperature
-        if target is None or current is None:
-            return 0.0
-        return abs(target - current)
+    def _allocate(
+        self, thermostats: dict[str, VirtualThermostat], now: datetime, zone: Zone
+    ) -> None:
+        """
+        Share the capacity among the thermostats that want to work, by the zone.
 
-    async def _calculate_expected_state(self, now: datetime) -> None:
-        """Allocate capacity to thermostats (three strategies)."""
+        Those that do not work (idle, off), whose switch is gone, shared or
+        does not respond, or that have no temperature get nothing: their
+        place goes to the others. A deficit is the normal state of a home
+        that needs Bestiarium Climate: the ones that worked least go first.
+
+        The zones of the load, as the devices' balancer: green (or no load
+        limits) shares the capacity and rotates; yellow keeps the ones that
+        heat and rotates them out, starting none; the pause, no data and the
+        overload change nothing; red turns the heaters off one by one. A
+        switch the load protection turned off is no failed attempt: out of
+        green the balancer does not want it on again.
+        """
         working = [
-            t
-            for t in self._get_thermostats()
-            if t.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
-            and not t.switch_not_responding
+            (thermostat, control)
+            for subentry_id, thermostat in thermostats.items()
+            if (control := self.controls[subentry_id]).in_rotation(now)
+            and control.switch not in self._shared
+            and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
-        capacity = self._get_capacity()
-        n = len(working)
-
-        if capacity <= 0:
-            LOGGER.debug("Calculate expected: capacity=0, turning off %d working", n)
-            for t in working:
-                if t.expected_switch_state:
-                    t.set_expected_switch_state(False)
-                    t.set_switch_state_change_tries(0)
-                    LOGGER.debug("  off: %s", self._thermostat_label(t))
+        for control in self.controls.values():
+            if not any(control is c for _, c in working):
+                control.set_expected(False, now)  # noqa: FBT003
+        if zone is not Zone.RED:
+            self._red_off_at = None
+            self._cancel_red_timer()
+        if zone is Zone.RED:
+            self._red_step([p for p in working if self._heating(p[1], now)], now)
             return
-
-        if capacity >= n:
-            LOGGER.debug(
-                "Calculate expected: capacity=%d >= %d, turning on all", capacity, n
-            )
-            for t in working:
-                if not t.expected_switch_state:
-                    t.set_expected_switch_state(True)
-                    t.set_switch_state_change_tries(0)
-                    LOGGER.debug("  on: %s", self._thermostat_label(t))
-            return
-
-        # Deficit: sort by coefficient ASC, then temp_diff DESC
-        LOGGER.debug("Calculate expected: deficit capacity=%d < %d", capacity, n)
-        with_coeff = [
-            (t, self._working_time_coefficient(t, now), self._temperature_diff(t))
-            for t in working
-        ]
-        with_coeff.sort(key=lambda x: (x[1], -x[2]))
-        thermostats_on = [
-            self._thermostat_label(t) for t, _, _ in with_coeff[:capacity]
-        ]
-        thermostats_waiting = [
-            self._thermostat_label(t) for t, _, _ in with_coeff[capacity:]
-        ]
-        self._hass.bus.async_fire(
-            EVENT_CAPACITY_EXHAUSTED,
-            {
-                "capacity": capacity,
-                "demand": n,
-                "thermostats_on": thermostats_on,
-                "thermostats_waiting": thermostats_waiting,
-            },
+        capacity = self._capacity()
+        ranked = sorted(
+            working,
+            key=lambda pair: (
+                self._working_time_coefficient(*pair, now),
+                -pair[0].temperature_diff,
+            ),
         )
-        for i, (t, coeff, diff) in enumerate(with_coeff):
-            label = self._thermostat_label(t)
-            switch_entity_id = self._get_switch_entity_id(t)
-            if i < capacity:
-                if not t.expected_switch_state:
-                    t.set_expected_switch_state(True)
-                    t.set_switch_state_change_tries(0)
-                    self._hass.bus.async_fire(
-                        EVENT_DEVICE_ROTATED_IN,
-                        {
-                            "thermostat": label,
-                            "switch_entity_id": switch_entity_id,
-                            "working_time_coefficient": round(coeff, 2),
-                            "temperature_diff": round(diff, 2),
-                        },
-                    )
-                    LOGGER.debug("  on: %s (coeff=%.2f diff=%.2f)", label, coeff, diff)
-            elif t.expected_switch_state:
-                t.set_expected_switch_state(False)
-                t.set_switch_state_change_tries(0)
+        deficit = capacity < len(ranked)
+        LOGGER.debug(
+            "Zone %s, capacity %s: %s",
+            zone,
+            capacity,
+            [
+                (c.name, round(self._working_time_coefficient(t, c, now), 2))
+                for t, c in ranked
+            ],
+        )
+        for place, (thermostat, control) in enumerate(ranked):
+            if zone in STARTING_ZONES:
+                on = place < capacity
+            elif zone is Zone.YELLOW:
+                on = self._heating(control, now) and place < capacity
+            else:
+                on = self._heating(control, now)
+            if on == control.expected_on:
+                continue
+            coefficient = self._working_time_coefficient(thermostat, control, now)
+            control.set_expected(on, now)
+            if deficit:
                 self._hass.bus.async_fire(
-                    EVENT_DEVICE_ROTATED_OUT,
+                    EVENT_DEVICE_ROTATED_IN if on else EVENT_DEVICE_ROTATED_OUT,
                     {
-                        "thermostat": label,
-                        "switch_entity_id": switch_entity_id,
-                        "working_time_coefficient": round(coeff, 2),
-                        "temperature_diff": round(diff, 2),
+                        "thermostat": thermostat.entity_id,
+                        "switch_entity_id": control.switch,
+                        "working_time_coefficient": round(coefficient, 2),
+                        "temperature_diff": round(thermostat.temperature_diff, 2),
                     },
                 )
-                LOGGER.debug("  off: %s (coeff=%.2f diff=%.2f)", label, coeff, diff)
 
-    async def _sync_switches(self, now: datetime) -> None:
-        """Sync actual switch state with expected, retries, not_responding."""
-        thermostats = self._get_thermostats()
-        for t in thermostats:
-            if t.switch_not_responding:
-                continue
-            label = self._thermostat_label(t)
-            actual = self._get_switch_is_on(t)
-            expected = t.expected_switch_state
-            if actual == expected:
-                t.set_switch_state_change_tries(0)
-                LOGGER.debug("Sync: %s already matches expected", label)
-                continue
-            tries = t.switch_state_change_tries
-            if tries >= MAX_SWITCH_RETRIES:
-                LOGGER.warning(
-                    "Switch not responding after %d tries for %s",
-                    tries,
-                    label,
-                )
-                self._hass.bus.async_fire(
-                    EVENT_SWITCH_FAILED, self._event_switch_failed_payload(t)
-                )
-                await self._async_turn_switch(t, turn_on=False)
-                t.set_switch_state_change_tries(0)
-                t.set_switch_not_responding(True)
-                t.set_recovery_time(now + self._recovery_timeout)
-                t.set_expected_switch_state(False)
-                LOGGER.debug("Sync: marked not_responding, recovery at %s", label)
-                continue
-            await self._async_turn_switch(t, turn_on=expected)
-            t.set_switch_state_change_tries(tries + 1)
-            LOGGER.debug(
-                "Sync: sent %s for %s (tries=%d)",
-                "on" if expected else "off",
-                label,
-                tries + 1,
+    @staticmethod
+    def _heating(control: ThermostatControl, now: datetime) -> bool:
+        """Return whether the switch heats (or is starting); else want it off."""
+        if control.heating(now):
+            return True
+        control.set_expected(False, now)  # noqa: FBT003
+        return False
+
+    def _red_step(
+        self, heating: list[tuple[VirtualThermostat, ThermostatControl]], now: datetime
+    ) -> None:
+        """Red zone: every 5 s the heater whose room needs it least goes off."""
+        if not heating:
+            return
+        step = timedelta(seconds=RED_STEP_SECONDS)
+        if self._red_off_at is None or now - self._red_off_at >= step:
+            _thermostat, control = min(heating, key=lambda p: p[0].temperature_diff)
+            LOGGER.info("%s: turned off in the red zone", control.name)
+            control.set_expected(False, now)  # noqa: FBT003
+            self._red_off_at = now
+            if len(heating) == 1:
+                return
+        if self._red_timer is None:
+            self._red_timer = async_call_later(
+                self._hass, RED_STEP_SECONDS, self._async_red_timer
             )
+
+    @callback
+    def _async_red_timer(self, _now: datetime) -> None:
+        self._red_timer = None
+        self.async_request_balance()
+
+    def _cancel_red_timer(self) -> None:
+        if self._red_timer is not None:
+            self._red_timer()
+            self._red_timer = None
+
+    async def _async_send(self, control: ThermostatControl, *, on: bool) -> None:
+        """
+        Send a switch what the balancer wants; one switch never stops the others.
+
+        A command HA refuses counts as an attempt; the control state tells a
+        lasting problem, so the refusal itself is only a debug line.
+        """
+        try:
+            await self._hass.services.async_call(
+                "switch",
+                "turn_on" if on else "turn_off",
+                {"entity_id": control.switch},
+                blocking=True,
+            )
+        except HomeAssistantError as err:
+            LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
+        finally:
+            self._sending.discard(control.switch)

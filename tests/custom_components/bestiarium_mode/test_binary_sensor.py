@@ -40,7 +40,7 @@ def _create_config_entry(
     ac_load_limits: dict | None = None,
 ) -> MockConfigEntry:
     """Create a mock config entry."""
-    data = {"options": [{"name": "Mode1", "icon": "mdi:home"}]}
+    data = {"options": [{"name": "Mode1"}]}
     if ac_load_limits is not None:
         data["ac_load_limits"] = ac_load_limits
     return MockConfigEntry(domain=DOMAIN, data=data)
@@ -105,10 +105,10 @@ async def test_green_zone_on_after_recovery(hass: HomeAssistant) -> None:
         "binary_sensor", DOMAIN, "power_load_green"
     )
 
-    # Initially, Green should be OFF with recovery_pending=True
+    # Initially the pause: Green and the others OFF
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Yellow, Red, Overload should be OFF
     yellow_id = entity_registry.async_get_entity_id(
@@ -133,7 +133,7 @@ async def test_green_zone_on_after_recovery(hass: HomeAssistant) -> None:
     # Now Green should be ON
     state = hass.states.get(green_id)
     assert state.state == STATE_ON
-    assert state.attributes["recovery_pending"] is False
+    assert not _on_pause(hass)
 
 
 async def test_yellow_zone_at_boundary(hass: HomeAssistant) -> None:
@@ -354,7 +354,7 @@ async def test_zone_transition_on_state_change(hass: HomeAssistant) -> None:
 
     # Initially green should be OFF (recovery pending)
     assert hass.states.get(green_id).state == STATE_OFF
-    assert hass.states.get(green_id).attributes["recovery_pending"] is True
+    assert _on_pause(hass)
     assert hass.states.get(yellow_id).state == STATE_OFF
 
     # Advance time past recovery timeout
@@ -372,36 +372,6 @@ async def test_zone_transition_on_state_change(hass: HomeAssistant) -> None:
     # Now yellow should be ON, green OFF
     assert hass.states.get(green_id).state == STATE_OFF
     assert hass.states.get(yellow_id).state == STATE_ON
-
-
-async def test_extra_state_attributes(hass: HomeAssistant) -> None:
-    """Test that binary sensors have correct extra state attributes."""
-    hass.states.async_set("sensor.power_meter", "1000")
-
-    entry = _create_config_entry(AC_LOAD_LIMITS_CONFIG)
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-    entity_registry = er.async_get(hass)
-    green_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "power_load_green"
-    )
-
-    # Expected thresholds based on config: 5000W limit, 75% yellow, 90% red
-    limit_w = AC_LOAD_LIMITS_CONFIG["ac_load_limit_w"]
-    expected_yellow = limit_w * AC_LOAD_LIMITS_CONFIG["ac_yellow_zone_percent"] / 100
-    expected_red = limit_w * AC_LOAD_LIMITS_CONFIG["ac_red_zone_percent"] / 100
-
-    state = hass.states.get(green_id)
-    assert state.attributes["zone"] == "green"
-    assert state.attributes["yellow_threshold"] == expected_yellow
-    assert state.attributes["red_threshold"] == expected_red
-    assert state.attributes["limit_w"] == limit_w
-
-
-# ==================== Recovery Timeout Tests ====================
 
 
 async def test_green_zone_immediate_off_transition(hass: HomeAssistant) -> None:
@@ -432,7 +402,7 @@ async def test_green_zone_immediate_off_transition(hass: HomeAssistant) -> None:
 
     # Green should be OFF immediately (no delay for OFF)
     assert hass.states.get(green_id).state == STATE_OFF
-    assert hass.states.get(green_id).attributes["recovery_pending"] is False
+    assert not _on_pause(hass)
 
 
 async def test_recovery_cancelled_when_power_rises(hass: HomeAssistant) -> None:
@@ -453,7 +423,7 @@ async def test_recovery_cancelled_when_power_rises(hass: HomeAssistant) -> None:
     # Initially recovery is pending
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Advance time partially (5 seconds, less than 10 second recovery)
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=5))
@@ -462,7 +432,7 @@ async def test_recovery_cancelled_when_power_rises(hass: HomeAssistant) -> None:
     # Still recovering
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Power rises above threshold - should cancel recovery
     hass.states.async_set("sensor.power_meter", "4000")
@@ -471,7 +441,7 @@ async def test_recovery_cancelled_when_power_rises(hass: HomeAssistant) -> None:
     # Recovery should be cancelled
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is False
+    assert not _on_pause(hass)
 
     # Advance time past original recovery timeout
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))
@@ -497,12 +467,12 @@ async def test_recovery_restarts_after_cancellation(hass: HomeAssistant) -> None
     )
 
     # Initially recovery is pending
-    assert hass.states.get(green_id).attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Power rises - cancels recovery
     hass.states.async_set("sensor.power_meter", "4000")
     await hass.async_block_till_done()
-    assert hass.states.get(green_id).attributes["recovery_pending"] is False
+    assert not _on_pause(hass)
 
     # Power drops again - should start new recovery
     hass.states.async_set("sensor.power_meter", "3000")
@@ -510,7 +480,7 @@ async def test_recovery_restarts_after_cancellation(hass: HomeAssistant) -> None
 
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Advance time past recovery timeout
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=11))
@@ -519,7 +489,7 @@ async def test_recovery_restarts_after_cancellation(hass: HomeAssistant) -> None
     # Now green should be ON
     state = hass.states.get(green_id)
     assert state.state == STATE_ON
-    assert state.attributes["recovery_pending"] is False
+    assert not _on_pause(hass)
 
 
 async def test_other_zones_work_immediately(hass: HomeAssistant) -> None:
@@ -566,37 +536,22 @@ async def test_other_zones_work_immediately(hass: HomeAssistant) -> None:
     assert hass.states.get(yellow_id).state == STATE_ON
 
 
-async def test_recovery_pending_attribute_only_on_green(hass: HomeAssistant) -> None:
-    """Test that recovery_pending attribute only exists on GREEN zone."""
-    hass.states.async_set("sensor.power_meter", "4000")
-
-    entry = _create_config_entry(AC_LOAD_LIMITS_CONFIG_WITH_RECOVERY)
+async def test_only_red_has_an_attribute(hass: HomeAssistant) -> None:
+    """Review 11: only the red threshold, which the balancer reads, is shown."""
+    hass.states.async_set("sensor.power_meter", "3000")
+    entry = _create_config_entry(AC_LOAD_LIMITS_CONFIG)
     entry.add_to_hass(hass)
-
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    entity_registry = er.async_get(hass)
-    green_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "power_load_green"
-    )
-    yellow_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "power_load_yellow"
-    )
-    red_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "power_load_red"
-    )
-    overload_id = entity_registry.async_get_entity_id(
-        "binary_sensor", DOMAIN, "power_load_overload"
-    )
-
-    # Green should have recovery_pending attribute
-    assert "recovery_pending" in hass.states.get(green_id).attributes
-
-    # Other zones should NOT have recovery_pending attribute
-    assert "recovery_pending" not in hass.states.get(yellow_id).attributes
-    assert "recovery_pending" not in hass.states.get(red_id).attributes
-    assert "recovery_pending" not in hass.states.get(overload_id).attributes
+    for zone in ("green", "yellow", "red", "overload"):
+        attributes = hass.states.get(_zone_id(hass, zone)).attributes
+        own = {"red_threshold"} if zone == "red" else set()
+        assert {
+            "recovery_pending",
+            "yellow_threshold",
+            "red_threshold",
+        } & attributes.keys() == own
 
 
 async def test_default_recovery_seconds(hass: HomeAssistant) -> None:
@@ -617,7 +572,7 @@ async def test_default_recovery_seconds(hass: HomeAssistant) -> None:
 
     # Recovery should be pending
     assert hass.states.get(green_id).state == STATE_OFF
-    assert hass.states.get(green_id).attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     # Advance time by default recovery seconds + buffer
     async_fire_time_changed(
@@ -648,7 +603,7 @@ async def test_lost_data_stops_the_pause(hass: HomeAssistant) -> None:
     green_id = entity_registry.async_get_entity_id(
         "binary_sensor", DOMAIN, "power_load_green"
     )
-    assert hass.states.get(green_id).attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     hass.states.async_set("sensor.power_meter", STATE_UNAVAILABLE)
     await hass.async_block_till_done()
@@ -657,8 +612,22 @@ async def test_lost_data_stops_the_pause(hass: HomeAssistant) -> None:
 
     state = hass.states.get(green_id)
     assert state.state == STATE_OFF
-    assert state.attributes["recovery_pending"] is True
+    assert _on_pause(hass)
 
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=61))
     await hass.async_block_till_done()
     assert hass.states.get(green_id).state == STATE_UNAVAILABLE
+
+
+def _zone_id(hass: HomeAssistant, zone: str) -> str:
+    return er.async_get(hass).async_get_entity_id(
+        "binary_sensor", DOMAIN, f"power_load_{zone}"
+    )
+
+
+def _on_pause(hass: HomeAssistant) -> bool:
+    """Return whether the zone is the pause: all four off and available."""
+    return all(
+        hass.states.get(_zone_id(hass, zone)).state == STATE_OFF
+        for zone in ("green", "yellow", "red", "overload")
+    )

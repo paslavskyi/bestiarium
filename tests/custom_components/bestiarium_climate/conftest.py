@@ -38,6 +38,7 @@ async def climate_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Create a bestiarium_climate config entry (no subentries)."""
     entry = MockConfigEntry(
         domain=DOMAIN,
+        minor_version=2,
         data={
             CONF_CAPACITY: 2,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
@@ -61,7 +62,6 @@ def switch_subentry() -> SimpleNamespace:
         title="Virtual Sw",
         data={
             "name": "Virtual Sw",
-            "mode": ClimateMode.HEATING,
             "power_entity": "sensor.power",
             "min_power": 50.0,
             "heating_action": {
@@ -122,6 +122,7 @@ async def climate_entry_with_two_thermostats(
     """Entry with two thermostat subentries."""
     entry = MockConfigEntry(
         domain=DOMAIN,
+        minor_version=2,
         data={
             CONF_CAPACITY: 1,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
@@ -144,6 +145,7 @@ async def climate_entry_with_switch(
     """Entry with one switch subentry (subentries set before add_to_hass)."""
     entry = MockConfigEntry(
         domain=DOMAIN,
+        minor_version=2,
         data={
             CONF_CAPACITY: 2,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},
@@ -163,6 +165,7 @@ async def climate_entry_with_thermostat(
     """Entry with one thermostat subentry (subentries set before add_to_hass)."""
     entry = MockConfigEntry(
         domain=DOMAIN,
+        minor_version=2,
         data={
             CONF_CAPACITY: 2,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},

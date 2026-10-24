@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import Event, callback
+from homeassistant.core import CoreState, Event, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 from homeassistant.helpers.event import (
@@ -19,17 +19,16 @@ from homeassistant.helpers.start import async_at_started
 
 from .const import (
     DOMAIN,
-    EVENT_ZONE_CHANGED,
     GREEN_INTERVAL_SECONDS,
     ISSUE_NO_LOAD_ZONES,
+    ISSUE_NO_MODE_SELECT,
     LOGGER,
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
     ZONE_SENSOR_UNIQUE_ID,
-    ZoneChangedData,
 )
 from .control import DeviceControl, ResponseMemory, async_get_response_memory
-from .helpers import mode_entity_id
+from .helpers import get_mode_state, mode_entity_id
 from .power_memory import async_get_power_memory
 from .strategies import Strategies
 
@@ -136,8 +135,17 @@ class BalancingCoordinator:
     ) -> None:
         """Come alive once a zone sensor is created; follow each new mode entity."""
         entity_id = event.data["entity_id"]
+        if (
+            event.data["action"] == "remove"
+            and self._active
+            and not (self._zone_entity_ids())
+        ):
+            self._deactivate()
+            return
         if event.data["action"] != "create":
             return
+        if entity_id == mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID):
+            ir.async_delete_issue(self._hass, DOMAIN, ISSUE_NO_MODE_SELECT)
         if self._active and entity_id in self._mode_entity_ids():
             self._unsubscribe()
             self._subscribe()
@@ -146,16 +154,44 @@ class BalancingCoordinator:
 
     @callback
     def _on_started(self, _hass: HomeAssistant) -> None:
-        """Tell the owner, once HA has started, that there are no zones."""
-        if not self._active:
+        """
+        Once HA has started: apply the mode again; tell what is missing.
+
+        The mode's duties do not survive a restart; applying the mode again
+        (the owner's choice) turns off what it says off.
+        """
+        mode = get_mode_state(self._hass)
+        if _mode(mode) is not None:
+            self._hass.async_create_task(self._async_apply_mode(restart=True))
+        if mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID) is None:
             ir.async_create_issue(
                 self._hass,
                 DOMAIN,
-                ISSUE_NO_LOAD_ZONES,
+                ISSUE_NO_MODE_SELECT,
                 is_fixable=False,
                 severity=ir.IssueSeverity.WARNING,
-                translation_key=ISSUE_NO_LOAD_ZONES,
+                translation_key=ISSUE_NO_MODE_SELECT,
             )
+        if not self._active:
+            self._report_no_zones()
+
+    def _report_no_zones(self) -> None:
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            ISSUE_NO_LOAD_ZONES,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_NO_LOAD_ZONES,
+        )
+
+    def _deactivate(self) -> None:
+        """Stop following the zone sensors that are gone; wait for new ones."""
+        self._active = False
+        self._unsubscribe()
+        self._stop_periodic_job()
+        self._active_zone = ActiveZone.NO_DATA
+        self._report_no_zones()
 
     def _activate(self) -> None:
         """Follow the zones and run the strategy of the current one."""
@@ -219,6 +255,12 @@ class BalancingCoordinator:
         control = DeviceControl(self._hass, entry, self._response_memory)
         control.async_start()
         self._controls[entry.entry_id] = control
+        # Reloaded after the start (the owner's decision): its duties are gone,
+        # as after a restart of HA; the mode is applied again to it alone
+        if self._hass.state is CoreState.running and _mode(get_mode_state(self._hass)):
+            self._hass.async_create_task(
+                self._async_apply_mode(restart=True, only=entry.entry_id)
+            )
 
         @callback
         def remove() -> None:
@@ -416,10 +458,6 @@ class BalancingCoordinator:
                 new_zone,
             )
             self._active_zone = new_zone
-            self._hass.bus.async_fire(
-                EVENT_ZONE_CHANGED,
-                ZoneChangedData(previous_zone=previous_zone.value, zone=new_zone.value),
-            )
             # Handle zone change (stop/start periodic jobs, execute overload)
             self._hass.async_create_task(self._handle_zone_change(new_zone))
 
@@ -438,9 +476,11 @@ class BalancingCoordinator:
         # Apply mode priorities: turn off OFF, turn on ALWAYS_ON
         self._hass.async_create_task(self._async_apply_mode())
 
-    async def _async_apply_mode(self) -> None:
-        """Apply the mode, then repeat its turn-offs until they are done."""
-        await self._strategies.async_apply_mode()
+    async def _async_apply_mode(
+        self, *, restart: bool = False, only: str | None = None
+    ) -> None:
+        """Apply the mode (to one device entry only), then repeat its turn-offs."""
+        await self._strategies.async_apply_mode(restart=restart, only=only)
         self._repeat_mode_duties()
 
     def _repeat_mode_duties(self) -> None:

@@ -20,7 +20,6 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.singleton import singleton
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 from homeassistant.util.hass_dict import HassKey
 
@@ -43,6 +42,7 @@ from .consumption import (
     records_from_hourly_max,
     runs_from_states,
 )
+from .store import EntryStore
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -58,7 +58,6 @@ if TYPE_CHECKING:
 
 STORAGE_KEY = f"{DOMAIN}.consumption"
 STORAGE_VERSION = 1
-SAVE_DELAY_SECONDS = 10
 
 DATA_POWER_MEMORY: HassKey[PowerMemory] = HassKey(f"{DOMAIN}_power_memory")
 
@@ -69,34 +68,34 @@ class _DeviceMemory:
     filled_from_history: bool = False
 
 
-class PowerMemory:
+class PowerMemory(EntryStore[_DeviceMemory]):
     """The remembered runs of every device entry, kept in a Store."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Start empty; call async_load to read the store."""
+        super().__init__(hass, STORAGE_KEY, STORAGE_VERSION)
         self._hass = hass
-        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-        self._devices: dict[str, _DeviceMemory] = {}
 
-    async def async_load(self) -> None:
-        """Read the stored runs."""
-        stored = await self._store.async_load() or {}
-        self._devices = {
-            entry_id: _DeviceMemory(
-                records=[PowerRecord.from_dict(run) for run in device["runs"]],
-                filled_from_history=device["filled_from_history"],
-            )
-            for entry_id, device in stored.items()
+    def _decode(self, value: dict[str, Any]) -> _DeviceMemory:
+        return _DeviceMemory(
+            records=[PowerRecord.from_dict(run) for run in value["runs"]],
+            filled_from_history=value["filled_from_history"],
+        )
+
+    def _encode(self, value: _DeviceMemory) -> dict[str, Any]:
+        return {
+            "filled_from_history": value.filled_from_history,
+            "runs": [record.as_dict() for record in value.records],
         }
 
     def records(self, entry_id: str) -> list[PowerRecord]:
         """Return the remembered runs of a device, oldest first."""
-        device = self._devices.get(entry_id)
+        device = self._entries.get(entry_id)
         return list(device.records) if device else []
 
     def filled_from_history(self, entry_id: str) -> bool:
         """Return whether the recorder import has already run for a device."""
-        device = self._devices.get(entry_id)
+        device = self._entries.get(entry_id)
         return device is not None and device.filled_from_history
 
     def expected_power(self, entry: ConfigEntry) -> tuple[float, str]:
@@ -107,13 +106,13 @@ class PowerMemory:
 
     def add_run(self, entry_id: str, run: PowerRecord) -> None:
         """Remember a run seen live."""
-        device = self._devices.setdefault(entry_id, _DeviceMemory())
+        device = self._entries.setdefault(entry_id, _DeviceMemory())
         device.records = add_run(device.records, run)
         self._changed(entry_id)
 
     def set_imported(self, entry_id: str, imported: list[PowerRecord]) -> None:
         """Store the records imported from the recorder next to the live runs."""
-        device = self._devices.setdefault(entry_id, _DeviceMemory())
+        device = self._entries.setdefault(entry_id, _DeviceMemory())
         records = sorted(imported, key=lambda record: record.start)
         for run in device.records:
             if run.is_real:
@@ -124,28 +123,14 @@ class PowerMemory:
 
     def reset(self, entry_id: str) -> None:
         """Forget a device's runs; its history is not imported again."""
-        self._devices[entry_id] = _DeviceMemory(filled_from_history=True)
+        self._entries[entry_id] = _DeviceMemory(filled_from_history=True)
         self._changed(entry_id)
 
-    def remove(self, entry_id: str) -> None:
-        """Forget a removed device entry."""
-        self._devices.pop(entry_id, None)
-        self._store.async_delay_save(self._data_to_save, SAVE_DELAY_SECONDS)
-
     def _changed(self, entry_id: str) -> None:
-        self._store.async_delay_save(self._data_to_save, SAVE_DELAY_SECONDS)
+        self._save()
         async_dispatcher_send(
             self._hass, SIGNAL_EXPECTED_POWER_CHANGED.format(entry_id)
         )
-
-    def _data_to_save(self) -> dict[str, Any]:
-        return {
-            entry_id: {
-                "filled_from_history": device.filled_from_history,
-                "runs": [record.as_dict() for record in device.records],
-            }
-            for entry_id, device in self._devices.items()
-        }
 
 
 @singleton(DATA_POWER_MEMORY, async_=True)

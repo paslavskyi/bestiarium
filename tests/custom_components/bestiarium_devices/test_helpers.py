@@ -151,11 +151,11 @@ class TestGetCurrentPriority:
 
         assert result == 4000  # noqa: PLR2004
 
-    async def test_falls_back_to_constant_when_mode_select_missing(
+    async def test_falls_back_to_own_default_when_mode_select_missing(
         self,
         hass: HomeAssistant,
     ) -> None:
-        """Test falls back to LOAD_PRIORITY_DEFAULT when mode select is missing."""
+        """No mode select: the device's own default priority, not 5000."""
         entry = MockConfigEntry(
             domain=DOMAIN,
             data={
@@ -168,13 +168,13 @@ class TestGetCurrentPriority:
 
         result = get_current_priority(hass, entry)
 
-        assert result == LOAD_PRIORITY_DEFAULT
+        assert result == 6000  # noqa: PLR2004 - its own default (DEV-008 B)
 
-    async def test_falls_back_to_constant_when_mode_select_unknown(
+    async def test_falls_back_to_own_default_when_mode_select_unknown(
         self,
         hass: HomeAssistant,
     ) -> None:
-        """Test falls back to LOAD_PRIORITY_DEFAULT when mode select is unknown."""
+        """Mode unknown: the device's own default priority."""
         hass.states.async_set("select.bestiarium_mode", "unknown")
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -188,13 +188,13 @@ class TestGetCurrentPriority:
 
         result = get_current_priority(hass, entry)
 
-        assert result == LOAD_PRIORITY_DEFAULT
+        assert result == 6000  # noqa: PLR2004 - its own default (DEV-008 B)
 
-    async def test_falls_back_to_constant_when_mode_select_unavailable(
+    async def test_falls_back_to_own_default_when_mode_select_unavailable(
         self,
         hass: HomeAssistant,
     ) -> None:
-        """Test falls back to LOAD_PRIORITY_DEFAULT when mode select unavailable."""
+        """Mode unavailable: the device's own default priority."""
         hass.states.async_set("select.bestiarium_mode", "unavailable")
         entry = MockConfigEntry(
             domain=DOMAIN,
@@ -208,7 +208,7 @@ class TestGetCurrentPriority:
 
         result = get_current_priority(hass, entry)
 
-        assert result == LOAD_PRIORITY_DEFAULT
+        assert result == 6000  # noqa: PLR2004 - its own default (DEV-008 B)
 
     async def test_returns_default_priority_when_entry_has_empty_priorities(
         self,

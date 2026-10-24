@@ -151,11 +151,7 @@ async def test_config_flow_create_virtual_device(
         "Eco": 1000,
         "Boost": 9999,
     }
-    assert set(entries[0].data[CONF_MODE_OPTIONS_SNAPSHOT]) == {
-        CONF_DEFAULT_PRIORITY,
-        "Eco",
-        "Boost",
-    }
+    assert CONF_MODE_OPTIONS_SNAPSHOT not in entries[0].data
     assert entries[0].data[CONF_OVERLOAD_FIRST_QUEUE] is True
 
 
@@ -1288,7 +1284,7 @@ async def test_allowed_switch_is_not_offered_when_extending_its_device(
     hass: HomeAssistant,
     bestiarium_mode_entry: MockConfigEntry,  # noqa: ARG001
 ) -> None:
-    """Extending a device that carries an 'Allowed' switch picks the relay only."""
+    """A device whose relay is controlled: refused, 'Allowed' is no relay."""
     device_id, entry = _relay_device_with_allowed_entry(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -1307,16 +1303,10 @@ async def test_allowed_switch_is_not_offered_when_extending_its_device(
         result["flow_id"], {CONF_DEVICE_ID: device_id}
     )
 
-    assert result["step_id"] == "configure_priorities"
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {CONF_DEFAULT_PRIORITY: 5000, CONF_OVERLOAD_FIRST_QUEUE: False},
-    )
-    created = hass.config_entries.async_get_entry(result["result"].entry_id)
-    assert created.data[CONF_SWITCH_ENTITY_ID] == relay
-    assert created.data[CONF_SWITCH_ENTITY_ID] != allowed
-    await hass.config_entries.async_unload(created.entry_id)
-    await hass.config_entries.async_unload(entry.entry_id)
+    # Its only relay is controlled already; "Allowed" is no alternative
+    assert result["step_id"] == "extend_device"
+    assert result["errors"] == {CONF_DEVICE_ID: "switch_taken"}
+    assert relay != allowed
 
 
 async def test_virtual_device_relay_selector_excludes_allowed_switches(

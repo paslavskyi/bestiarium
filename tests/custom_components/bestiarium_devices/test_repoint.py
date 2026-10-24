@@ -310,3 +310,27 @@ async def test_virtual_device_reset_and_same_switch(
 
     assert (await async_get_response_memory(hass)).longest(lamp.entry_id) == 9.0
     assert (await async_get_power_memory(hass)).records(lamp.entry_id) == []
+
+
+async def test_a_switch_controlled_by_another_device_is_refused(
+    hass: HomeAssistant, lamp: MockConfigEntry
+) -> None:
+    """Review 06 debt: one relay, one Bestiarium device; its own switch is fine."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Second lamp",
+            CONF_SWITCH_ENTITY_ID: "switch.lamp",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.lamp_power",
+        },
+    )
+    assert result["errors"] == {CONF_SWITCH_ENTITY_ID: "switch_taken"}
+
+    await _reconfigure_virtual(hass, lamp, "switch.lamp", reset=False)
+    assert lamp.data[CONF_SWITCH_ENTITY_ID] == "switch.lamp"

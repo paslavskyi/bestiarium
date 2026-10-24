@@ -11,7 +11,8 @@ testing the Bestiarium integrations without hardware. It has no dependencies.
    a **fault profile**.
 2. **4 mock thermometers** with a temperature set by hand.
 3. **A grid**: the sum of what the loads draw plus 40–100 W of background,
-   and an overload alarm after 10 s above 5000 W.
+   (the overload alarm was removed in DEV-008 stage B: nobody read it, the
+   overload zone tells it).
 4. **Singleton**: one config entry (unique ID `bestiarium_mock`).
 
 The stand is set up in the development HA with `make stand`
@@ -31,7 +32,8 @@ custom_components/bestiarium_mock/
 ├── entity.py            # MockSocketEntity — entities of a socket follow it
 ├── switch.py            # MockDeviceSwitch — the socket's switch
 ├── sensor.py            # Socket power, grid power, thermometer temperature
-├── binary_sensor.py     # Socket "State" (draws power, diagnostic), grid overload alarm
+├── binary_sensor.py     # Socket "State" (draws power, diagnostic)
+├── readings.py          # MockReading — the fault model of a thermometer or the grid
 ├── number.py            # Fault parameters, cooker power, thermometer temperature
 ├── select.py            # Fault profile
 ├── config_flow.py       # Confirmation form counting the device set (VERSION 2)
@@ -41,7 +43,7 @@ tests/custom_components/bestiarium_mock/
 ├── conftest.py          # `stand` fixture (seeded generators), `advance` (clock)
 ├── test_config_flow.py
 ├── test_entities.py
-├── test_coordinator.py  # grid and alarm
+├── test_coordinator.py  # grid
 ├── test_faults.py       # the fault model
 ├── test_profiles.py     # profiles, custom parameters, restore
 └── test_migration.py
@@ -130,11 +132,18 @@ Per socket (device `mock_<device_id>`, model "Mock Smart Socket"):
 | 7 × `number` fault parameters | `mock_<id>_<parameter>` | config | editable in Custom only |
 | `number` "Mock Power" | `mock_cooker_mock_power` | config | cooker only, 400–4200 W |
 
-Per thermometer: `sensor` "Temperature" (`mock_<id>_temperature`) and `number`
-"Set Temperature" (`mock_<id>_mock_temperature`, `config`).
+Per thermometer: `sensor` "Temperature" (`mock_<id>_temperature`), `number`
+"Set Temperature" (`mock_<id>_mock_temperature`, `config`) and `select` "Fault
+profile" (`mock_<id>_reading_profile`, `config`).
 
-Grid: `sensor` "Grid Power" (`mock_grid_power`) and `binary_sensor` "Grid
-Overload Alarm" (`mock_grid_alarm`).
+Grid: `sensor` "Grid Power" (`mock_grid_power`) and `select` "Fault profile"
+(`mock_grid_reading_profile`, `config`).
+
+The reading profiles of the thermometers and the grid (`readings.py`,
+DR-c621b3b8): **Reliable**; **Unstable** — short dropouts (6 an hour, 10–40 s,
+unavailable meanwhile); **No data** — unavailable until the profile changes;
+**Frozen** — the value no longer changes. Each reading has its own seeded
+generator.
 
 Test knobs are `config` entities (see
 [settings vs entities](concepts/settings-vs-entities.md)); Bestiarium Devices
@@ -203,13 +212,14 @@ the script fails if HA did not load them.
    it (the boiler's "Reconfigure" → another device).
 
 3. Replaces the stand's Bestiarium Climate entry (the one with the "Stand
-   floor" thermostats; others are kept) with one entry (capacity 2) and
+   floor" thermostats; others are kept) with one entry (capacity 2, control
+   settings: 3 attempts, so a dead switch is deferred in 3 minutes) and
    thermostats "Stand floor 1–3" on thermometers 1–3 and floor heating 1–3.
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
+   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |
@@ -218,6 +228,10 @@ the script fails if HA did not load them.
    | `mode_off_unresponsive` | reset; the Tuya socket on, then "Unresponsive"; "Night": retries, then "Does not turn off by mode" |
    | `mode_off_turned_on` | reset; the Tuya socket on; "Night" turns it off; 10 s later a person turns it on; green leaves it on |
    | `mode_off_red` | reset; "Night"; the Tuya socket, night light and boiler on; the cooker pushes the grid 200 W into red: the Tuya socket goes first, then the queue |
+   | `thermostats_dead_switch` | reset; floor heating 1 "Unresponsive"; the three thermostats heat to 25 °C (capacity 2): floor 1 is deferred after 3 attempts and floor 3 takes its place |
+   | `thermostats_no_temperature` | reset; the thermostats heat; 90 s later thermometer 2 "No data": after a minute floor 2 is off, its thermostat unavailable, "No temperature data" |
+   | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
+   | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |
    | `unstable_tuya` | reset; the Tuya socket "Unstable" and on |
 
 5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode

@@ -3,28 +3,27 @@
 from __future__ import annotations
 
 import random
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import (
-    GRID_ALARM_THRESHOLD_SECONDS,
-    GRID_MAX_POWER_W,
     GRID_RANDOM_MAX_W,
     GRID_RANDOM_MIN_W,
     GRID_UPDATE_INTERVAL_SECONDS,
     LOGGER,
     MOCK_DEVICES,
+    MOCK_GRID,
     MOCK_THERMOMETERS,
 )
 from .faults import MockSocket
+from .readings import MockReading
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
-    from .binary_sensor import MockGridAlarmSensor
     from .data import BestiariumMockConfigEntry
     from .number import MockTemperatureNumber
     from .sensor import MockGridPowerSensor, MockThermometerTemperatureSensor
@@ -51,7 +50,14 @@ class MockDevicesCoordinator:
             socket.add_listener(self._update_grid) for socket in self.sockets.values()
         ]
         self._grid_power_sensor: MockGridPowerSensor | None = None
-        self._grid_alarm_sensor: MockGridAlarmSensor | None = None
+        # What HA sees of the thermometers and the grid, by device id
+        self.readings: dict[str, MockReading] = {
+            device_id: MockReading(hass)
+            for device_id in (
+                *(spec.device_id for spec in MOCK_THERMOMETERS),
+                MOCK_GRID.device_id,
+            )
+        }
 
         # Thermometer entity references
         self._temperature_sensors: dict[str, MockThermometerTemperatureSensor] = {}
@@ -59,16 +65,11 @@ class MockDevicesCoordinator:
 
         # Grid state
         self._grid_random_power: float = 0
-        self._overload_start_time: datetime | None = None
         self._unsub_timer: callable | None = None
 
     def register_grid_power_sensor(self, sensor: MockGridPowerSensor) -> None:
         """Register the grid power sensor."""
         self._grid_power_sensor = sensor
-
-    def register_grid_alarm_sensor(self, sensor: MockGridAlarmSensor) -> None:
-        """Register the grid alarm sensor."""
-        self._grid_alarm_sensor = sensor
 
     def register_temperature_sensor(
         self, device_id: str, sensor: MockThermometerTemperatureSensor
@@ -105,6 +106,8 @@ class MockDevicesCoordinator:
         LOGGER.debug("Stopping mock devices coordinator")
         for socket in self.sockets.values():
             socket.stop()
+        for reading in self.readings.values():
+            reading.stop()
         for unsub in self._unsub_sockets:
             unsub()
         if self._unsub_timer:
@@ -135,8 +138,8 @@ class MockDevicesCoordinator:
 
     @callback
     def _update_grid(self) -> None:
-        """Update grid power and alarm state."""
-        if not self._grid_power_sensor or not self._grid_alarm_sensor:
+        """Update the grid power."""
+        if not self._grid_power_sensor:
             return
 
         # The grid sees what the loads draw, whatever their switches report
@@ -145,32 +148,7 @@ class MockDevicesCoordinator:
         # Add random background power
         total_power = total_device_power + self._grid_random_power
 
-        # Update grid power sensor
         self._grid_power_sensor.set_power(total_power)
-
-        # Update alarm state
-        self._update_grid_alarm(total_power)
-
-    def _update_grid_alarm(self, total_power: float) -> None:
-        """Update grid alarm based on power and time over limit."""
-        if not self._grid_alarm_sensor:
-            return
-
-        now = datetime.now(UTC)
-
-        if total_power > GRID_MAX_POWER_W:
-            # Over limit
-            if self._overload_start_time is None:
-                self._overload_start_time = now
-            else:
-                # Check if over limit for threshold duration
-                elapsed = (now - self._overload_start_time).total_seconds()
-                if elapsed >= GRID_ALARM_THRESHOLD_SECONDS:
-                    self._grid_alarm_sensor.set_alarm(is_alarm=True)
-        else:
-            # Under limit - reset
-            self._overload_start_time = None
-            self._grid_alarm_sensor.set_alarm(is_alarm=False)
 
     @callback
     def _async_update_grid_periodic(self, now: datetime) -> None:  # noqa: ARG002

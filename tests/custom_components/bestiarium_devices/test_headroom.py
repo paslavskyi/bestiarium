@@ -49,8 +49,8 @@ async def _setup_mode(hass: HomeAssistant, load: str) -> None:
         unique_id="bestiarium_mode",
         data={
             "options": [
-                {"name": "Grid on", "icon": "mdi:home"},
-                {"name": "Always", "icon": "mdi:home"},
+                {"name": "Grid on"},
+                {"name": "Always"},
             ],
             "ac_load_limits": {
                 "ac_power_sensor": GRID,
