@@ -105,14 +105,14 @@ async def _green_cycle(hass: HomeAssistant) -> None:
     coordinator = await started_coordinator(hass)
     try:
         assert coordinator.active_zone == ActiveZone.GREEN
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
     finally:
         await coordinator.async_stop()
 
 
 async def test_big_device_does_not_fit(hass: HomeAssistant, relays: FakeRelays) -> None:
-    """Criterion 1: 2900 W + 2400 W > 4250 W -> the boiler stays off."""
-    await _setup_mode(hass, "2900")
+    """Criterion 1: 2800 W + 2400 W > 4250 W -> the boiler stays off."""
+    await _setup_mode(hass, "2800")
     await _add_device(hass, relays, BOILER, 2400, {CONF_DEFAULT_PRIORITY: 7000})
 
     await _green_cycle(hass)
@@ -124,7 +124,7 @@ async def test_smaller_device_turns_on_instead(
     hass: HomeAssistant, relays: FakeRelays
 ) -> None:
     """Criterion 2: the 300 W garland below in priority fits and turns on."""
-    await _setup_mode(hass, "2900")
+    await _setup_mode(hass, "2800")
     await _add_device(hass, relays, BOILER, 2400, {CONF_DEFAULT_PRIORITY: 7000})
     await _add_device(hass, relays, GARLAND, 300, {CONF_DEFAULT_PRIORITY: 100})
 
@@ -154,7 +154,7 @@ async def test_unknown_load_turns_nothing_on(
     coordinator = await started_coordinator(hass)
     try:
         hass.states.async_set(GRID, STATE_UNAVAILABLE)
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
     finally:
         await coordinator.async_stop()
 
@@ -165,7 +165,7 @@ async def test_always_on_mode_is_not_limited(
     hass: HomeAssistant, relays: FakeRelays
 ) -> None:
     """Criterion 4: switching to an 'always on' mode turns the boiler on anyway."""
-    await _setup_mode(hass, "2900")
+    await _setup_mode(hass, "2800")
     await _add_device(
         hass,
         relays,
@@ -189,7 +189,7 @@ async def test_always_on_mode_is_not_limited(
 
         # The green strategy does not hold an 'always on' device back either
         hass.states.async_set(BOILER, STATE_OFF)
-        await coordinator._execute_green_strategy()  # noqa: SLF001
+        await coordinator._strategies.async_green()  # noqa: SLF001
         assert relays.calls == [("turn_on", BOILER), ("turn_on", BOILER)]
     finally:
         await coordinator.async_stop()

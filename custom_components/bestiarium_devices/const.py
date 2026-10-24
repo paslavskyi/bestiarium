@@ -28,6 +28,8 @@ CONF_THERMOSTAT_DRIVEN = "thermostat_driven"
 # Config entry options
 CONF_ALLOWED = "allowed"
 CONF_ESTIMATED_POWER = "estimated_power_w"  # 0 or missing = not set
+# An action of the forms, not stored: forget the learned consumption
+CONF_RESET_POWER_MEMORY = "reset_power_memory"
 
 # Expected power of a device (learned from its runs)
 MIN_CONSUMING_POWER_W = 10  # below this a switched-on device is idle (standby)
@@ -138,6 +140,10 @@ EVENT_OVERLOAD_FIRST_QUEUE = "bestiarium_devices_overload_first_queue"
 EVENT_OVERLOAD_SECOND_QUEUE = "bestiarium_devices_overload_second_queue"
 EVENT_OVERLOAD_CLEARED = "bestiarium_devices_overload_cleared"
 EVENT_MODE_APPLIED = "bestiarium_devices_mode_applied"
+
+# Repairs issues (docs/concepts/problem-reporting.md)
+ISSUE_NO_LOAD_ZONES = "no_load_zones"
+ISSUE_MISSING_ENTITY = "missing_entity"
 
 
 # Payloads of the events: a contract with the owner's automations (docs/events.md)

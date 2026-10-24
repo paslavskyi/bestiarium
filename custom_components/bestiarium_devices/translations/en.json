@@ -15,12 +15,14 @@
         "data": {
           "device_name": "Device name",
           "switch_entity_id": "Switch entity",
-          "power_sensor_entity_id": "Power sensor"
+          "power_sensor_entity_id": "Power sensor",
+          "reset_power_memory": "Reset the learned consumption"
         },
         "data_description": {
           "device_name": "Name for the new virtual device",
           "switch_entity_id": "Switch entity to control the device",
-          "power_sensor_entity_id": "Power sensor (must have unit W)"
+          "power_sensor_entity_id": "Power sensor (must have unit W)",
+          "reset_power_memory": "Only if the appliance itself is another one"
         }
       },
       "extend_device": {
@@ -31,6 +33,18 @@
         },
         "data_description": {
           "device_id": "Select a device with a switch to extend"
+        }
+      },
+      "pick_device": {
+        "title": "Device",
+        "description": "The device this Bestiarium device is on. Pick another one when the appliance moved to a new device in Home Assistant (for example from SmartThings to Matter): priorities, settings and the learned consumption stay, the response time is learned anew.",
+        "data": {
+          "device_id": "Device",
+          "reset_power_memory": "Reset the learned consumption"
+        },
+        "data_description": {
+          "device_id": "A device with a switch and a power sensor",
+          "reset_power_memory": "Only if the appliance itself is another one"
         }
       },
       "select_entities": {
@@ -82,28 +96,6 @@
     }
   },
   "entity": {
-    "button": {
-      "reset_power_memory": {
-        "name": "Reset power memory"
-      },
-      "reset_power_memory_standalone": {
-        "name": "{device_name} Reset power memory"
-      }
-    },
-    "number": {
-      "default_priority": {
-        "name": "Default Load Priority"
-      },
-      "mode_priority": {
-        "name": "{mode_name} Load Priority"
-      },
-      "estimated_power": {
-        "name": "Estimated power"
-      },
-      "estimated_power_standalone": {
-        "name": "{device_name} Estimated power"
-      }
-    },
     "sensor": {
       "expected_power": {
         "name": "Expected power",
@@ -162,6 +154,7 @@
         "state": {
           "normal": "Normal",
           "switch_unavailable": "Switch unavailable",
+          "mode_off_failed": "Does not turn off by mode",
           "unresponsive": "Not responding",
           "unstable": "Unstable connection",
           "no_power_data": "No power data"
@@ -196,6 +189,7 @@
         "state": {
           "normal": "Normal",
           "switch_unavailable": "Switch unavailable",
+          "mode_off_failed": "Does not turn off by mode",
           "unresponsive": "Not responding",
           "unstable": "Unstable connection",
           "no_power_data": "No power data"
@@ -243,7 +237,8 @@
             "state": {
               "deferred": "Deferred",
               "retrying": "Retrying the connection",
-              "recovered": "Recovered"
+              "recovered": "Recovered",
+              "mode_off_failed": "Could not turn off by mode"
             }
           },
           "direction": {
@@ -269,7 +264,8 @@
             "state": {
               "deferred": "Deferred",
               "retrying": "Retrying the connection",
-              "recovered": "Recovered"
+              "recovered": "Recovered",
+              "mode_off_failed": "Could not turn off by mode"
             }
           },
           "direction": {
@@ -295,6 +291,8 @@
         "title": "Balancer control",
         "description": "How the balancer controls this device. Changes apply at once.",
         "data": {
+          "estimated_power_w": "Estimated power, W",
+          "reset_power_memory": "Reset the learned consumption",
           "attempts": "Attempts before deferring",
           "defer_minutes": "Deferral, minutes",
           "tolerance_seconds": "Tolerance, seconds",
@@ -302,6 +300,8 @@
           "unstable_dropouts_per_hour": "Dropouts an hour for an unstable connection"
         },
         "data_description": {
+          "estimated_power_w": "What the device draws when on, if you know it; 0 means not set. It counts until the device has 3 real runs",
+          "reset_power_memory": "Forget the device's runs; its history is not imported again",
           "attempts": "Failed commands in a row after which the balancer defers the device and goes on with the next one",
           "defer_minutes": "How long a device that does not respond waits before it is tried again",
           "tolerance_seconds": "A switch or power sensor gone for less than this is a short dropout, not a problem",
@@ -324,6 +324,62 @@
           }
         }
       }
+    }
+  },
+  "issues": {
+    "missing_entity": {
+      "title": "{device}: its switch or power sensor is gone",
+      "fix_flow": {
+        "step": {
+          "pick_device": {
+            "title": "Device",
+            "description": "Bestiarium cannot control {device}: {entities} is no longer in Home Assistant (removed or disabled). The other devices keep working. Pick the switch and the power sensor again, or another device if the appliance moved to one.",
+            "data": {
+              "device_id": "Device",
+              "reset_power_memory": "Reset the learned consumption"
+            },
+            "data_description": {
+              "device_id": "A device with a switch and a power sensor",
+              "reset_power_memory": "Only if the appliance itself is another one"
+            }
+          },
+          "select_entities": {
+            "title": "Select Entities",
+            "description": "The device has multiple switches or power sensors. Select which ones to use.",
+            "data": {
+              "switch_entity_id": "Switch entity",
+              "power_sensor_entity_id": "Power sensor"
+            },
+            "data_description": {
+              "switch_entity_id": "Switch entity to control the device",
+              "power_sensor_entity_id": "Power sensor (must have unit W)"
+            }
+          },
+          "virtual_relay": {
+            "title": "Switch and power sensor",
+            "description": "Bestiarium cannot control {device}: {entities} is no longer in Home Assistant (removed or disabled). The other devices keep working. Pick the switch and the power sensor again, or another device if the appliance moved to one.",
+            "data": {
+              "switch_entity_id": "Switch",
+              "power_sensor_entity_id": "Power sensor",
+              "reset_power_memory": "Reset the learned consumption"
+            },
+            "data_description": {
+              "reset_power_memory": "Only if the appliance itself is another one"
+            }
+          }
+        },
+        "error": {
+          "no_switch": "Selected device has no switch entity. Use 'Create virtual device' instead.",
+          "no_power_sensor": "Selected device has no power sensor. Use 'Create virtual device' instead.",
+          "invalid_switch": "Invalid switch entity selected",
+          "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
+          "required": "This field is required"
+        }
+      }
+    },
+    "no_load_zones": {
+      "title": "Balancing waits for the load zones",
+      "description": "Bestiarium Devices does not turn devices on or off: Bestiarium Mode has no load zones. Set its AC load limits (Settings → Devices & services → Bestiarium Mode → Reconfigure → Configure AC load limits). Balancing starts as soon as the zones appear, without a restart."
     }
   }
 }

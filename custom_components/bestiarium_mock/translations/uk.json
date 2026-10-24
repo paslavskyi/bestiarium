@@ -135,6 +135,9 @@
     },
     "grid": {
       "name": "Мережа"
+    },
+    "matter_socket": {
+      "name": "Розетка Matter (вільна)"
     }
   }
 }

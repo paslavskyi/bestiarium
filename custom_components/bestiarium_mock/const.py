@@ -139,6 +139,8 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     MockDeviceSpec(device_id="floor_heating_1", power_w=1200),
     MockDeviceSpec(device_id="floor_heating_2", power_w=1200),
     MockDeviceSpec(device_id="floor_heating_3", power_w=1200),
+    # Free on the stand: the boiler is re-pointed to it (SmartThings to Matter)
+    MockDeviceSpec(device_id="matter_socket", power_w=2000),
 )
 
 # Thermometer specifications (passive temperature sensors)

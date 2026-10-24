@@ -15,6 +15,7 @@ import custom_components.bestiarium_devices as devices
 from custom_components.bestiarium_devices.const import (
     CONF_ALLOWED,
     CONF_ESTIMATED_POWER,
+    CONF_RESET_POWER_MEMORY,
     ControlSettings,
 )
 from custom_components.bestiarium_devices.control import (
@@ -120,4 +121,7 @@ def test_everything_is_translated(language: str) -> None:
         assert set(event_types) == {event.value for event in ControlEvent}
     step = translations["options"]["step"]["init"]
     named = set(step["data"]) | set(step["sections"]["advanced"]["data"])
-    assert named == {setting.name for setting in fields(ControlSettings)}
+    assert named == {setting.name for setting in fields(ControlSettings)} | {
+        CONF_ESTIMATED_POWER,
+        CONF_RESET_POWER_MEMORY,
+    }

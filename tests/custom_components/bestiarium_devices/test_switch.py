@@ -389,7 +389,7 @@ class TestAllowedSwitch:
         relays.add("switch.floor", on=True)
 
         with patch(
-            "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+            "custom_components.bestiarium_devices.strategies.asyncio.sleep",
             new_callable=AsyncMock,
         ):
             _set_zone(hass, "overload")
@@ -515,7 +515,7 @@ class TestThermostatDriven:
         )
 
         with patch(
-            "custom_components.bestiarium_devices.balancer.asyncio.sleep",
+            "custom_components.bestiarium_devices.strategies.asyncio.sleep",
             new_callable=AsyncMock,
         ):
             _set_zone(hass, "overload")

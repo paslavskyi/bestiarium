@@ -61,6 +61,8 @@ All events are fired from `custom_components/bestiarium_devices/balancer.py`. Th
 | `previous_zone` | string | Previous active zone value     |
 | `zone`          | string | New active zone value          |
 
+Values: `green`, `yellow`, `red`, `overload`, and since DEV-008 `pause` (green on pause: below the yellow threshold, before the pause before green is over) and `no_data` (no power data for longer than the tolerance) — before DEV-008 both were `none`. In `pause` and `no_data` the balancer runs no strategy.
+
 **Example automation** — Notify when entering red zone:
 
 ```yaml

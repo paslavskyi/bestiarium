@@ -14,15 +14,28 @@ from .const import (
     CONF_AC_LOAD_LIMITS,
     CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
+    CONF_AC_POWER_TOLERANCE_SECONDS,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
+    CONF_AC_ZONE_HYSTERESIS_PERCENT,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
+    DEFAULT_POWER_TOLERANCE_SECONDS,
+    DEFAULT_ZONE_HYSTERESIS_PERCENT,
     DOMAIN,
     LOAD_LIMIT_MAX_W,
     LOAD_LIMIT_MIN_W,
 )
 
 CONF_OPTIONS = "options"
+
+
+def power_sensor_selector() -> selector.EntitySelector:
+    """Return the selector of the zones' power sensor."""
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(domain="sensor", device_class="power")
+    )
+
+
 CONF_NAME = "name"
 CONF_DESCRIPTION = "description"
 CONF_ICON = "icon"
@@ -182,6 +195,12 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         default_recovery = existing_limits.get(
             CONF_AC_OVERLOAD_RECOVERY_SECONDS, DEFAULT_OVERLOAD_RECOVERY_SECONDS
         )
+        default_hysteresis = existing_limits.get(
+            CONF_AC_ZONE_HYSTERESIS_PERCENT, DEFAULT_ZONE_HYSTERESIS_PERCENT
+        )
+        default_tolerance = existing_limits.get(
+            CONF_AC_POWER_TOLERANCE_SECONDS, DEFAULT_POWER_TOLERANCE_SECONDS
+        )
 
         if user_input is not None:
             yellow = int(user_input[CONF_AC_YELLOW_ZONE_PERCENT])
@@ -201,6 +220,12 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_AC_OVERLOAD_RECOVERY_SECONDS: int(
                         user_input[CONF_AC_OVERLOAD_RECOVERY_SECONDS]
                     ),
+                    CONF_AC_ZONE_HYSTERESIS_PERCENT: float(
+                        user_input[CONF_AC_ZONE_HYSTERESIS_PERCENT]
+                    ),
+                    CONF_AC_POWER_TOLERANCE_SECONDS: int(
+                        user_input[CONF_AC_POWER_TOLERANCE_SECONDS]
+                    ),
                 }
                 return await self._async_step_options_list()
 
@@ -217,12 +242,7 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
         data_schema = vol.Schema(
             {
-                sensor_key: selector.EntitySelector(
-                    selector.EntitySelectorConfig(
-                        domain="sensor",
-                        device_class="power",
-                    ),
-                ),
+                sensor_key: power_sensor_selector(),
                 limit_key: selector.NumberSelector(
                     selector.NumberSelectorConfig(
                         min=LOAD_LIMIT_MIN_W,
@@ -260,6 +280,28 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(
                         min=1,
                         max=300,
+                        step=1,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_ZONE_HYSTERESIS_PERCENT, default=default_hysteresis
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=20,
+                        step=0.5,
+                        unit_of_measurement="%",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_POWER_TOLERANCE_SECONDS, default=default_tolerance
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=0,
+                        max=600,
                         step=1,
                         unit_of_measurement="s",
                         mode=selector.NumberSelectorMode.BOX,

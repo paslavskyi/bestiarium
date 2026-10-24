@@ -69,6 +69,7 @@ class ControlState(StrEnum):
     """The control state of a device, the most important problem first."""
 
     SWITCH_UNAVAILABLE = "switch_unavailable"
+    MODE_OFF_FAILED = "mode_off_failed"  # the mode's turn-off ran out of attempts
     UNRESPONSIVE = "unresponsive"
     UNSTABLE = "unstable"
     NO_POWER_DATA = "no_power_data"
@@ -81,6 +82,7 @@ class ControlEvent(StrEnum):
     DEFERRED = "deferred"
     RETRYING = "retrying"
     RECOVERED = "recovered"
+    MODE_OFF_FAILED = "mode_off_failed"  # once a duty, instead of its first deferral
 
 
 class Direction(StrEnum):
@@ -208,6 +210,9 @@ class DeviceControl:
         # Since when the relay or the power sensor is gone: one device, one dropout
         self._gone_since: datetime | None = None
         self._watching_availability = False
+        # The mode wants the device off until it turns off (docs: off by mode)
+        self.mode_off = False
+        self._mode_off_failed = False
         self.state = ControlState.NORMAL
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -237,6 +242,18 @@ class DeviceControl:
         if self._cancel_timer:
             self._cancel_timer()
         self._unsubscribe, self._cancel_timer = [], None
+
+    # The mode's duty to turn the device off
+
+    def start_mode_off(self) -> None:
+        """Open the mode's duty: the device is on and the mode wants it off."""
+        self.mode_off, self._mode_off_failed = True, False
+
+    def end_mode_off(self) -> None:
+        """Close the duty: the device turned off, or the mode no longer says off."""
+        if self.mode_off:
+            self.mode_off, self._mode_off_failed = False, False
+            self._refresh(dt_util.utcnow())
 
     # Commands of the strategies
 
@@ -306,7 +323,11 @@ class DeviceControl:
     def _defer(self, series: _Series, now: datetime) -> None:
         series.deferred_until = now + timedelta(minutes=self.settings.defer_minutes)
         self._unresponsive.set(True, now)  # noqa: FBT003
-        self._event(ControlEvent.DEFERRED, series)
+        if self.mode_off and not self._mode_off_failed:
+            self._mode_off_failed = True
+            self._event(ControlEvent.MODE_OFF_FAILED, series)
+        else:
+            self._event(ControlEvent.DEFERRED, series)
         self._refresh(now)
 
     # States of the relay and the power sensor
@@ -359,6 +380,8 @@ class DeviceControl:
         series, self._series = self._series, None
         if _gone(new):
             return
+        if new.state == Direction.TURN_OFF.expected_state:
+            self.mode_off = self._mode_off_failed = False
         expected = series is not None and new.state == series.direction.expected_state
         if expected and series.deferred_until is None:
             self._memory.add(
@@ -398,6 +421,9 @@ class DeviceControl:
             (state for state, (c, _) in conditions.items() if c.confirmed),
             ControlState.NORMAL,
         )
+        # More important than "not responding": the mode could not turn it off
+        if self._mode_off_failed and state is not ControlState.SWITCH_UNAVAILABLE:
+            state = ControlState.MODE_OFF_FAILED
         if state is not self.state:
             if state is ControlState.NORMAL:
                 LOGGER.info(

@@ -135,6 +135,9 @@
     },
     "grid": {
       "name": "Mock Grid"
+    },
+    "matter_socket": {
+      "name": "Matter socket (free)"
     }
   }
 }

@@ -9,8 +9,11 @@ from .const import CONF_AC_LOAD_LIMIT_W, CONF_AC_LOAD_LIMITS, CONF_AC_POWER_SENS
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
 
+    from .zones import ZoneTracker
 
-type BestiariumModeConfigEntry = ConfigEntry[dict]
+
+# The zone tracker, if the AC load limits are configured
+type BestiariumModeConfigEntry = ConfigEntry[ZoneTracker | None]
 
 
 def power_load_monitoring_configured(entry: BestiariumModeConfigEntry) -> bool:

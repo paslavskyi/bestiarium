@@ -28,6 +28,7 @@ from custom_components.bestiarium_devices.const import (
     DOMAIN_BESTIARIUM_MODE,
 )
 
+from .conftest import keep_device
 from .registry_2026_2 import COMPOSITE_ID, POWER_SENSOR, RELAY, async_load_split_device
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
@@ -101,7 +102,7 @@ async def test_composite_device_id_moves_to_the_relay_device(
     options_before = dict(entry.options)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 2  # noqa: PLR2004
+    assert entry.minor_version == 3  # noqa: PLR2004
     assert entry.data == {**data_before, CONF_DEVICE_ID: relay_device_id}
     assert entry.options == options_before
     allowed = er.async_get(hass).async_get(
@@ -130,6 +131,7 @@ async def test_migrated_entry_reconfigure_offers_the_device_entities(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
     )
+    result = await keep_device(hass, result)
     assert result["step_id"] == "select_entities"
     relay_selector = result["data_schema"].schema[CONF_SWITCH_ENTITY_ID]
     assert sorted(relay_selector.config["include_entities"]) == [
@@ -168,6 +170,7 @@ async def test_migrated_entry_with_one_relay_goes_to_priorities(
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id}
     )
+    result = await keep_device(hass, result)
 
     assert result["step_id"] == "configure_priorities"
 
@@ -182,7 +185,7 @@ async def test_valid_device_id_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 2  # noqa: PLR2004
+    assert entry.minor_version == 3  # noqa: PLR2004
     assert entry.data == data_before
 
 
@@ -207,7 +210,7 @@ async def test_virtual_device_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 2  # noqa: PLR2004
+    assert entry.minor_version == 3  # noqa: PLR2004
     assert entry.data == data_before
 
 
@@ -221,7 +224,7 @@ async def test_entry_without_relay_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 2  # noqa: PLR2004
+    assert entry.minor_version == 3  # noqa: PLR2004
     assert entry.data == data_before
     assert _bestiarium_warnings(caplog) == []
 
@@ -239,7 +242,7 @@ async def test_relay_device_taken_by_another_entry(
     caplog.clear()
     await _setup(hass, entry)
 
-    assert entry.minor_version == 2  # noqa: PLR2004
+    assert entry.minor_version == 3  # noqa: PLR2004
     assert entry.data == data_before
     warnings = _bestiarium_warnings(caplog)
     assert len(warnings) == 1

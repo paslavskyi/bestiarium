@@ -27,8 +27,9 @@ picks the Home Assistant mechanism; the table maps each kind of problem to it.
 - **Bestiarium notifies nobody.** Only the owner's automations send
   notifications. Bestiarium gives the signal (a state or an event); there is no
   `notify` call in any integration.
-- **No `persistent_notification`.** The existing "Balancing Disabled"
-  notification of `bestiarium_devices` is known debt, to be replaced in DEV-008.
+- **No `persistent_notification`.** The "Balancing Disabled" notification of
+  `bestiarium_devices` became the Repairs issue "Balancing waits for the load
+  zones" in DEV-008.
 - **The log records changes of state, not repeats.** A problem that lasts an
   hour gives one `warning` and one `info`, not a line a minute.
 - **Do not log before raising.** The exception carries the message; logging it
@@ -51,8 +52,14 @@ picks the Home Assistant mechanism; the table maps each kind of problem to it.
   are also readable in the logbook.
 - **Failed switch in climate:** `bestiarium_climate_switch_failed` /
   `_switch_recovered` events; to be reviewed against this document in DEV-008.
-- **Known debt:** "Balancing Disabled" is a `persistent_notification`; it
-  becomes a Repairs issue in DEV-008.
+- **Wrong configuration (DEV-008):** a device's relay or power sensor gone,
+  the zones' power sensor gone, no load zones at all: Repairs issues, checked
+  after HA has started, deleted when fixed; "Fix" shows the fields of the
+  reconfigure form. A renamed entity is followed, not reported.
+- **A command of the mode that failed (DEV-008):** the control state "Does not
+  turn off by mode" (more important than "Not responding") and the control
+  event "Could not turn off by mode", once; no Repairs issue, it is no
+  setting.
 
 ### The first full example: devices that do not respond (DEV-007)
 

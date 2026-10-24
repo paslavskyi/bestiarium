@@ -17,14 +17,9 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_devices.const import DOMAIN as DEVICES
 from custom_components.bestiarium_mock.const import DOMAIN as MOCK
-from scripts.stand_setup import (
-    DASHBOARD,
-    SCRIPT_PREFIX,
-    STAND_DEVICES,
-    THERMOSTATS,
-    _scripts,
-    setup_stand,
-)
+from scripts.stand.layout import DASHBOARD, SCRIPT_PREFIX, STAND_DEVICES, THERMOSTATS
+from scripts.stand.scenarios import scenario_scripts
+from scripts.stand_setup import setup_stand
 
 pytestmark = pytest.mark.usefixtures(
     "recorder_mock", "enable_custom_integrations", "socket_enabled"
@@ -168,6 +163,8 @@ async def test_existing_mode_follows_the_renamed_grid(
         == MODE_ON_OLD_GRID_ID["ac_load_limits"]["ac_load_limit_w"]
     )
     assert _zone_states(hass) <= {"on", "off"}
+    # Its modes stay; the Night the scenarios select is added
+    assert [o["name"] for o in mode.data["options"]] == ["Grid on", "Night"]
 
 
 async def test_only_stand_things_are_removed(
@@ -260,7 +257,10 @@ def test_reset_leaves_always_on_devices_on() -> None:
         def mock(self, domain: str, unique_id: str) -> str:
             return f"{domain}.{unique_id}"
 
-    reset = _scripts(_Registry())["reset"]["sequence"]
+        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
+            return f"{domain}.{unique_id}"
+
+    reset = scenario_scripts(_Registry())["reset"]["sequence"]
     switched = {
         step["action"]: step["target"]["entity_id"]
         for step in reset
