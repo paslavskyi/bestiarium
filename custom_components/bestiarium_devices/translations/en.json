@@ -85,7 +85,8 @@
       "invalid_switch": "Invalid switch entity selected",
       "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
       "name_required": "Device name is required",
-      "required": "This field is required"
+      "required": "This field is required",
+      "switch_taken": "This switch is already controlled by another Bestiarium device"
     },
     "abort": {
       "not_implemented": "Configuration flow not yet implemented",
@@ -355,7 +356,8 @@
           "no_power_sensor": "Selected device has no power sensor. Use 'Create virtual device' instead.",
           "invalid_switch": "Invalid switch entity selected",
           "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
-          "required": "This field is required"
+          "required": "This field is required",
+          "switch_taken": "This switch is already controlled by another Bestiarium device"
         }
       }
     },

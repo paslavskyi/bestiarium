@@ -1957,3 +1957,33 @@ class TestOverloadFailSafe:
         turned_off = [c[0][2]["entity_id"] for c in mock_call.call_args_list]
         assert turned_off == ["switch.first", "switch.second"]
         assert len(second_queue) == 1
+
+
+async def test_removed_load_limits_leave_no_orphan_zones(hass: HomeAssistant) -> None:
+    """Review 06 debt: the zone sensors go, the balancer waits, Repairs tells."""
+    await _setup_real_mode(hass, "1000")
+    coordinator = await started_coordinator(hass)
+    mode = hass.config_entries.async_entries(DOMAIN_BESTIARIUM_MODE)[0]
+    issues = ir.async_get(hass)
+    try:
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is None
+        hass.config_entries.async_update_entry(
+            mode,
+            data={key: v for key, v in mode.data.items() if key != "ac_load_limits"},
+        )
+        await hass.config_entries.async_reload(mode.entry_id)
+        await hass.async_block_till_done()
+
+        registry = er.async_get(hass)
+        for zone in ("green", "yellow", "red", "overload"):
+            unique_id = f"power_load_{zone}"
+            assert (
+                registry.async_get_entity_id(
+                    "binary_sensor", DOMAIN_BESTIARIUM_MODE, unique_id
+                )
+                is None
+            )
+        assert coordinator.active_zone == ActiveZone.NO_DATA
+        assert issues.async_get_issue(DOMAIN, ISSUE_NO_LOAD_ZONES) is not None
+    finally:
+        await coordinator.async_stop()

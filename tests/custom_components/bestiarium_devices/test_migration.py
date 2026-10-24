@@ -233,7 +233,7 @@ async def test_entry_without_relay_is_left_alone(
 async def test_relay_device_taken_by_another_entry(
     hass: HomeAssistant, hass_storage: dict, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The relay's device already used by another entry: keep data, warn by name."""
+    """The relay is controlled by another entry: keep data, warn by name."""
     relay_device_id = await async_load_split_device(hass, hass_storage)
     other = _owner_entry(relay_device_id, **{CONF_DEVICE_NAME: "Other floor"})
     await _setup(hass, other)

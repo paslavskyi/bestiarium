@@ -31,7 +31,7 @@ from .const import (
     SIGNAL_MODES_RENAMED,
 )
 from .control import async_get_response_memory
-from .helpers import get_device_id_from_entry
+from .helpers import switch_taken
 from .power_memory import (
     async_get_power_memory,
     async_import_history,
@@ -155,18 +155,12 @@ def _relay_device_to_migrate_to(
     relay = er.async_get(hass).async_get(entry.data[CONF_SWITCH_ENTITY_ID])
     if relay is None or relay.device_id is None:
         return None
-    if taken_by := next(
-        (
-            other.title
-            for other in hass.config_entries.async_entries(DOMAIN)
-            if other.entry_id != entry.entry_id
-            and get_device_id_from_entry(other) == relay.device_id
-        ),
-        None,
+    if taken_by := switch_taken(
+        hass, entry.data[CONF_SWITCH_ENTITY_ID], entry.entry_id
     ):
         LOGGER.warning(
-            "Device %s keeps its stale device id: the device of its relay is "
-            "already used by %s; reconfigure it to pick the device again",
+            "Device %s keeps its stale device id: its relay is also controlled "
+            "by %s; reconfigure one of them to pick another relay",
             entry.data.get(CONF_DEVICE_NAME, entry.title),
             taken_by,
         )

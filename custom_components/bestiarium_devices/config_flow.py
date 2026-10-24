@@ -50,6 +50,7 @@ from .helpers import (
     build_priority_form_key,
     build_priority_number_selector,
     extract_priorities_from_user_input,
+    switch_taken,
     validate_power_sensor,
 )
 from .power_memory import async_get_power_memory
@@ -198,6 +199,7 @@ class RelaySteps:
     """
 
     hass: HomeAssistant
+    _entry_id: str | None  # the entry being changed: its own switch is not taken
     _device_type: str | None
     _device_id: str | None
     _switch_entity_id: str | None
@@ -223,7 +225,13 @@ class RelaySteps:
         self._power_sensor_entity_id = _keep_or_only(
             self._power_sensor_entity_id, power_sensors
         )
+        if len(switches) == 1 and self._switch_taken(switches[0]):
+            return "switch_taken"
         return None
+
+    def _switch_taken(self, switch: str) -> bool:
+        """Return whether another device entry controls the switch."""
+        return switch_taken(self.hass, switch, self._entry_id) is not None
 
     async def _async_entities_of_device(self) -> FlowResult:
         """Ask for the switch and the sensor only if the device has several."""
@@ -254,7 +262,7 @@ class RelaySteps:
             errors=errors,
         )
 
-    async def async_step_select_entities(
+    async def async_step_select_entities(  # noqa: PLR0912
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
@@ -273,6 +281,8 @@ class RelaySteps:
                     errors[CONF_SWITCH_ENTITY_ID] = "required"
                 elif switch_entity_id not in self._switches:
                     errors[CONF_SWITCH_ENTITY_ID] = "invalid_switch"
+                elif self._switch_taken(switch_entity_id):
+                    errors[CONF_SWITCH_ENTITY_ID] = "switch_taken"
                 else:
                     self._switch_entity_id = switch_entity_id
 
@@ -375,6 +385,7 @@ class BestiariumDevicesFlowHandler(
     def __init__(self) -> None:
         """Initialize the config flow."""
         super().__init__()
+        self._entry_id: str | None = None
         self._reset_power_memory = False
         self._device_type: str | None = None
         self._device_id: str | None = None
@@ -430,6 +441,8 @@ class BestiariumDevicesFlowHandler(
 
             if not switch_entity_id:
                 errors[CONF_SWITCH_ENTITY_ID] = "required"
+            elif self._switch_taken(switch_entity_id):
+                errors[CONF_SWITCH_ENTITY_ID] = "switch_taken"
 
             if not power_sensor_entity_id:
                 errors[CONF_POWER_SENSOR_ENTITY_ID] = "required"
@@ -633,6 +646,7 @@ class BestiariumDevicesFlowHandler(
     ) -> config_entries.ConfigFlowResult:
         """Handle reconfiguration of an existing config entry."""
         entry = self._get_reconfigure_entry()
+        self._entry_id = entry.entry_id
 
         # Load existing data
         self._device_type = entry.data.get(CONF_DEVICE_TYPE)

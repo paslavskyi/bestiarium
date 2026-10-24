@@ -135,6 +135,13 @@ class BalancingCoordinator:
     ) -> None:
         """Come alive once a zone sensor is created; follow each new mode entity."""
         entity_id = event.data["entity_id"]
+        if (
+            event.data["action"] == "remove"
+            and self._active
+            and not (self._zone_entity_ids())
+        ):
+            self._deactivate()
+            return
         if event.data["action"] != "create":
             return
         if entity_id == mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID):
@@ -166,14 +173,25 @@ class BalancingCoordinator:
                 translation_key=ISSUE_NO_MODE_SELECT,
             )
         if not self._active:
-            ir.async_create_issue(
-                self._hass,
-                DOMAIN,
-                ISSUE_NO_LOAD_ZONES,
-                is_fixable=False,
-                severity=ir.IssueSeverity.WARNING,
-                translation_key=ISSUE_NO_LOAD_ZONES,
-            )
+            self._report_no_zones()
+
+    def _report_no_zones(self) -> None:
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            ISSUE_NO_LOAD_ZONES,
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=ISSUE_NO_LOAD_ZONES,
+        )
+
+    def _deactivate(self) -> None:
+        """Stop following the zone sensors that are gone; wait for new ones."""
+        self._active = False
+        self._unsubscribe()
+        self._stop_periodic_job()
+        self._active_zone = ActiveZone.NO_DATA
+        self._report_no_zones()
 
     def _activate(self) -> None:
         """Follow the zones and run the strategy of the current one."""

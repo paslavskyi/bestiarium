@@ -21,6 +21,8 @@ from .const import (
     CONF_AC_ZONE_HYSTERESIS_PERCENT,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DEFAULT_POWER_TOLERANCE_SECONDS,
+    DEFAULT_RED_ZONE_PERCENT,
+    DEFAULT_YELLOW_ZONE_PERCENT,
     DEFAULT_ZONE_HYSTERESIS_PERCENT,
     DOMAIN,
     LOAD_LIMIT_MAX_W,
@@ -212,8 +214,12 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         existing_limits = self._ac_load_limits or {}
         default_sensor = existing_limits.get(CONF_AC_POWER_SENSOR)
         default_limit = existing_limits.get(CONF_AC_LOAD_LIMIT_W)
-        default_yellow = existing_limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
-        default_red = existing_limits.get(CONF_AC_RED_ZONE_PERCENT, 90)
+        default_yellow = existing_limits.get(
+            CONF_AC_YELLOW_ZONE_PERCENT, DEFAULT_YELLOW_ZONE_PERCENT
+        )
+        default_red = existing_limits.get(
+            CONF_AC_RED_ZONE_PERCENT, DEFAULT_RED_ZONE_PERCENT
+        )
         default_recovery = existing_limits.get(
             CONF_AC_OVERLOAD_RECOVERY_SECONDS, DEFAULT_OVERLOAD_RECOVERY_SECONDS
         )
