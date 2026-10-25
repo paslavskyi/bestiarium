@@ -326,6 +326,27 @@ class ThermostatControl:
         self._refresh(now)
         return wanted
 
+    def defer_if_exhausted(self, now: datetime) -> None:
+        """
+        Defer the switch now if its next attempt would be one too many.
+
+        Called before the capacity is shared, so that its place goes to
+        another thermostat in this cycle, not after a needless rotation.
+        """
+        actual = self.switch_is_on()
+        wanted = self.wanted(now)
+        if (
+            actual is not None
+            and self.deferred_until is None
+            and actual != wanted
+            and self._last_command is not None
+            and self._last_command[1] == wanted
+            and now - self._last_command[0] >= ATTEMPT_INTERVAL
+            and self._tries >= self.settings.attempts
+        ):
+            self._last_command = (now, False)
+            self._defer(now)
+
     def _defer(self, now: datetime) -> None:
         self.deferred_until = now + duration_dict_to_timedelta(
             self._entry.data.get(CONF_RECOVERY_TIMEOUT)

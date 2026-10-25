@@ -77,6 +77,7 @@ class Floors:
         zones: bool = False,
         settle: bool = True,
         heater_power: float | None = None,
+        min_working_minutes: int = 10,
     ) -> None:
         """Set up the entry: three thermostats heating to 21 °C."""
         for floor in FLOORS:
@@ -106,7 +107,11 @@ class Floors:
             minor_version=2,
             data={
                 CONF_CAPACITY: capacity,
-                CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 10, "seconds": 0},
+                CONF_MIN_WORKING_TIME: {
+                    "hours": 0,
+                    "minutes": min_working_minutes,
+                    "seconds": 0,
+                },
                 CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
             },
             subentries_data=[
@@ -796,3 +801,24 @@ async def test_nothing_runs_after_the_unload(floors: Floors) -> None:
     await floors.tick(2 * MINUTE)
 
     assert floors.calls == []
+
+
+async def test_a_deferred_place_goes_without_a_needless_rotation(
+    floors: Floors,
+) -> None:
+    """
+    The dead switch is deferred before the sharing: the heating one stays on.
+
+    Its deferral comes in the cycle in which a rotation is due (as on the
+    stand): counted in, it would push the heating floor out for one cycle.
+    """
+    floors.stuck.add("floor_1")
+    await floors.setup(min_working_minutes=2)
+    await _temperatures(floors, floor_1="17")
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+
+    await floors.tick(4 * MINUTE)
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert floors.on() == {"floor_2", "floor_3"}
+    assert ("turn_off", "floor_2") not in floors.calls

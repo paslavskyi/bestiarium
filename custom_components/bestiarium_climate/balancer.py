@@ -352,6 +352,8 @@ class BalancingCoordinator:
         switch the load protection turned off is no failed attempt: out of
         green the balancer does not want it on again.
         """
+        for control in self.controls.values():
+            control.defer_if_exhausted(now)
         working = [
             (thermostat, control)
             for subentry_id, thermostat in thermostats.items()
