@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.components.repairs import RepairsFlow
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import selector
 
 from .config_flow import actions_schema, async_action_errors, switch_error
@@ -39,14 +40,28 @@ async def async_create_fix_flow(
     data: dict[str, str] | None,
 ) -> RepairsFlow:
     """Return the fix of the issue: the shared switch's, or a switch's actions."""
+    flow: _GoneRepairFlow
     if issue_id.startswith(ISSUE_SWITCH_SHARED):
-        return SharedSwitchRepairFlow(data or {})
-    if issue_id.startswith(ISSUE_SWITCH_IS_DEVICE):
-        return ThermostatSwitchRepairFlow(data or {})
-    return ActionsRepairFlow(data or {})
+        flow = SharedSwitchRepairFlow(data or {})
+    elif issue_id.startswith(ISSUE_SWITCH_IS_DEVICE):
+        flow = ThermostatSwitchRepairFlow(data or {})
+    else:
+        flow = ActionsRepairFlow(data or {})
+    flow.issue_id = issue_id
+    return flow
 
 
-class ActionsRepairFlow(RepairsFlow):
+class _GoneRepairFlow(RepairsFlow):
+    """A fix whose switch or thermostat may be gone: then its issue goes too."""
+
+    issue_id = ""
+
+    def _gone(self, reason: str) -> FlowResult:
+        ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
+        return self.async_abort(reason=reason)
+
+
+class ActionsRepairFlow(_GoneRepairFlow):
     """Show the actions of a virtual switch and save the corrected ones."""
 
     def __init__(self, data: dict[str, str]) -> None:
@@ -61,7 +76,7 @@ class ActionsRepairFlow(RepairsFlow):
         """Show the actions; save them once valid."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None or self._subentry_id not in entry.subentries:
-            return self.async_abort(reason="switch_removed")
+            return self._gone("switch_removed")
         subentry = entry.subentries[self._subentry_id]
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -81,7 +96,7 @@ class ActionsRepairFlow(RepairsFlow):
         )
 
 
-class SharedSwitchRepairFlow(RepairsFlow):
+class SharedSwitchRepairFlow(_GoneRepairFlow):
     """
     Give each thermostat of a shared switch but the first a switch of its own.
 
@@ -98,7 +113,7 @@ class SharedSwitchRepairFlow(RepairsFlow):
         """Ask a switch for each extra thermostat; save them once valid."""
         _keep, *others = thermostats_of(self.hass, self._switch)
         if not others:
-            return self.async_abort(reason="switch_not_shared")
+            return self._gone("switch_not_shared")
         errors: dict[str, str] = {}
         if user_input is not None:
             chosen = [user_input[thermostat.title] for thermostat in others]
@@ -140,7 +155,7 @@ class SharedSwitchRepairFlow(RepairsFlow):
         )
 
 
-class ThermostatSwitchRepairFlow(RepairsFlow):
+class ThermostatSwitchRepairFlow(_GoneRepairFlow):
     """Give a thermostat on a Bestiarium Devices relay a switch of its own."""
 
     def __init__(self, data: dict[str, str]) -> None:
@@ -154,7 +169,7 @@ class ThermostatSwitchRepairFlow(RepairsFlow):
         """Ask another switch; save it once valid."""
         entry = self.hass.config_entries.async_get_entry(self._entry_id)
         if entry is None or self._subentry_id not in entry.subentries:
-            return self.async_abort(reason="thermostat_removed")
+            return self._gone("thermostat_removed")
         thermostat = entry.subentries[self._subentry_id]
         device = device_of_relay(self.hass, thermostat.data[CONF_TARGET_SWITCH])
         errors: dict[str, str] = {}

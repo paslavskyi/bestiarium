@@ -84,6 +84,9 @@ class MockDeviceSpec:
     power_min_w: int | None = None
     power_max_w: int | None = None
     profile: FaultProfile = FaultProfile.RELIABLE
+    # An air conditioner run by IR: a switch on its socket loses the IR,
+    # independent of the socket's fault profile (the relay of its power)
+    has_ir: bool = False
 
     @property
     def has_variable_power(self) -> bool:
@@ -144,7 +147,11 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     # scripts set 1200 W when one runs (review 18: as in the owner's home)
     *(
         MockDeviceSpec(
-            device_id=f"ac_{number}", power_w=5, power_min_w=5, power_max_w=1200
+            device_id=f"ac_{number}",
+            power_w=5,
+            power_min_w=5,
+            power_max_w=1200,
+            has_ir=True,
         )
         for number in range(1, 4)
     ),

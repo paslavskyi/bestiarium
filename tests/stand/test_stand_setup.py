@@ -301,3 +301,35 @@ def test_stand_climate_is_only_the_stand_entry() -> None:
     )
 
     assert [e["entity_id"] for e in reg.stand_climate()] == ["climate.a"]
+
+
+def test_a_dead_ir_leaves_the_power_working() -> None:
+    """Review 20, C7: the dead IR is its own knob, not the AC socket's profile."""
+
+    class _Registry:
+        entities: list = []  # noqa: RUF012
+
+        def mock(self, domain: str, unique_id: str) -> str:
+            return f"{domain}.{unique_id}"
+
+        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
+            return f"{domain}.{unique_id}"
+
+        def stand_climate(self) -> list:
+            return []
+
+    scripts = scenario_scripts(_Registry())
+    dead = scripts["thermostats_dead_switch"]["sequence"]
+    assert {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.mock_ac_1_ir_lost"},
+    } in dead
+    assert all(
+        step.get("target", {}).get("entity_id") != "select.mock_ac_1_fault_profile"
+        for step in dead
+    )
+    assert scripts["ir_ac_1_on"]["sequence"][0] == {
+        "condition": "state",
+        "entity_id": "switch.mock_ac_1_ir_lost",
+        "state": "off",
+    }

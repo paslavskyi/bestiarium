@@ -155,7 +155,7 @@ class ClimateMode(StrEnum):
 ### Unload (`async_unload_entry`)
 
 1. Unloads platforms
-2. Then removes the coordinator from `hass.data` and stops it: no timer is set on a stopped coordinator, and no two coordinators control the same switches across a reload (review 17, B8)
+2. Then removes the coordinator from `hass.data` and stops it: the commands still under way are cancelled, a stopped coordinator runs no cycle and sets no timer, and no two coordinators control the same switches across a reload (review 17, B8; review 20, C3)
 
 Each config entry gets its own coordinator (unlike `bestiarium_devices` which shares one).
 
@@ -251,7 +251,7 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 
 - It follows the thermostat's switch and temperature sensor; their availability counts only once HA has started.
 - **Switch unavailable / no temperature**: gone (unavailable, unknown, missing; for the temperature also not a number) for longer than `tolerance_seconds` → a confirmed problem; it ends after `hysteresis_seconds` without it.
-- **Not responding**: each balancing cycle in which the switch is not as wanted counts an attempt (`failed_attempts` shows each at once); after `attempts` the switch is **deferred** for the entry's `recovery_timeout`, turned off once, and then tried again. It ends when the switch takes the wanted state (after the hysteresis).
+- **Not responding**: each balancing cycle in which the switch is not as wanted counts an attempt (`failed_attempts` shows each at once); after `attempts` the switch is **deferred** for the entry's `recovery_timeout`, turned off once, and then tried again. It ends when the switch takes the wanted state (after the hysteresis). The deferral lasts the entry's `recovery_timeout` (default 1 hour; 5 minutes on the stand); then the switch is in the rotation again and gets a new start when it has a place. The state stays "Not responding" until the switch takes a command: then, after the hysteresis, back to "Normal", with one `info` line.
 - **In the rotation** only if none of these: a gone switch, a deferred switch and no temperature all free the thermostat's place for the others.
 
 `ControlStateSensor` — `sensor.<thermostat>_control_state`, enum, diagnostic, on the thermostat's device: `switch_unavailable` > `unresponsive` > `no_temperature` > `normal`. Attributes `failed_attempts`, `next_attempt` (unrecorded). One `warning` when a problem starts, one `info` when it ends.
@@ -274,7 +274,7 @@ One set for all thermostats of the entry (the owner's choice), defaults: `attemp
 
 ### Balance Cycle (`async_request_balance`: every 60 s, on a thermostat's change, a capacity change, a zone change and a control's new state)
 
-A request runs the cycle at once; one asked for during a cycle makes one more after it. The cycle never waits for a switch: each command is its own task, so a slow switch (an IR remote) holds back neither the others nor the next decisions, and a switch's sequence may call a climate service. A command is not sent twice while it runs; one the other way overtakes it at once ("off" cancels a running "on" sequence of a virtual switch). Each command's end asks for a cycle, so what was wanted meanwhile is decided then. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second.
+A request runs the cycle at once; one asked for during a cycle makes one more after it. The cycle never waits for a switch: each command is its own task, so a slow switch (an IR remote) holds back neither the others nor the next decisions, and a switch's sequence may call a climate service. While a command runs, the same one is not sent again and spends no attempt, however long it takes (an IR sequence, a slow cloud); one the other way overtakes it at once ("off" cancels a running "on" sequence of a virtual switch) and counts as its first attempt (review 20, C2, C5). Each command's end asks for a cycle, so what was wanted meanwhile is decided then. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second.
 
 ### Load zones (the owner's rules, DEV-008 review 13)
 
@@ -289,7 +289,7 @@ Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It
 | overload | **all** heaters off at once: they are not in the devices' emergency queue (review 18) |
 | red | no starts; every 5 s one heater goes off, the room that needs it least first (the smallest difference between the target and the temperature) |
 
-**The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device that **powers its virtual switch** — the device whose power sensor (`power_sensor_entity_id`) is the virtual switch's `power_entity`, as the socket of an air conditioner (the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. While that device's relay is off (the load protection cut the power) the heater does not start; once the power is back it starts as any other, one at a time and if it fits. The whole contract with Bestiarium Devices is in `devices.py`.
+**The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device that **powers its virtual switch** — the device whose power sensor (`power_sensor_entity_id`) is the virtual switch's `power_entity`, as the socket of an air conditioner (the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. Only a device that is the **one** Bestiarium device with that power sensor counts (two on one sensor: neither is surely the power); the devices' default for a large device (2000 W, `estimate_source: large_device_default`) is no knowledge, and the thermostat's `heater_power` counts then (review 20, C4, C8). While that device's relay is off (the load protection or a person cut the power) the heater **leaves the rotation**: it holds no place of the capacity, the next thermostat takes it; the balancer follows the relays and decides again the moment one comes back on (review 20, C1). The whole contract with Bestiarium Devices is in `devices.py`.
 
 **A power cut is protection, not a fault** (review 18): when the devices' emergency queue cuts an air conditioner's power, its virtual switch reads 0 W and turns off without a command of climate — no failed attempt, no "Not responding" (the rule of B1: a switch that changed after the command). A start that does not fit waits, without a notification; a debug line tells the numbers.
 
@@ -319,6 +319,7 @@ Coverage:
 - Thermostat subentry flow: basic and presets steps
 - Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`, `heating_or_cooling_required`, `invalid_action`, `needed_by_thermostat`, `switch_taken`, `switch_has_no_action`
 - Exceptions: `switch_shared`, `action_failed`, `no_action`
+- Repairs of a thermostat, switch or entry that is gone are deleted at start and when the entry is removed; a fix that finds its thermostat or switch gone deletes its issue (review 20, C6)
 - Repairs, all fixable: `switch_shared` (another switch for each extra thermostat), `switch_now_heats` and `invalid_action` (the switch's actions)
 - `strings.json` removed: the translations are the only source of the texts
 - Abort reasons: `reconfigure_successful` — passed explicitly to `async_update_and_abort` in the entry and both subentry reconfigure flows. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet.

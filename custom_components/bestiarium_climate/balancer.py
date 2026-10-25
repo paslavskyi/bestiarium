@@ -52,10 +52,18 @@ from .const import (
     Zone,
 )
 from .control import ThermostatControl, async_get_thermostat_memory
-from .devices import device_of_relay, expected_power, power_device, relay_off
+from .devices import (
+    device_of_relay,
+    expected_power,
+    power_cut,
+    power_device,
+    power_relays,
+)
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
+    import asyncio
+
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 
     from .climate import VirtualThermostat
@@ -65,15 +73,42 @@ if TYPE_CHECKING:
 STARTING_ZONES = (Zone.GREEN, Zone.NONE)
 
 
-def shared_switches(hass: HomeAssistant) -> set[str]:
+def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[str]:
     """Return the switches more than one thermostat controls (any climate entry)."""
     targets = Counter(
         subentry.data.get(CONF_TARGET_SWITCH)
         for entry in hass.config_entries.async_entries(DOMAIN)
+        if entry.entry_id != besides
         for subentry in entry.subentries.values()
         if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
     )
     return {switch for switch, count in targets.items() if count > 1}
+
+
+def remove_stale_issues(
+    hass: HomeAssistant, entry_id: str, subentry_ids: set[str], *, removed: bool
+) -> None:
+    """
+    Delete the Repairs issues whose thermostat, switch or entry is gone.
+
+    An issue of this entry names its thermostat or switch (subentry); a
+    shared switch's issue goes once no two thermostats share it.
+    """
+    shared = shared_switches(hass, besides=entry_id if removed else None)
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain != DOMAIN:
+            continue
+        issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+        data = (issue.data if issue else None) or {}
+        if issue_id.startswith(f"{ISSUE_SWITCH_SHARED}_"):
+            stale = issue_id.removeprefix(f"{ISSUE_SWITCH_SHARED}_") not in shared
+        else:
+            stale = (
+                data.get("entry_id") == entry_id
+                and data.get("subentry_id") not in subentry_ids
+            )
+        if stale:
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 class BalancingCoordinator:
@@ -98,8 +133,10 @@ class BalancingCoordinator:
         # One cycle at a time; a request during one makes one more after it
         self._cycling = False
         self._pending = False
-        # The command under way of each switch (on or off)
+        # The command under way of each switch (on or off), and their tasks
         self._sending: dict[str, bool] = {}
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._stopped = False
         self._red_off_at: datetime | None = None
         self._red_timer: CALLBACK_TYPE | None = None
         self._zone_ids: list[str] = []
@@ -141,6 +178,17 @@ class BalancingCoordinator:
                 )
             )
         self._follow_zones()
+        # A power relay back on (or cut) changes the rotation: decide at once
+        if relays := power_relays(
+            self._hass, [c.switch for c in self.controls.values()]
+        ):
+            self._unsubscribe.append(
+                async_track_state_change_event(
+                    self._hass,
+                    relays,
+                    callback(lambda _event: self.async_request_balance()),
+                )
+            )
         self._unsubscribe.append(
             self._hass.bus.async_listen(
                 EVENT_ENTITY_REGISTRY_UPDATED, self._on_registry_updated
@@ -155,7 +203,10 @@ class BalancingCoordinator:
         )
 
     def stop(self) -> None:
-        """Stop balancing and following."""
+        """Stop balancing and following; cancel the commands under way."""
+        self._stopped = True
+        for task in self._tasks:
+            task.cancel()
         while self._unsubscribe:
             self._unsubscribe.pop()()
         if self._zone_unsubscribe is not None:
@@ -205,6 +256,13 @@ class BalancingCoordinator:
         }
         if shared == self._shared and relays == self._relays and not force:
             return
+        if force:
+            remove_stale_issues(
+                self._hass,
+                self._entry.entry_id,
+                set(self._entry.subentries),
+                removed=False,
+            )
         self._shared, self._relays = shared, relays
         for control in self.controls.values():
             self._issue(
@@ -277,6 +335,8 @@ class BalancingCoordinator:
         slow switch (an IR remote) holds back neither the others nor the next
         decisions, and a switch's sequence may call a climate service.
         """
+        if self._stopped:
+            return
         if self._cycling:
             self._pending = True
             return
@@ -297,15 +357,21 @@ class BalancingCoordinator:
             if self._left_alone(control):
                 continue
             running = self._sending.get(control.switch)
-            if running is not None and running is not (on := control.wanted(now)):
-                # Overtaken at once: "off" cancels a running "on" sequence
+            if running is not None:
+                # A command under way: the same one waits for its answer (no
+                # attempt); the other way overtakes it at once ("off" cancels a
+                # running "on" sequence) and counts an attempt
+                if running is (on := control.wanted(now)):
+                    continue
                 control.overtake(now, on=on)
-            elif (on := control.to_command(now)) is None or running is on:
+            elif (on := control.to_command(now)) is None:
                 continue
             self._sending[control.switch] = on
-            self._entry.async_create_task(
+            task = self._entry.async_create_task(
                 self._hass, self._async_send(control, on=on), f"switch {control.switch}"
             )
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
     def _capacity(self) -> int:
         """Read the capacity from its entity, the one source of it."""
@@ -401,6 +467,7 @@ class BalancingCoordinator:
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
             and not self._left_alone(control)
+            and not power_cut(self._hass, control.switch)
             and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
         for control in self.controls.values():
@@ -487,12 +554,6 @@ class BalancingCoordinator:
         only the capacity counts.
         """
         step = timedelta(seconds=START_STEP_SECONDS)
-        device = power_device(self._hass, control.switch)
-        if device is not None and relay_off(self._hass, device):
-            # The load protection cut its power: it starts once it is back
-            LOGGER.debug("%s waits: the power of %s is off", control.name, device.title)
-            self._start_again(step)
-            return False
         if zone is Zone.NONE:
             return True
         if self._started_at is not None and now - self._started_at < step:
@@ -619,8 +680,7 @@ class BalancingCoordinator:
             )
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
-        finally:
-            if self._sending.get(control.switch) is on:
-                del self._sending[control.switch]
-            # What was wanted meanwhile is decided now, not in a minute
-            self.async_request_balance()
+        if self._sending.get(control.switch) is on:
+            del self._sending[control.switch]
+        # What was wanted meanwhile is decided now, not in a minute
+        self.async_request_balance()

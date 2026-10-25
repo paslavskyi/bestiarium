@@ -34,6 +34,11 @@ from custom_components.bestiarium_climate.const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
 )
+from custom_components.bestiarium_climate.devices import (
+    expected_power,
+    power_cut,
+    power_device,
+)
 from custom_components.bestiarium_climate.repairs import (
     ActionsRepairFlow,
     SharedSwitchRepairFlow,
@@ -116,7 +121,8 @@ async def setup(hass: HomeAssistant) -> AsyncGenerator[Setup]:
 
     yield _setup
     for entry in entries:
-        await hass.config_entries.async_unload(entry.entry_id)
+        if hass.config_entries.async_get_entry(entry.entry_id):
+            await hass.config_entries.async_unload(entry.entry_id)
 
 
 @pytest.fixture
@@ -559,3 +565,101 @@ async def test_an_old_thermostat_on_a_device_relay_is_a_repair(
     assert result["type"] == "create_entry"
     assert entry.subentries["Heater"].data["target_switch"] == "switch.own"
     assert ir.async_get(hass).async_get_issue(DOMAIN, "switch_is_device_Heater") is None
+
+
+def _device(
+    hass: HomeAssistant, title: str, *, power: str = POWER, relay: str = RELAY
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain="bestiarium_devices",
+        title=title,
+        data={"switch_entity_id": relay, "power_sensor_entity_id": power},
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+async def test_the_power_comes_back_and_it_starts_at_once(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """C1: the relay of its power back on: a cycle at once, not in a minute."""
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    assert services["heat"] == []
+
+    hass.states.async_set(RELAY, STATE_ON)
+    await hass.async_block_till_done()
+
+    assert len(services["heat"]) == 1
+
+
+async def test_two_devices_on_one_power_sensor_are_no_power(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """C4: the power device only if it is the one device with that sensor."""
+    await setup(_switch())
+    one = _device(hass, "AC power")
+    assert power_device(hass, SWITCH) is one
+
+    _device(hass, "Another", relay="switch.other")
+    assert power_device(hass, SWITCH) is None
+    assert not power_cut(hass, SWITCH)
+
+
+async def test_the_large_default_of_devices_is_no_power(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """C8: the devices' 2000 W default is no knowledge: the thermostat's counts."""
+    await setup(_switch())
+    device = _device(hass, "AC power")
+    er.async_get(hass).async_get_or_create(
+        "sensor",
+        "bestiarium_devices",
+        f"{device.entry_id}_expected_power",
+        suggested_object_id="ac_power_expected_power",
+    )
+    hass.states.async_set(
+        "sensor.ac_power_expected_power",
+        "2000",
+        {"estimate_source": "large_device_default"},
+    )
+    assert expected_power(hass, device) is None
+
+    hass.states.async_set(
+        "sensor.ac_power_expected_power", "1150", {"estimate_source": "memory"}
+    )
+    assert expected_power(hass, device) == 1150.0
+
+
+async def test_the_repairs_of_a_removed_thermostat_go(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """C6: the thermostat on a device relay removed: its issue goes with it."""
+    hass.states.async_set(RELAY, STATE_OFF)
+    _device(hass, "Floor 1", power="sensor.floor_1_power")
+    thermostat = _thermostat("Heater", ClimateMode.HEATING)
+    thermostat["data"] = {**thermostat["data"], "target_switch": RELAY}
+    entry = await setup(thermostat)
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "switch_is_device_Heater")
+
+    hass.config_entries.async_remove_subentry(entry, "Heater")
+    await hass.async_block_till_done()
+
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "switch_is_device_Heater") is None
+
+
+async def test_the_repairs_of_a_removed_entry_go(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """C6: the climate entry removed: its issues go."""
+    entry = await setup(_switch(heating_action=[{"nonsense": 1}]))
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_switch_01")
+
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_switch_01") is None
+    )

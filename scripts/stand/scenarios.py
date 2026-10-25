@@ -121,15 +121,13 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         """
         Play the IR of an air conditioner: it runs (or stands by) if it hears it.
 
-        Its socket's fault profile "unresponsive" is an IR that does not reach
-        it; with its socket off (the load protection) it draws nothing anyway.
+        Its knob "IR lost" is an IR that does not reach it, its socket (the
+        power) still working; with its socket off (the load protection) it
+        draws nothing anyway.
         """
-        fault = reg.mock("select", f"mock_{ac}_fault_profile")
+        lost = reg.mock("switch", f"mock_{ac}_ir_lost")
         return [
-            {
-                "condition": "template",
-                "value_template": f"{{{{ not is_state('{fault}', 'unresponsive') }}}}",
-            },
+            {"condition": "state", "entity_id": lost, "state": "off"},
             ac_power(ac, watts),
         ]
 
@@ -151,6 +149,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         for device in STAND_DEVICES
         if device.priority == LOAD_PRIORITY_ALWAYS_ON
     ]
+    ir_lost = [reg.mock("switch", f"mock_{ac}_ir_lost") for _, _, ac in THERMOSTATS]
     irs = {
         f"ir_{ac}_{command}": {
             "alias": f"Стенд: ІЧ {name} — {label}",
@@ -173,6 +172,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
                 *heat("off"),
                 *(ac_power(ac, AC_STANDBY_W) for _, _, ac in THERMOSTATS),
+                {"action": "switch.turn_off", "target": {"entity_id": ir_lost}},
                 {
                     "action": "number.set_value",
                     "target": {"entity_id": capacity},
@@ -282,7 +282,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "sequence": [
                 reset,
                 # The IR of the first air conditioner does not reach it
-                profile("ac_1", FaultProfile.UNRESPONSIVE),
+                {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
                 *heat("heat"),
             ],
         },

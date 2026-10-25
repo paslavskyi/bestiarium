@@ -72,7 +72,7 @@ Device names are translated (`device` in the translations, `translation_key`
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
-| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. Fault profile "Unresponsive": the IR does not reach the AC |
+| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; the fault profile is the socket's (the power relay's) own (review 20, C7) |
 | `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
 
 ---

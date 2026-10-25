@@ -211,7 +211,8 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
             "capacity": 2,
             # Three minutes: a rotation shows on the stand in minutes
             "min_working_time": {"hours": 0, "minutes": 3, "seconds": 0},
-            "recovery_timeout": {"hours": 1, "minutes": 0, "seconds": 0},
+            # Five minutes: a deferred switch is tried again within the run
+            "recovery_timeout": {"hours": 0, "minutes": 5, "seconds": 0},
         },
     )
     entry_id = result["result"]["entry_id"]

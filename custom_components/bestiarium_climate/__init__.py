@@ -13,7 +13,7 @@ from homeassistant.const import Platform
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from .balancer import BalancingCoordinator
+from .balancer import BalancingCoordinator, remove_stale_issues
 from .const import (
     CONF_HEATING_ACTION,
     DOMAIN,
@@ -130,6 +130,13 @@ def _report_cooling_switch_now_heats(
             translation_placeholders={"switch": subentry.title},
             data={"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
         )
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: BestiariumClimateConfigEntry
+) -> None:
+    """Delete the Repairs issues of the removed entry."""
+    remove_stale_issues(hass, entry.entry_id, set(), removed=True)
 
 
 async def async_unload_entry(

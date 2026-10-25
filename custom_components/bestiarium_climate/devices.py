@@ -19,7 +19,9 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_POWER_ENTITY,
+    DEVICES_ESTIMATE_SOURCE,
     DEVICES_EXPECTED_POWER_UNIQUE_ID,
+    DEVICES_LARGE_DEFAULT,
     DEVICES_POWER_SENSOR,
     DEVICES_SWITCH,
     DOMAIN,
@@ -59,31 +61,55 @@ def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
         ),
         None,
     )
-    return next(
-        (
-            entry
-            for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES)
-            if power and entry.data.get(DEVICES_POWER_SENSOR) == power
-        ),
-        None,
-    )
+    devices = [
+        entry
+        for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES)
+        if power and entry.data.get(DEVICES_POWER_SENSOR) == power
+    ]
+    # Two devices on one power sensor: none is surely the power
+    return devices[0] if len(devices) == 1 else None
 
 
 def expected_power(hass: HomeAssistant, device: ConfigEntry) -> float | None:
-    """Return the expected power of a Bestiarium device, if it is known."""
+    """
+    Return the expected power of a Bestiarium device, if it is known.
+
+    The devices' default for a large device is no knowledge: the
+    thermostat's own heater power counts then.
+    """
     entity_id = er.async_get(hass).async_get_entity_id(
         "sensor",
         DOMAIN_BESTIARIUM_DEVICES,
         DEVICES_EXPECTED_POWER_UNIQUE_ID.format(entry_id=device.entry_id),
     )
     state = hass.states.get(entity_id) if entity_id else None
-    if state is not None:
-        with contextlib.suppress(ValueError):
-            return float(state.state)
+    if state is None or state.attributes.get(DEVICES_ESTIMATE_SOURCE) == (
+        DEVICES_LARGE_DEFAULT
+    ):
+        return None
+    with contextlib.suppress(ValueError):
+        return float(state.state)
     return None
 
 
-def relay_off(hass: HomeAssistant, device: ConfigEntry) -> bool:
-    """Return whether the device's relay is off (the power is cut)."""
+def power_cut(hass: HomeAssistant, switch: str) -> bool:
+    """
+    Return whether the device powering a virtual switch has its relay off.
+
+    The load protection (or a person) cut the power: the heater leaves the
+    rotation, holding no place of the capacity, until the power is back.
+    """
+    device = power_device(hass, switch)
+    if device is None:
+        return False
     state = hass.states.get(device.data.get(DEVICES_SWITCH, ""))
     return state is not None and state.state == STATE_OFF
+
+
+def power_relays(hass: HomeAssistant, switches: list[str]) -> list[str]:
+    """Return the relays of the devices that power these virtual switches."""
+    return [
+        device.data[DEVICES_SWITCH]
+        for switch in switches
+        if (device := power_device(hass, switch)) and DEVICES_SWITCH in device.data
+    ]

@@ -812,3 +812,91 @@ async def test_a_deferred_place_goes_without_a_needless_rotation(
     assert floors.state("floor_1") == "unresponsive"
     assert floors.on() == {"floor_2", "floor_3"}
     assert ("turn_off", "floor_2") not in floors.calls
+
+
+async def test_a_heater_without_power_holds_no_place(floors: Floors) -> None:
+    """C1: capacity 1, the first AC's power is cut: the second starts."""
+    cut = {"switch.floor_1"}
+    with patch(
+        "custom_components.bestiarium_climate.balancer.power_cut",
+        lambda _hass, switch: switch in cut,
+    ):
+        await floors.setup(capacity=1)
+        assert floors.on() == {"floor_2"}
+
+        cut.clear()
+        await floors.tick(MINUTE)
+        assert len(floors.on()) == 1
+
+
+async def test_a_long_command_spends_no_attempts(floors: Floors) -> None:
+    """C2: an "on" still running after minutes is waited for, not sent again."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def slow_on() -> None:
+        on_started.set()
+        await released.wait()
+
+    floors.before["floor_1"] = slow_on
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    for _ in range(4):
+        floors.freezer.tick(timedelta(minutes=1))
+        async_fire_time_changed(floors.hass)
+        await asyncio.sleep(0)
+
+    assert floors.calls.count(("turn_on", "floor_1")) == 1
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+    assert floors.state("floor_1") == "normal"
+    released.set()
+    await setup
+
+
+async def test_an_overtaking_command_is_an_attempt(floors: Floors) -> None:
+    """C5: "off" over a running "on" counts as an attempt; not taken, it stays."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def slow_on() -> None:
+        # On already, the rest of its sequence still running
+        floors.hass.states.async_set("switch.floor_1", STATE_ON)
+        on_started.set()
+        await released.wait()
+
+    floors.before["floor_1"] = slow_on
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    floors.before.clear()
+    floors.stuck.add("floor_1")  # the "off" is not taken
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_1"), "hvac_mode": "off"},
+        blocking=True,
+    )
+
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    assert ("turn_off", "floor_1") in floors.calls
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+    released.set()
+    await setup
+
+
+async def test_no_command_after_an_unload_during_a_slow_one(floors: Floors) -> None:
+    """C3: unloaded while an "on" runs: it is cancelled, nothing is sent after."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def slow_on() -> None:
+        on_started.set()
+        await released.wait()
+
+    floors.before["floor_1"] = slow_on
+    floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    calls = len(floors.calls)
+
+    await floors.hass.config_entries.async_unload(floors.entry.entry_id)
+    released.set()
+    await floors.tick(2 * MINUTE)
+
+    assert floors.calls[calls:] == []

@@ -289,8 +289,16 @@ class ThermostatControl:
         return self.expected_on and self.in_rotation(now)
 
     def overtake(self, now: datetime, *, on: bool) -> None:
-        """Remember a command sent over one still running the other way."""
+        """
+        Count a command sent over one still running the other way.
+
+        A new wanted state starts the count of attempts again, as in
+        to_command: the overtaking command is its first attempt.
+        """
         self._last_command = (now, on)
+        self._tries = 1
+        self._keep()
+        self._refresh(now)
 
     def to_command(self, now: datetime) -> bool | None:
         """

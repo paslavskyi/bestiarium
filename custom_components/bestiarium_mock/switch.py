@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_ON, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
@@ -29,6 +29,39 @@ async def async_setup_entry(
     async_add_entities(
         MockDeviceSwitch(socket, None) for socket in coordinator.sockets.values()
     )
+    async_add_entities(
+        MockIrLostSwitch(socket, "ir_lost")
+        for socket in coordinator.sockets.values()
+        if socket.spec.has_ir
+    )
+
+
+class MockIrLostSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):
+    """
+    A test knob: the IR does not reach the air conditioner.
+
+    The stand's IR scripts check it; the socket (the AC's power) still works.
+    """
+
+    _attr_translation_key = "ir_lost"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_is_on = False
+
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Lose the IR."""
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Get the IR back."""
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the knob."""
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last_state.state == STATE_ON
 
 
 class MockDeviceSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):
