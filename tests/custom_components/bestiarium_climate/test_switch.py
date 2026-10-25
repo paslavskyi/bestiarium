@@ -14,8 +14,9 @@ from homeassistant.config_entries import (
     ConfigSubentryData,
 )
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -436,6 +437,13 @@ async def _relay_powers_the_switch(hass: HomeAssistant, *, on: bool) -> None:
     ).add_to_hass(hass)
 
 
+def _control_state(hass: HomeAssistant) -> State:
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, "Heater_control_state"
+    )
+    return hass.states.get(entity_id)
+
+
 async def _heat(hass: HomeAssistant) -> None:
     hass.states.async_set("sensor.temp", "15")
     await hass.services.async_call(
@@ -458,7 +466,7 @@ async def test_no_start_while_the_power_is_cut(
     await hass.async_block_till_done()
 
     assert services["heat"] == []
-    assert hass.states.get("sensor.heater_control_state").state == "normal"
+    assert _control_state(hass).state == "normal"
 
     hass.states.async_set(RELAY, STATE_ON)
     _later(hass, 4 * 60)
@@ -485,7 +493,7 @@ async def test_a_power_cut_is_no_failed_attempt(
         _later(hass, minute * 60)
         await hass.async_block_till_done()
 
-    state = hass.states.get("sensor.heater_control_state")
+    state = _control_state(hass)
     assert state.state == "normal"
     assert state.attributes["failed_attempts"] == 0
     assert len(services["heat"]) == 1
