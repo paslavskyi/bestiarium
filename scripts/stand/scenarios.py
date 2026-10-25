@@ -261,7 +261,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "sequence": [reset, grid_at(2300, 0), *heat("heat")],
         },
         "climate_margin": {
-            "alias": "Стенд: клімат — з'явився запас (навантаження 2300 Вт з обігрівачем)",
+            "alias": "Стенд: клімат — з'явився запас (2300 Вт з обігрівачем)",
             "icon": "mdi:scale-unbalanced",
             "sequence": [grid_at(2300, 0)],
         },
