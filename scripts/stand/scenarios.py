@@ -254,6 +254,17 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:radiator",
             "sequence": [reset, *heat("heat")],
         },
+        "climate_fit": {
+            "alias": "Стенд: клімат — вміщається лише один обігрівач",
+            "icon": "mdi:scale-balance",
+            # 2300 W: one heater fits under the red threshold, two do not
+            "sequence": [reset, grid_at(2300, 0), *heat("heat")],
+        },
+        "climate_margin": {
+            "alias": "Стенд: клімат — з'явився запас (навантаження 2300 Вт з обігрівачем)",
+            "icon": "mdi:scale-unbalanced",
+            "sequence": [grid_at(2300, 0)],
+        },
         "load_green": {
             "alias": "Стенд: навантаження — зелена",
             "icon": "mdi:circle-slice-2",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -30,15 +31,23 @@ from .const import (
     CONF_MIN_WORKING_TIME,
     CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
+    DEVICES_EXPECTED_POWER_UNIQUE_ID,
+    DEVICES_SWITCH,
     DOMAIN,
+    DOMAIN_BESTIARIUM_DEVICES,
     DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
     ISSUE_SWITCH_SHARED,
+    LARGE_HEATER_POWER_W,
     LOGGER,
+    MODE_AC_LOAD_LIMITS,
+    MODE_AC_POWER_SENSOR,
+    MODE_RED_THRESHOLD,
     RED_STEP_SECONDS,
     SENSOR_ZONES,
     SIGNAL_CONTROL_CHANGED,
+    START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -93,6 +102,8 @@ class BalancingCoordinator:
         self._sending: set[str] = set()
         self._red_off_at: datetime | None = None
         self._red_timer: CALLBACK_TYPE | None = None
+        self._started_at: datetime | None = None
+        self._start_timer: CALLBACK_TYPE | None = None
 
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
@@ -146,6 +157,9 @@ class BalancingCoordinator:
         while self._unsubscribe:
             self._unsubscribe.pop()()
         self._cancel_red_timer()
+        if self._start_timer is not None:
+            self._start_timer()
+            self._start_timer = None
         for control in self.controls.values():
             control.async_stop()
 
@@ -326,6 +340,10 @@ class BalancingCoordinator:
             ),
         )
         deficit = capacity < len(ranked)
+        # In green a start waits for the one under way; no load limits, no wait
+        starting = zone is Zone.NONE or (
+            zone is Zone.GREEN and not any(c.starting(now) for _, c in ranked)
+        )
         LOGGER.debug(
             "Zone %s, capacity %s: %s",
             zone,
@@ -338,6 +356,11 @@ class BalancingCoordinator:
         for place, (thermostat, control) in enumerate(ranked):
             if zone in STARTING_ZONES:
                 on = place < capacity
+                if on and not control.expected_on:
+                    # One start at a time, and only if it fits: a safety
+                    # net over the capacity, as the devices' green strategy
+                    on = starting and self._may_start(control, now, zone)
+                    starting = starting and not on
             elif zone is Zone.YELLOW:
                 on = self._heating(control, now) and place < capacity
             else:
@@ -356,6 +379,98 @@ class BalancingCoordinator:
                         "temperature_diff": round(thermostat.temperature_diff, 2),
                     },
                 )
+
+    def _may_start(self, control: ThermostatControl, now: datetime, zone: Zone) -> bool:
+        """
+        Return whether a heater may start now: one at a time, if it fits.
+
+        The next start waits a step, so that the load shows the last one. A
+        start fits when the load plus the heater's power stays at or below the
+        red threshold (the rule of the devices' balancer, DEV-006); an
+        unknown load or threshold does not fit. Without load limits (no zone)
+        only the capacity counts.
+        """
+        if zone is Zone.NONE:
+            return True
+        step = timedelta(seconds=START_STEP_SECONDS)
+        if self._started_at is not None and now - self._started_at < step:
+            self._start_again(step - (now - self._started_at))
+            return False
+        power, source = self._heater_power(control)
+        if (load_and_threshold := self._load_and_red_threshold()) is None:
+            LOGGER.debug("%s does not fit: load or red threshold unknown", control.name)
+            return False
+        load, threshold = load_and_threshold
+        if load + power > threshold:
+            LOGGER.debug(
+                "%s does not fit: %s W + %s W (%s) > %s W",
+                control.name,
+                load,
+                power,
+                source,
+                threshold,
+            )
+            return False
+        self._started_at = now
+        self._start_again(step)
+        return True
+
+    def _start_again(self, delay: timedelta) -> None:
+        """Run a cycle after the start step, for the heaters still waiting."""
+        if self._start_timer is None:
+            self._start_timer = async_call_later(
+                self._hass, delay.total_seconds(), self._async_start_timer
+            )
+
+    @callback
+    def _async_start_timer(self, _now: datetime) -> None:
+        self._start_timer = None
+        self.async_request_balance()
+
+    def _heater_power(self, control: ThermostatControl) -> tuple[float, str]:
+        """
+        Return the power of the thermostat's heater, and where it comes from.
+
+        The expected power of the bestiarium_devices device whose relay is the
+        switch; else the power in the thermostat's form; else a large heater.
+        """
+        registry = er.async_get(self._hass)
+        for entry in self._hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES):
+            if entry.data.get(DEVICES_SWITCH) != control.switch:
+                continue
+            entity_id = registry.async_get_entity_id(
+                "sensor",
+                DOMAIN_BESTIARIUM_DEVICES,
+                DEVICES_EXPECTED_POWER_UNIQUE_ID.format(entry_id=entry.entry_id),
+            )
+            state = self._hass.states.get(entity_id) if entity_id else None
+            if state is not None:
+                with contextlib.suppress(ValueError):
+                    return float(state.state), "devices"
+        if control.heater_power:
+            return float(control.heater_power), "thermostat"
+        return LARGE_HEATER_POWER_W, "large heater"
+
+    def _load_and_red_threshold(self) -> tuple[float, float] | None:
+        """Return the load and the red threshold of bestiarium_mode, in W."""
+        mode_entry = next(
+            iter(self._hass.config_entries.async_entries(DOMAIN_BESTIARIUM_MODE)),
+            None,
+        )
+        sensor = (
+            (mode_entry.data.get(MODE_AC_LOAD_LIMITS) or {}).get(MODE_AC_POWER_SENSOR)
+            if mode_entry
+            else None
+        )
+        red = self._zone_sensors().get(Zone.RED)
+        load = self._hass.states.get(sensor) if sensor else None
+        red_state = self._hass.states.get(red) if red else None
+        if load is None or red_state is None:
+            return None
+        try:
+            return float(load.state), float(red_state.attributes[MODE_RED_THRESHOLD])
+        except (KeyError, TypeError, ValueError):
+            return None
 
     @staticmethod
     def _heating(control: ThermostatControl, now: datetime) -> bool:

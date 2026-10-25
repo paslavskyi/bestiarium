@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     BALANCING_INTERVAL_SECONDS,
+    CONF_HEATER_POWER,
     CONF_RECOVERY_TIMEOUT,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
@@ -151,6 +152,8 @@ class ThermostatControl:
         self.name = subentry.title
         self.switch: str = subentry.data[CONF_TARGET_SWITCH]
         self._sensor: str = subentry.data[CONF_TEMPERATURE_SENSOR]
+        # The power the thermostat's form gives its heater, if any
+        self.heater_power: float | None = subentry.data.get(CONF_HEATER_POWER)
         self._memory = memory
         kept = memory.get(self.subentry_id)
         self.expected_on: bool = kept.get("expected_on", False)
@@ -234,12 +237,14 @@ class ThermostatControl:
         A start under way (its answer not in yet) is heating: a zone that the
         start itself moves to yellow does not cancel it.
         """
-        if not self.expected_on:
-            return False
-        if self.switch_is_on():
-            return True
+        return self.expected_on and bool(self.switch_is_on() or self.starting(now))
+
+    def starting(self, now: datetime) -> bool:
+        """Return whether the switch was just told to turn on and is not on yet."""
         return bool(
-            self._last_command
+            self.expected_on
+            and not self.switch_is_on()
+            and self._last_command
             and self._last_command[1]
             and now - self._last_command[0] < ATTEMPT_INTERVAL
         )

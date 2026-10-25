@@ -28,6 +28,7 @@ from .const import (
     CONF_CAPACITY,
     CONF_COLD_TOLERANCE,
     CONF_COOLING_ACTION,
+    CONF_HEATER_POWER,
     CONF_HEATING_ACTION,
     CONF_HOT_TOLERANCE,
     CONF_MAX_TEMP,
@@ -490,6 +491,8 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 errors.update(self._switch_errors(user_input))
 
             if not errors:
+                # An optional field cleared in the form goes
+                self._options.pop(CONF_HEATER_POWER, None)
                 self._options.update(user_input)
                 return await self.async_step_presets()
 
@@ -618,6 +621,21 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             opt_fields[vol.Optional(CONF_MAX_TEMP, default=max_temp_default)] = temp_sel
         else:
             opt_fields[vol.Optional(CONF_MAX_TEMP)] = temp_sel
+        # Empty: the expected power of its Bestiarium device, else a large heater
+        opt_fields[
+            vol.Optional(
+                CONF_HEATER_POWER,
+                description={"suggested_value": self._options.get(CONF_HEATER_POWER)},
+            )
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                max=20000,
+                step=1,
+                unit_of_measurement="W",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        )
 
         schema = schema.extend(opt_fields)
 

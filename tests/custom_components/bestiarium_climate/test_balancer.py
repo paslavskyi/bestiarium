@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigSubentryData
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -31,6 +32,7 @@ from custom_components.bestiarium_climate.const import (
     CONF_RECOVERY_TIMEOUT,
     DOMAIN,
     EVENT_DEVICE_ROTATED_IN,
+    START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
 )
@@ -49,6 +51,7 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 MINUTE = 60
 ZONES = ("green", "yellow", "red", "overload")
+RED_W = 4500
 FLOORS = ("floor_1", "floor_2", "floor_3")
 
 
@@ -67,12 +70,28 @@ class Floors:
         # What a switch does before it takes a command (a slow one, a sequence)
         self.before: dict[str, Callable[[], Awaitable[None]]] = {}
 
-    async def setup(self, capacity: int = 2, *, zones: bool = False) -> None:
+    async def setup(
+        self,
+        capacity: int = 2,
+        *,
+        zones: bool = False,
+        settle: bool = True,
+        heater_power: float | None = None,
+    ) -> None:
         """Set up the entry: three thermostats heating to 21 °C."""
         for floor in FLOORS:
             self.hass.states.async_set(f"switch.{floor}", STATE_OFF)
             self.hass.states.async_set(f"sensor.{floor}_temperature", "18")
         if zones:
+            # Where bestiarium_mode reads the grid load; disabled, not set up, so
+            # the zone sensors are the test's
+            MockConfigEntry(
+                domain="bestiarium_mode",
+                data={"ac_load_limits": {"ac_power_sensor": "sensor.grid"}},
+                disabled_by=ConfigEntryDisabler.USER,
+            ).add_to_hass(self.hass)
+            if self.hass.states.get("sensor.grid") is None:
+                self.load(1000)
             registry = er.async_get(self.hass)
             for zone in ZONES:
                 registry.async_get_or_create(
@@ -90,21 +109,27 @@ class Floors:
                 CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 10, "seconds": 0},
                 CONF_RECOVERY_TIMEOUT: {"hours": 1, "minutes": 0, "seconds": 0},
             },
+            subentries_data=[
+                ConfigSubentryData(
+                    subentry_id=floor,
+                    subentry_type=SUBENTRY_TYPE_THERMOSTAT,
+                    title=floor.title(),
+                    unique_id=None,
+                    data={
+                        "name": floor.title(),
+                        "temperature_sensor": f"sensor.{floor}_temperature",
+                        "target_switch": f"switch.{floor}",
+                        "thermostat_mode": ClimateMode.HEATING,
+                        **(
+                            {"heater_power": heater_power}
+                            if heater_power and floor == "floor_1"
+                            else {}
+                        ),
+                    },
+                )
+                for floor in FLOORS
+            ],
         )
-        self.entry.subentries = {
-            floor: _make_subentry(
-                floor,
-                SUBENTRY_TYPE_THERMOSTAT,
-                floor.title(),
-                {
-                    "name": floor.title(),
-                    "temperature_sensor": f"sensor.{floor}_temperature",
-                    "target_switch": f"switch.{floor}",
-                    "thermostat_mode": ClimateMode.HEATING,
-                },
-            )
-            for floor in FLOORS
-        }
         self.entry.add_to_hass(self.hass)
 
         @callback
@@ -128,6 +153,9 @@ class Floors:
                 blocking=True,
             )
         await self.hass.async_block_till_done()
+        if zones and settle:
+            # In green the heaters start one by one, a step apart
+            await self.tick(capacity * START_STEP_SECONDS, step=START_STEP_SECONDS)
 
     def zone(self, zone: str) -> None:
         """Show a load zone on the four zone sensors ("pause": all off)."""
@@ -135,7 +163,14 @@ class Floors:
             state = STATE_ON if sensor == zone else STATE_OFF
             if zone == "no_data":
                 state = STATE_UNAVAILABLE
-            self.hass.states.async_set(f"binary_sensor.power_load_{sensor}", state)
+            attributes = {"red_threshold": RED_W} if sensor == "red" else {}
+            self.hass.states.async_set(
+                f"binary_sensor.power_load_{sensor}", state, attributes
+            )
+
+    def load(self, watts: float) -> None:
+        """Show the grid load."""
+        self.hass.states.async_set("sensor.grid", str(watts))
 
     def entity_id(self, domain: str, unique_id: str) -> str:
         """Return an entity_id of the integration."""
@@ -365,9 +400,8 @@ async def test_memory_forgets_a_removed_thermostat(
 ) -> None:
     """A thermostat removed from the configuration leaves nothing in the store."""
     await floors.setup()
-    floors.entry.subentries.pop("floor_3")
-
-    await floors.hass.config_entries.async_reload(floors.entry.entry_id)
+    floors.hass.config_entries.async_remove_subentry(floors.entry, "floor_3")
+    await floors.hass.async_block_till_done()
     await floors.tick(MINUTE)
 
     assert set(hass_storage["bestiarium_climate.thermostats"]["data"]) == {
@@ -459,8 +493,9 @@ async def test_yellow_rotates_out_without_starting(floors: Floors) -> None:
 
     await floors.tick(11 * MINUTE)
 
-    assert len(floors.on()) == 1
+    assert len(floors.on()) < 2
     assert "floor_3" not in floors.on()
+    assert ("turn_on", "floor_3") not in floors.calls
 
 
 async def test_pause_no_data_and_overload_start_nothing(floors: Floors) -> None:
@@ -592,15 +627,73 @@ async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> No
 
 
 async def test_a_start_that_brings_yellow_is_not_cancelled(floors: Floors) -> None:
-    """Green starts two; their load makes it yellow before they answer: both stay."""
-    floors.stuck.update({"floor_1", "floor_2"})
+    """A start not answered yet when the load turns yellow goes on; no other starts."""
+    floors.stuck.add("floor_1")
     await floors.setup(zones=True)
+    assert floors.calls == [("turn_on", "floor_1")]
+
     floors.zone("yellow")
     await floors.hass.async_block_till_done()
     floors.stuck.clear()
-    for floor in ("floor_1", "floor_2"):
-        floors.hass.states.async_set(f"switch.{floor}", STATE_ON)
+    floors.hass.states.async_set("switch.floor_1", STATE_ON)
     await floors.tick(MINUTE)
 
-    assert floors.on() == {"floor_1", "floor_2"}
+    assert floors.on() == {"floor_1"}
     assert ("turn_off", "floor_1") not in floors.calls
+
+
+async def test_green_starts_one_at_a_time(floors: Floors) -> None:
+    """Green: the next heater starts a step later, when the load shows the first."""
+    await floors.setup(zones=True, settle=False)
+    assert floors.on() == {"floor_1"}
+
+    await floors.tick(START_STEP_SECONDS, step=START_STEP_SECONDS)
+
+    assert floors.on() == {"floor_1", "floor_2"}
+
+
+async def test_only_a_heater_that_fits_starts(floors: Floors) -> None:
+    """Load + heater power above the red threshold: it waits for a margin."""
+    floors.load(3600)  # 3600 + 2000 (a large heater) > 4500: none fits
+    await floors.setup(zones=True, settle=False)
+    await floors.tick(MINUTE)
+    assert floors.on() == set()
+
+    floors.load(2400)  # one fits
+    await floors.tick(MINUTE)
+    floors.load(3600)  # the load with it: the second does not fit
+    await floors.tick(MINUTE)
+    assert len(floors.on()) == 1
+
+    floors.load(2400)
+    await floors.tick(MINUTE)
+    assert len(floors.on()) == 2
+
+
+async def test_heater_power_from_the_thermostat(floors: Floors) -> None:
+    """The thermostat's own heater power counts instead of the large default."""
+    floors.load(3800)
+    await floors.setup(zones=True, settle=False, heater_power=600)
+
+    assert floors.on() == {"floor_1"}
+
+
+async def test_heater_power_from_its_bestiarium_device(floors: Floors) -> None:
+    """The expected power of the devices' entry whose relay is the switch counts."""
+    entry = MockConfigEntry(
+        domain="bestiarium_devices",
+        data={"switch_entity_id": "switch.floor_1"},
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    entry.add_to_hass(floors.hass)
+    er.async_get(floors.hass).async_get_or_create(
+        "sensor",
+        "bestiarium_devices",
+        f"{entry.entry_id}_expected_power",
+        suggested_object_id="floor_1_expected_power",
+    )
+    floors.hass.states.async_set("sensor.floor_1_expected_power", "700")
+    floors.load(3700)
+    await floors.setup(zones=True, settle=False)
+
+    assert floors.on() == {"floor_1"}

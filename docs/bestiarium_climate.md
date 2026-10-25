@@ -105,6 +105,7 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH
     "cold_tolerance": float,             # °C below target before heating starts (default 0.3)
     "hot_tolerance": float,              # °C above target before cooling starts (default 0.3)
     "min_cycle_duration": dict | None,   # Optional duration dict (hours/minutes/seconds)
+    "heater_power": float,               # Optional — W, for the fit check; empty: the device's expected power, else 2000
     "min_temp": float | None,            # Optional minimum setpoint
     "max_temp": float | None,            # Optional maximum setpoint
     "away_temp": float | None,           # Optional preset temperatures
@@ -282,10 +283,13 @@ Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It
 
 | Zone | Climate |
 |---|---|
-| green (or no load limits) | the capacity applies; rotation |
+| green | the capacity applies; rotation; heaters start **one at a time** (the next a step of 10 s later, once the load shows the last) and **only if it fits**: load + heater power ≤ the red threshold — the rule of the devices' green strategy (DEV-006) |
+| no load limits | the capacity and the rotation only |
 | yellow | the ones heating go on; a rotation turns the one going out off but starts no other; no new starts |
 | pause, no data, overload | nothing starts and nothing rotates; the ones heating go on (the overload's emergency queue of the devices turns off what it must) |
 | red | no starts; every 5 s one heater goes off, the room that needs it least first (the smallest difference between the target and the temperature) |
+
+**The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device whose relay is the thermostat's switch (its entry's `switch_entity_id`, the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. A start that does not fit waits, without a notification; a debug line tells the numbers.
 
 Out of green, a switch wanted on but found off (the devices' load protection turned it off) is wanted off: it is no failed attempt and is not turned on again until green. A thermostat that stops wanting heat (idle, off) is turned off in every zone. The capacity entity (FR-019: an automation lowering it in red) stays a finer setting; the rules above work without it.
 

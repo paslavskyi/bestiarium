@@ -15,6 +15,7 @@ LOGGER: Logger = getLogger(__package__)
 
 DOMAIN = "bestiarium_climate"
 DOMAIN_BESTIARIUM_MODE = "bestiarium_mode"
+DOMAIN_BESTIARIUM_DEVICES = "bestiarium_devices"
 
 # Subentry types
 SUBENTRY_TYPE_SWITCH = "switch"
@@ -49,6 +50,7 @@ CONF_MAX_TEMP = "max_temp"
 CONF_COLD_TOLERANCE = "cold_tolerance"
 CONF_HOT_TOLERANCE = "hot_tolerance"
 CONF_MIN_CYCLE_DURATION = "min_cycle_duration"
+CONF_HEATER_POWER = "heater_power"
 
 # Defaults
 DEFAULT_CAPACITY = 1
@@ -107,6 +109,18 @@ class ControlSettings:
 ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
 # In the red zone one heater goes off every 5 s, as the red strategy of devices
 RED_STEP_SECONDS = 5
+# In green one heater starts at a time; the next once the load has shown it
+START_STEP_SECONDS = 10
+# A start fits when load + heater power <= the red threshold (devices, DEV-006).
+# The load is the power sensor of bestiarium_mode, the threshold its red zone
+# sensor's attribute, the power the expected power of the bestiarium_devices
+# device whose relay is the switch, else the thermostat's own, else large.
+MODE_AC_LOAD_LIMITS = "ac_load_limits"
+MODE_AC_POWER_SENSOR = "ac_power_sensor"
+MODE_RED_THRESHOLD = "red_threshold"
+DEVICES_SWITCH = "switch_entity_id"
+DEVICES_EXPECTED_POWER_UNIQUE_ID = "{entry_id}_expected_power"
+LARGE_HEATER_POWER_W = 2000
 ISSUE_SWITCH_SHARED = "switch_shared"
 ISSUE_INVALID_ACTION = "invalid_action"
 ISSUE_SWITCH_NOW_HEATS = "switch_now_heats"

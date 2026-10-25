@@ -140,7 +140,8 @@
             "hot_tolerance": "Hot tolerance (°C)",
             "min_cycle_duration": "Minimum cycle duration",
             "min_temp": "Minimum temperature",
-            "max_temp": "Maximum temperature"
+            "max_temp": "Maximum temperature",
+            "heater_power": "Heater power"
           },
           "data_description": {
             "name": "Friendly name for this thermostat",
@@ -151,7 +152,8 @@
             "hot_tolerance": "Temperature band above target before turning off",
             "min_cycle_duration": "Minimum time between on/off cycles (optional)",
             "min_temp": "Minimum set temperature (optional)",
-            "max_temp": "Maximum set temperature (optional)"
+            "max_temp": "Maximum set temperature (optional)",
+            "heater_power": "Used to check that a start fits under the red zone. Empty: the expected power of the Bestiarium device of this switch, else 2000 W"
           }
         },
         "presets": {
