@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -240,13 +240,42 @@ class ThermostatControl:
         return self.expected_on and bool(self.switch_is_on() or self.starting(now))
 
     def starting(self, now: datetime) -> bool:
-        """Return whether the switch was just told to turn on and is not on yet."""
-        return bool(
+        """
+        Return whether a first start is under way: told on, not on, unchanged since.
+
+        A switch that changed since the command (on, then turned off by the
+        load protection) is no start under way, nor is one that did not take
+        its first attempt: it holds no other start back.
+        """
+        if not (
             self.expected_on
-            and not self.switch_is_on()
+            and self._tries <= 1
             and self._last_command
             and self._last_command[1]
             and now - self._last_command[0] < ATTEMPT_INTERVAL
+        ):
+            return False
+        state = self._hass.states.get(self.switch)
+        return (
+            state is not None
+            and state.state != STATE_ON
+            and state.last_changed <= self._last_command[0]
+        )
+
+    def turned_off_by_another(self) -> bool:
+        """
+        Return whether the switch, wanted on, was turned off after the last command.
+
+        The load protection of the devices (or a person) did it: no failed
+        attempt; a new start has to fit again.
+        """
+        if not (self.expected_on and self._last_command and self._last_command[1]):
+            return False
+        state = self._hass.states.get(self.switch)
+        return (
+            state is not None
+            and state.state == STATE_OFF
+            and state.last_changed > self._last_command[0]
         )
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
@@ -254,6 +283,14 @@ class ThermostatControl:
         if on != self.expected_on:
             self.expected_on, self.expected_changed_at, self._tries = on, now, 0
             self._keep()
+
+    def wanted(self, now: datetime) -> bool:
+        """Return the state the switch should have now."""
+        return self.expected_on and self.in_rotation(now)
+
+    def overtake(self, now: datetime, *, on: bool) -> None:
+        """Remember a command sent over one still running the other way."""
+        self._last_command = (now, on)
 
     def to_command(self, now: datetime) -> bool | None:
         """
@@ -265,7 +302,7 @@ class ThermostatControl:
         again. Out of attempts the switch is deferred and turned off once.
         """
         actual = self.switch_is_on()
-        wanted = self.expected_on and self.in_rotation(now)
+        wanted = self.wanted(now)
         if actual is None or self.deferred_until is not None:
             return None
         if actual == wanted:

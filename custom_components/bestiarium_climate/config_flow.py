@@ -116,6 +116,27 @@ def actions_schema(saved: Mapping[str, Any]) -> dict[vol.Marker, Any]:
     }
 
 
+def switch_error(
+    hass: HomeAssistant, switch: str, mode: ClimateMode, *, besides: str | None
+) -> str | None:
+    """
+    Return why the switch cannot serve a thermostat of the mode, or None.
+
+    One switch, one thermostat (any switch); a virtual switch needs the
+    action of the thermostat's mode.
+    """
+    if thermostats_of(hass, switch, besides=besides):
+        return "switch_taken"
+    entity = er.async_get(hass).async_get(switch)
+    if entity is None or entity.platform != DOMAIN:
+        return None
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        subentry = entry.subentries.get(entity.unique_id)
+        if subentry and not subentry.data.get(ACTION_OF_MODE[mode]):
+            return "switch_has_no_action"
+    return None
+
+
 async def async_action_errors(
     hass: HomeAssistant, user_input: dict[str, Any]
 ) -> dict[str, str]:
@@ -436,23 +457,13 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
         return self.source == "user"
 
     def _switch_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
-        """
-        Return an error if the switch cannot serve this thermostat.
-
-        One switch, one thermostat (any switch); a virtual switch needs the
-        action of the thermostat's mode.
-        """
-        switch = user_input[CONF_TARGET_SWITCH]
+        """Return an error if the switch cannot serve this thermostat."""
         mode = ClimateMode(user_input.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
         besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
-        if thermostats_of(self.hass, switch, besides=besides):
-            return {CONF_TARGET_SWITCH: "switch_taken"}
-        entity = er.async_get(self.hass).async_get(switch)
-        if entity is None or entity.platform != DOMAIN:
-            return {}
-        subentry = self._get_entry().subentries.get(entity.unique_id)
-        if subentry and not subentry.data.get(ACTION_OF_MODE[mode]):
-            return {CONF_TARGET_SWITCH: "switch_has_no_action"}
+        if error := switch_error(
+            self.hass, user_input[CONF_TARGET_SWITCH], mode, besides=besides
+        ):
+            return {CONF_TARGET_SWITCH: error}
         return {}
 
     async def async_step_user(

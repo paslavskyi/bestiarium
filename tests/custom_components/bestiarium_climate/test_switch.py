@@ -29,7 +29,10 @@ from custom_components.bestiarium_climate.const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
 )
-from custom_components.bestiarium_climate.repairs import InvalidActionRepairFlow
+from custom_components.bestiarium_climate.repairs import (
+    ActionsRepairFlow,
+    SharedSwitchRepairFlow,
+)
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
@@ -304,7 +307,7 @@ async def test_an_invalid_saved_action_is_a_repair(
     assert issue is not None
     assert issue.is_fixable
 
-    flow = InvalidActionRepairFlow(issue.data)
+    flow = ActionsRepairFlow(issue.data)
     flow.hass = hass
     result = await flow.async_step_init(
         {
@@ -364,3 +367,53 @@ async def test_the_options_do_not_reload_the_entry(
     await hass.async_block_till_done()
 
     assert hass.data[DOMAIN][entry.entry_id] is coordinator
+
+
+async def test_a_shared_switch_is_fixed_in_its_form(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """B7: the fix gives the second thermostat its own switch; nothing ran meanwhile."""
+    hass.states.async_set("switch.other", "off")
+    entry = await setup(
+        _switch(),
+        _thermostat("Heater", ClimateMode.HEATING),
+        _thermostat("Second", ClimateMode.HEATING),
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, f"switch_shared_{SWITCH}")
+    assert issue.is_fixable
+    assert services["heat"] == services["off"] == []
+
+    flow = SharedSwitchRepairFlow(issue.data)
+    flow.hass = hass
+    refused = await flow.async_step_init({"Second": SWITCH})
+    assert refused["errors"] == {"Second": "switch_taken"}
+    result = await flow.async_step_init({"Second": "switch.other"})
+    await hass.async_block_till_done()
+
+    assert result["type"] == "create_entry"
+    assert entry.subentries["Second"].data["target_switch"] == "switch.other"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, f"switch_shared_{SWITCH}") is None
+
+
+async def test_a_cooling_switch_that_now_heats_is_fixed_in_its_form(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """B7: the fix removes the heating action; the switch cools; the issue goes."""
+    entry = await setup(_switch(mode=ClimateMode.COOLING), minor_version=1)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "switch_now_heats_switch_01")
+    assert issue.is_fixable
+
+    flow = ActionsRepairFlow(issue.data)
+    flow.hass = hass
+    await flow.async_step_init(
+        {
+            "cooling_action": [{"action": "test.cool"}],
+            "off_action": [{"action": "test.off"}],
+        }
+    )
+    await hass.async_block_till_done()
+
+    assert "heating_action" not in entry.subentries["switch_01"].data
+    assert (
+        ir.async_get(hass).async_get_issue(DOMAIN, "switch_now_heats_switch_01") is None
+    )

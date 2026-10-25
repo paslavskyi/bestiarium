@@ -121,7 +121,11 @@ async def async_setup_entry(
                 severity=ir.IssueSeverity.ERROR,
                 translation_key=ISSUE_INVALID_ACTION,
                 translation_placeholders={"switch": subentry.title, "error": str(err)},
-                data={"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+                data={
+                    "entry_id": entry.entry_id,
+                    "subentry_id": subentry.subentry_id,
+                    "error": str(err),
+                },
             )
             continue
         ir.async_delete_issue(hass, DOMAIN, issue_id)

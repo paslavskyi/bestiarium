@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from .const import SIGNAL_MODES_RENAMED
 
@@ -46,6 +46,8 @@ class BestiariumModeSelect(SelectEntity, RestoreEntity):
         self._attr_name = "Bestiarium Mode"
         self._attr_icon = DEFAULT_ICON
         self._current_option: str | None = None
+        # The new name of the current mode, renamed in the form, until the reload
+        self._renamed_to: str | None = None
         self._options_data: list[dict[str, str]] = entry.data.get(CONF_OPTIONS, [])
 
     @property
@@ -71,35 +73,36 @@ class BestiariumModeSelect(SelectEntity, RestoreEntity):
         self, renamed: dict[str, str], _removed: list[str]
     ) -> None:
         """
-        Follow the rename of the current mode before the entry reloads.
+        Remember the new name of the current mode for the reload that follows.
 
-        The reload restores the state the select had: renamed here, the home
-        keeps its mode instead of falling to the first one.
+        No state is written: the devices would see a change of mode and apply
+        it. The reload restores the new name from the extra data; the select
+        goes old → unavailable → new, which the devices take as no change.
         """
         if self._current_option in renamed:
-            self._options_data = [
-                {**opt, CONF_NAME: renamed.get(opt[CONF_NAME], opt[CONF_NAME])}
-                for opt in self._options_data
-            ]
-            self._current_option = renamed[self._current_option]
-            self.async_write_ha_state()
+            self._renamed_to = renamed[self._current_option]
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        """Keep the current mode, under its new name after a rename."""
+        return RestoredExtraData(
+            {"current_option": self._renamed_to or self._current_option}
+        )
 
     async def async_added_to_hass(self) -> None:
-        """When entity is added to hass."""
+        """Restore the current mode; the first one if it no longer exists."""
         await super().async_added_to_hass()
         self.async_on_remove(
             async_dispatcher_connect(
                 self.hass, SIGNAL_MODES_RENAMED, self._async_modes_renamed
             )
         )
-        # Restore state if available
-        if (last_state := await self.async_get_last_state()) and last_state.state:
-            # Only restore if the option still exists
-            if last_state.state in self.options:
-                self._current_option = last_state.state
-            elif self.options:
-                # If restored option no longer exists, default to first option
-                self._current_option = self.options[0]
+        last: str | None = None
+        if extra := await self.async_get_last_extra_data():
+            last = extra.as_dict().get("current_option")
+        elif last_state := await self.async_get_last_state():
+            last = last_state.state
+        if last in self.options:
+            self._current_option = last
         elif self.options:
-            # If no previous state and we have options, default to first
             self._current_option = self.options[0]

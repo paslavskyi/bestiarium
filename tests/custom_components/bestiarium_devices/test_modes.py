@@ -212,10 +212,16 @@ async def test_the_current_mode_renamed_stays_current(
     )
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_1"})
     result = await flow.async_configure(result["flow_id"], {"name": "Turbo"})
+    applied: list[dict] = []
+    hass.bus.async_listen(EVENT_MODE_APPLIED, lambda event: applied.append(event.data))
+    relays.calls.clear()
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "complete"})
     await hass.async_block_till_done()
 
     assert hass.states.get(select).state == "Turbo"
+    # Review 17, B4: a rename is no change of mode: nothing is applied
+    assert applied == []
+    assert relays.calls == []
 
 
 async def test_a_mode_name_is_unique(hass: HomeAssistant) -> None:

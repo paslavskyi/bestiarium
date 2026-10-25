@@ -96,7 +96,7 @@ async def async_migrate_entry(
                 subentry.subentry_type == SUBENTRY_TYPE_SWITCH
                 and "mode" in subentry.data
             ):
-                _report_cooling_switch_now_heats(hass, subentry)
+                _report_cooling_switch_now_heats(hass, entry, subentry)
                 data = {k: v for k, v in subentry.data.items() if k != "mode"}
                 hass.config_entries.async_update_subentry(entry, subentry, data=data)
         hass.config_entries.async_update_entry(entry, minor_version=2)
@@ -104,7 +104,7 @@ async def async_migrate_entry(
 
 
 def _report_cooling_switch_now_heats(
-    hass: HomeAssistant, subentry: ConfigSubentry
+    hass: HomeAssistant, entry: BestiariumClimateConfigEntry, subentry: ConfigSubentry
 ) -> None:
     """
     Tell that a cooling switch with a heating action, without thermostat, heats.
@@ -124,10 +124,11 @@ def _report_cooling_switch_now_heats(
             hass,
             DOMAIN,
             f"{ISSUE_SWITCH_NOW_HEATS}_{subentry.subentry_id}",
-            is_fixable=False,
+            is_fixable=True,
             severity=ir.IssueSeverity.WARNING,
             translation_key=ISSUE_SWITCH_NOW_HEATS,
             translation_placeholders={"switch": subentry.title},
+            data={"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
         )
 
 
@@ -138,9 +139,9 @@ async def async_unload_entry(
     """Unload a config entry."""
     LOGGER.debug("Unloading Bestiarium Climate entry %s", entry.entry_id)
 
-    hass.data[DOMAIN][entry.entry_id].stop()
-
+    # The platforms first: no timer is set on a stopped coordinator, and no
+    # two coordinators control the same switches across a reload
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        hass.data[DOMAIN].pop(entry.entry_id).stop()
     return unload_ok

@@ -156,7 +156,7 @@ Class: `BestiariumModeSelect(SelectEntity, RestoreEntity)`
 - **Icon**: always `mdi:home` (before DEV-008 stage B it changed with the mode)
 - **No extra attributes** (DEV-008 stage B, [necessity](concepts/necessity.md)): `description`, `icon` and `options_metadata` repeated the form
 - **Migration 1.2** strips each stored mode to its name
-- **A renamed current mode stays current**: the select follows the rename signal before the entry reloads, so the reload restores the new name instead of falling to the first mode
+- **A renamed current mode stays current**: the select remembers the new name from the rename signal as its extra restore data, without writing a state (the devices would take a written one for a change of mode and apply it); the reload restores the new name instead of falling to the first mode
 - **Names are unique** (`name_exists` in the add and edit forms): two modes of one name would merge the devices' priorities
 
 ### Select Action

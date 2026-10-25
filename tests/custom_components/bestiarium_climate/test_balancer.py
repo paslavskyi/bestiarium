@@ -697,3 +697,102 @@ async def test_heater_power_from_its_bestiarium_device(floors: Floors) -> None:
     await floors.setup(zones=True, settle=False)
 
     assert floors.on() == {"floor_1"}
+
+
+async def test_a_protection_off_is_a_new_start_that_must_fit(floors: Floors) -> None:
+    """B1: started, then turned off by the protection: in green again only if it fits."""
+    await floors.setup(capacity=1, zones=True)
+    assert floors.on() == {"floor_1"}
+
+    floors.zone("red")
+    floors.hass.states.async_set("switch.floor_1", STATE_OFF)
+    await floors.tick(5, step=5)
+    floors.zone("pause")
+    await floors.tick(30, step=10)
+    floors.load(3600)  # 3600 + 2000 > 4500: it does not fit
+    floors.zone("green")
+    calls = len(floors.calls)
+    await floors.tick(2 * MINUTE, step=10)
+
+    assert ("turn_on", "floor_1") not in floors.calls[calls:]
+    assert floors.state("floor_1") == "normal"
+
+    floors.load(1000)
+    await floors.tick(MINUTE, step=10)
+    assert floors.on() == {"floor_1"}
+
+
+async def test_a_stuck_switch_does_not_close_the_starts(floors: Floors) -> None:
+    """B2: a switch that does not take its start holds the others one attempt only."""
+    floors.stuck.add("floor_1")
+    await floors.setup(zones=True, settle=False)
+
+    await floors.tick(2 * MINUTE, step=10)
+
+    assert "floor_2" in floors.on()
+
+
+async def test_a_changed_wish_overtakes_a_running_command(floors: Floors) -> None:
+    """B3: "off" while the "on" still runs is sent at once, not in a minute."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def slow_on() -> None:
+        if ("turn_off", "floor_1") not in floors.calls:
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = slow_on
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_1"), "hvac_mode": "off"},
+        blocking=True,
+    )
+
+    assert ("turn_off", "floor_1") in floors.calls
+    released.set()
+    await setup
+
+
+async def test_the_zone_by_the_devices_rule(floors: Floors) -> None:
+    """B5: red on wins over a sensor that is unavailable, as in the devices."""
+    await floors.setup(capacity=3, zones=True)
+    floors.zone("red")
+    floors.hass.states.async_set("binary_sensor.power_load_yellow", STATE_UNAVAILABLE)
+    await floors.tick(5, step=5)
+
+    assert len(floors.on()) < 3
+
+
+async def test_zone_sensors_created_later_are_followed(floors: Floors) -> None:
+    """B5: the load limits configured on a running system: the zones count at once."""
+    await floors.setup(capacity=3)
+    assert floors.on() == set(FLOORS)
+
+    registry = er.async_get(floors.hass)
+    for zone in ZONES:
+        registry.async_get_or_create(
+            "binary_sensor",
+            "bestiarium_mode",
+            f"power_load_{zone}",
+            suggested_object_id=f"power_load_{zone}",
+        )
+    await floors.hass.async_block_till_done()
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+
+    assert len(floors.on()) == 2
+
+
+async def test_nothing_runs_after_the_unload(floors: Floors) -> None:
+    """B8: the platforms go first, then the coordinator: no command after it."""
+    await floors.setup()
+    await floors.hass.config_entries.async_unload(floors.entry.entry_id)
+    floors.calls.clear()
+
+    await floors.tick(2 * MINUTE)
+
+    assert floors.calls == []

@@ -154,9 +154,8 @@ class ClimateMode(StrEnum):
 
 ### Unload (`async_unload_entry`)
 
-1. Stops the `BalancingCoordinator`
-2. Unloads platforms
-3. Removes coordinator from `hass.data`
+1. Unloads platforms
+2. Then removes the coordinator from `hass.data` and stops it: no timer is set on a stopped coordinator, and no two coordinators control the same switches across a reload (review 17, B8)
 
 Each config entry gets its own coordinator (unlike `bestiarium_devices` which shares one).
 
@@ -211,9 +210,9 @@ Class: `VirtualSwitch(SwitchEntity)`
 ### Key Behavior
 
 - **Actions**: each is a full HA script sequence (actions, conditions, delays), run by HA's script machinery (`helpers.script.Script`, mode `restart`), validated at setup as HA validates a script. A command stops the sequence of the other command still running. The command waits for its sequence to finish: keep delays in the actions short, the balancer waits too. An action that fails fails the command (`HomeAssistantError`); the balancer counts it as an attempt.
-- **Turn on**: the heating or the cooling sequence by the **mode of the thermostat** whose `target_switch` is this switch (`thermostats_of`). Without a thermostat: heating if it has a heating action, else cooling. Several thermostats on one switch (only possible in a configuration made before DEV-008 stage B; the forms now refuse it): the command fails with `switch_shared`, the balancer leaves those thermostats out, and the Repairs issue `switch_shared` tells to give each its own switch.
+- **Turn on**: the heating or the cooling sequence by the **mode of the thermostat** whose `target_switch` is this switch (`thermostats_of`). Without a thermostat: heating if it has a heating action, else cooling. Several thermostats on one switch (only possible in a configuration made before DEV-008 stage B; the forms now refuse it): the command fails with `switch_shared`, the balancer leaves those thermostats out (no command, no attempt; the set of shared switches is read every cycle), and the fixable Repairs issue `switch_shared` asks another switch for each thermostat but the first, checked as in the thermostat's form.
 - **Errors**: whatever fails in a sequence fails the command as a `HomeAssistantError` (`action_failed`); the balancer counts it as an attempt. A saved sequence HA no longer accepts (an integration it used removed) leaves that switch out at setup with the fixable Repairs issue `invalid_action`, whose fix shows the switch's actions; the other switches are set up.
-- **Migration 1.2** turned a switch's own "cooling" into "from the thermostat": a cooling switch with a heating action and no thermostat now heats — the Repairs issue `switch_now_heats` says so (no silent change); it goes once the switch has a thermostat or no heating action.
+- **Migration 1.2** turned a switch's own "cooling" into "from the thermostat": a cooling switch with a heating action and no thermostat now heats — the fixable Repairs issue `switch_now_heats` says so (no silent change) and shows the switch's actions to keep or remove the heating one; it goes once the switch has a thermostat or no heating action.
 - **Turn off**: the off sequence
 - **State**: from the power sensor — on at or above `min_power`; on stays on down to `min_power × (1 − power_hysteresis_percent / 100)`. A change is shown only once it has lasted `power_delay_seconds` (a shorter dip or spike is not shown).
 - **No power data** (the sensor unavailable, unknown, missing or not a number) for `power_tolerance_seconds` (60 s): the switch is **unavailable**, not off; a shorter dropout is silent; data back → shown at once. Once HA runs, one `info` when the data goes and when it is back (none at the start). The balancer sees "Switch unavailable" after its own tolerance.
@@ -275,15 +274,15 @@ One set for all thermostats of the entry (the owner's choice), defaults: `attemp
 
 ### Balance Cycle (`async_request_balance`: every 60 s, on a thermostat's change, a capacity change, a zone change and a control's new state)
 
-A request runs the cycle at once; one asked for during a cycle makes one more after it. The cycle never waits for a switch: each command is its own task, one at a time per switch, so a slow switch (an IR remote) holds back neither the others nor the next decisions, and a switch's sequence may call a climate service. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second.
+A request runs the cycle at once; one asked for during a cycle makes one more after it. The cycle never waits for a switch: each command is its own task, so a slow switch (an IR remote) holds back neither the others nor the next decisions, and a switch's sequence may call a climate service. A command is not sent twice while it runs; one the other way overtakes it at once ("off" cancels a running "on" sequence of a virtual switch). Each command's end asks for a cycle, so what was wanted meanwhile is decided then. A control's new state (a problem confirmed or over, a deferral) runs a cycle at once, so the freed place goes to another thermostat in the same second.
 
 ### Load zones (the owner's rules, DEV-008 review 13)
 
-Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It reads the four zone sensors, found by their unique_id `power_load_{zone}` in `bestiarium_mode` (the whole contract between the two, [necessity](concepts/necessity.md) refinement 5): the one on is the zone; all four off and available is the pause; one unavailable is no data; none registered (no load limits) is "none", treated as green.
+Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It reads the four zone sensors, found by their unique_id `power_load_{zone}` in `bestiarium_mode` (the whole contract between the two, [necessity](concepts/necessity.md) refinement 5): by the rule of the devices' balancer: the highest zone whose sensor is on; none on while green is available (off) is the pause; otherwise no data; none registered (no load limits) is "none" (only the capacity). It follows the sensors created or renamed later (the entity registry).
 
 | Zone | Climate |
 |---|---|
-| green | the capacity applies; rotation; heaters start **one at a time** (the next a step of 10 s later, once the load shows the last) and **only if it fits**: load + heater power ≤ the red threshold — the rule of the devices' green strategy (DEV-006) |
+| green | the capacity applies; rotation; heaters start **one at a time** (the next a step of 10 s later, once the last has answered its first attempt; a switch that does not answer holds no other start longer) and **only if it fits**: load + heater power ≤ the red threshold — the rule of the devices' green strategy (DEV-006) |
 | no load limits | the capacity and the rotation only |
 | yellow | the ones heating go on; a rotation turns the one going out off but starts no other; no new starts |
 | pause, no data, overload | nothing starts and nothing rotates; the ones heating go on (the overload's emergency queue of the devices turns off what it must) |
@@ -291,7 +290,7 @@ Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It
 
 **The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device whose relay is the thermostat's switch (its entry's `switch_entity_id`, the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. A start that does not fit waits, without a notification; a debug line tells the numbers.
 
-Out of green, a switch wanted on but found off (the devices' load protection turned it off) is wanted off: it is no failed attempt and is not turned on again until green. A thermostat that stops wanting heat (idle, off) is turned off in every zone. The capacity entity (FR-019: an automation lowering it in red) stays a finer setting; the rules above work without it.
+A switch wanted on that turned off after the balancer's command (the devices' load protection, or a person) is no failed attempt: it is wanted off, and a new start has to fit again (review 17, B1). Out of green, a switch wanted on but found off (the devices' load protection turned it off) is wanted off: it is no failed attempt and is not turned on again until green. A thermostat that stops wanting heat (idle, off) is turned off in every zone. The capacity entity (FR-019: an automation lowering it in red) stays a finer setting; the rules above work without it.
 
 1. **Allocate.** The working thermostats are those in the rotation that want heat or cold. Every other one is not wanted on. If the capacity is short (the normal state of a home that needs Bestiarium Climate), the ones that worked least go first: working-time coefficient ascending (time on / minimum working time, the thermostat's own or the entry's), then the temperature difference descending. In a deficit a change fires `bestiarium_climate_device_rotated_in` / `_out`.
 2. **Sync.** Each switch gets the state wanted (`ThermostatControl.to_command`); a command HA refuses counts as an attempt and the cycle goes on with the other switches — one switch never stops the others. The same command is repeated at most once a cycle; a new wanted state (the thermostat off and back to heat) is sent at once and starts the count of attempts again.
@@ -317,7 +316,7 @@ Coverage:
 - Thermostat subentry flow: basic and presets steps
 - Validation errors: `invalid_capacity`, `name_required`, `required`, `invalid_min_power`, `heating_or_cooling_required`, `invalid_action`, `needed_by_thermostat`, `switch_taken`, `switch_has_no_action`
 - Exceptions: `switch_shared`, `action_failed`, `no_action`
-- Repairs: `switch_shared`, `switch_now_heats`, `invalid_action` (fixable: the switch's actions)
+- Repairs, all fixable: `switch_shared` (another switch for each extra thermostat), `switch_now_heats` and `invalid_action` (the switch's actions)
 - `strings.json` removed: the translations are the only source of the texts
 - Abort reasons: `reconfigure_successful` — passed explicitly to `async_update_and_abort` in the entry and both subentry reconfigure flows. The explicit `reason="reconfigure_successful"` makes HA show this integration's translated message; without it HA uses the core text, which has no Ukrainian translation yet.
 - Entity names: `Capacity` (number entity)

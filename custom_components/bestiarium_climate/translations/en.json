@@ -212,11 +212,46 @@
   "issues": {
     "switch_shared": {
       "title": "Several thermostats on one switch",
-      "description": "Several Bestiarium Climate thermostats control {switch}. One switch serves one thermostat: until each has its own switch, these thermostats are left out of the balancing. Change the target switch of all but one of them."
+      "description": "Several Bestiarium Climate thermostats control {switch}. One switch serves one thermostat: until each has its own switch, these thermostats are left out of the balancing. Change the target switch of all but one of them.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "A switch of its own for each thermostat",
+            "description": "{switch} is controlled by several thermostats. Choose another switch for each one below; the first keeps {switch}."
+          }
+        },
+        "error": {
+          "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
+          "switch_has_no_action": "This virtual switch has no action for this mode"
+        },
+        "abort": {
+          "switch_not_shared": "The switch is no longer shared"
+        }
+      }
     },
     "switch_now_heats": {
       "title": "Virtual switch {switch} now heats",
-      "description": "{switch} was set to cooling, has a heating action and no thermostat. A virtual switch now takes heating or cooling from its thermostat; without one it heats. Remove its heating action, or give it a cooling thermostat."
+      "description": "{switch} was set to cooling, has a heating action and no thermostat. A virtual switch now takes heating or cooling from its thermostat; without one it heats. Remove its heating action, or give it a cooling thermostat.",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Actions of {switch}",
+            "description": "Without a thermostat {switch} now heats. Remove its heating action to keep it cooling, or keep it to let it heat.",
+            "data": {
+              "heating_action": "Heating action",
+              "cooling_action": "Cooling action",
+              "off_action": "Off action"
+            }
+          }
+        },
+        "error": {
+          "heating_or_cooling_required": "Give a heating or a cooling action",
+          "invalid_action": "The action is not valid"
+        },
+        "abort": {
+          "switch_removed": "The switch is removed"
+        }
+      }
     },
     "invalid_action": {
       "title": "Virtual switch {switch}: an action is not valid",

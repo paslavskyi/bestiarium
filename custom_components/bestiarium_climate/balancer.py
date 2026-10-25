@@ -11,12 +11,13 @@ from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
 from homeassistant.components.climate import HVACAction
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import callback
+from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 from homeassistant.helpers.event import (
     async_call_later,
     async_track_state_change_event,
@@ -98,11 +99,15 @@ class BalancingCoordinator:
         # One cycle at a time; a request during one makes one more after it
         self._cycling = False
         self._pending = False
-        # The switches whose command is under way: one command at a time each
-        self._sending: set[str] = set()
+        # The command under way of each switch (on or off)
+        self._sending: dict[str, bool] = {}
         self._red_off_at: datetime | None = None
         self._red_timer: CALLBACK_TYPE | None = None
+        self._zone_ids: list[str] = []
+        self._zone_unsubscribe: CALLBACK_TYPE | None = None
         self._started_at: datetime | None = None
+        # In green whether a start may go in this cycle (one at a time)
+        self._gate_open = True
         self._start_timer: CALLBACK_TYPE | None = None
 
     async def async_load(self) -> None:
@@ -125,7 +130,7 @@ class BalancingCoordinator:
 
     def start(self) -> None:
         """Follow the switches and the zones; balance every minute and on changes."""
-        self._report_shared_switches()
+        self._report_shared_switches(force=True)
         for control in self.controls.values():
             control.async_start()
             self._states[control.subentry_id] = control.state
@@ -136,14 +141,12 @@ class BalancingCoordinator:
                     self._control_changed(control),
                 )
             )
-        if sensors := list(self._zone_sensors().values()):
-            self._unsubscribe.append(
-                async_track_state_change_event(
-                    self._hass,
-                    sensors,
-                    callback(lambda _event: self.async_request_balance()),
-                )
+        self._follow_zones()
+        self._unsubscribe.append(
+            self._hass.bus.async_listen(
+                EVENT_ENTITY_REGISTRY_UPDATED, self._on_registry_updated
             )
+        )
         self._unsubscribe.append(
             async_track_time_interval(
                 self._hass,
@@ -156,6 +159,9 @@ class BalancingCoordinator:
         """Stop balancing and following."""
         while self._unsubscribe:
             self._unsubscribe.pop()()
+        if self._zone_unsubscribe is not None:
+            self._zone_unsubscribe()
+            self._zone_unsubscribe = None
         self._cancel_red_timer()
         if self._start_timer is not None:
             self._start_timer()
@@ -163,14 +169,36 @@ class BalancingCoordinator:
         for control in self.controls.values():
             control.async_stop()
 
-    def _report_shared_switches(self) -> None:
+    def _follow_zones(self) -> None:
+        """Follow the zone sensors there are now, by their current entity_ids."""
+        if self._zone_unsubscribe is not None:
+            self._zone_unsubscribe()
+        self._zone_ids = sorted(self._zone_sensors().values())
+        self._zone_unsubscribe = async_track_state_change_event(
+            self._hass,
+            self._zone_ids,
+            callback(lambda _event: self.async_request_balance()),
+        )
+
+    @callback
+    def _on_registry_updated(self, _event: Event) -> None:
+        """Follow a zone sensor created, renamed or removed; decide again."""
+        if sorted(self._zone_sensors().values()) != self._zone_ids:
+            self._follow_zones()
+            self.async_request_balance()
+
+    def _report_shared_switches(self, *, force: bool = False) -> None:
         """
         One switch, one thermostat: a shared switch is a setting to fix (Repairs).
 
-        Its thermostats are left out of the balancing until it is fixed; a
-        configuration made before DEV-008 stage B may have one.
+        Its thermostats are left out of the balancing (no command, no attempt)
+        until it is fixed; a configuration made before DEV-008 stage B may
+        have one. Read every cycle: another entry may share or free it.
         """
-        self._shared = shared_switches(self._hass)
+        shared = shared_switches(self._hass)
+        if shared == self._shared and not force:
+            return
+        self._shared = shared
         for control in self.controls.values():
             issue_id = f"{ISSUE_SWITCH_SHARED}_{control.switch}"
             if control.switch in self._shared:
@@ -178,10 +206,11 @@ class BalancingCoordinator:
                     self._hass,
                     DOMAIN,
                     issue_id,
-                    is_fixable=False,
+                    is_fixable=True,
                     severity=ir.IssueSeverity.WARNING,
                     translation_key=ISSUE_SWITCH_SHARED,
                     translation_placeholders={"switch": control.switch},
+                    data={"switch": control.switch},
                 )
             else:
                 ir.async_delete_issue(self._hass, DOMAIN, issue_id)
@@ -220,13 +249,18 @@ class BalancingCoordinator:
 
     def _cycle(self, now: datetime) -> None:
         """Allocate the capacity by the zone, then send the switches."""
+        self._report_shared_switches()
         self._allocate(self._thermostats(), now, self._zone())
         for control in self.controls.values():
-            if control.switch in self._sending:
+            if control.switch in self._shared:
                 continue
-            if (on := control.to_command(now)) is None:
+            running = self._sending.get(control.switch)
+            if running is not None and running is not (on := control.wanted(now)):
+                # Overtaken at once: "off" cancels a running "on" sequence
+                control.overtake(now, on=on)
+            elif (on := control.to_command(now)) is None or running is on:
                 continue
-            self._sending.add(control.switch)
+            self._sending[control.switch] = on
             self._entry.async_create_task(
                 self._hass, self._async_send(control, on=on), f"switch {control.switch}"
             )
@@ -259,20 +293,23 @@ class BalancingCoordinator:
         }
 
     def _zone(self) -> Zone:
-        """Return the load zone: the sensor that is on; all off is the pause."""
+        """
+        Return the load zone by the rule of the devices' balancer.
+
+        The highest zone whose sensor is on; none on: the pause while green is
+        available (off), no data when it is not. No zone sensor: no limits.
+        """
         sensors = self._zone_sensors()
         if not sensors:
             return Zone.NONE
         states = {zone: self._hass.states.get(e) for zone, e in sensors.items()}
-        if any(
-            state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN)
-            for state in states.values()
-        ):
-            return Zone.NO_DATA
-        return next(
-            (zone for zone, state in states.items() if state.state == STATE_ON),
-            Zone.PAUSE,
-        )
+        for zone, state in states.items():
+            if state is not None and state.state == STATE_ON:
+                return zone
+        green = states.get(Zone.GREEN)
+        if green is not None and green.state == STATE_OFF:
+            return Zone.PAUSE
+        return Zone.NO_DATA
 
     def _thermostats(self) -> dict[str, VirtualThermostat]:
         """Return the thermostats of this entry, by subentry id."""
@@ -325,6 +362,9 @@ class BalancingCoordinator:
         for control in self.controls.values():
             if not any(control is c for _, c in working):
                 control.set_expected(False, now)  # noqa: FBT003
+        for _thermostat, control in working:
+            if control.turned_off_by_another():
+                control.set_expected(False, now)  # noqa: FBT003
         if zone is not Zone.RED:
             self._red_off_at = None
             self._cancel_red_timer()
@@ -341,7 +381,7 @@ class BalancingCoordinator:
         )
         deficit = capacity < len(ranked)
         # In green a start waits for the one under way; no load limits, no wait
-        starting = zone is Zone.NONE or (
+        self._gate_open = zone is Zone.NONE or (
             zone is Zone.GREEN and not any(c.starting(now) for _, c in ranked)
         )
         LOGGER.debug(
@@ -354,17 +394,7 @@ class BalancingCoordinator:
             ],
         )
         for place, (thermostat, control) in enumerate(ranked):
-            if zone in STARTING_ZONES:
-                on = place < capacity
-                if on and not control.expected_on:
-                    # One start at a time, and only if it fits: a safety
-                    # net over the capacity, as the devices' green strategy
-                    on = starting and self._may_start(control, now, zone)
-                    starting = starting and not on
-            elif zone is Zone.YELLOW:
-                on = self._heating(control, now) and place < capacity
-            else:
-                on = self._heating(control, now)
+            on = self._wanted(control, now, zone, has_place=place < capacity)
             if on == control.expected_on:
                 continue
             coefficient = self._working_time_coefficient(thermostat, control, now)
@@ -379,6 +409,25 @@ class BalancingCoordinator:
                         "temperature_diff": round(thermostat.temperature_diff, 2),
                     },
                 )
+
+    def _wanted(
+        self, control: ThermostatControl, now: datetime, zone: Zone, *, has_place: bool
+    ) -> bool:
+        """Return whether the thermostat is wanted on in the zone, given its place."""
+        if zone is Zone.YELLOW:
+            return self._heating(control, now) and has_place
+        if zone not in STARTING_ZONES:
+            return self._heating(control, now)
+        if not has_place or control.expected_on:
+            return has_place
+        # One start at a time, and only if it fits: a safety net over the
+        # capacity, as the devices' green strategy
+        if not self._gate_open:
+            self._start_again(timedelta(seconds=START_STEP_SECONDS))
+            return False
+        on = self._may_start(control, now, zone)
+        self._gate_open = not on
+        return on
 
     def _may_start(self, control: ThermostatControl, now: datetime, zone: Zone) -> bool:
         """
@@ -399,6 +448,7 @@ class BalancingCoordinator:
         power, source = self._heater_power(control)
         if (load_and_threshold := self._load_and_red_threshold()) is None:
             LOGGER.debug("%s does not fit: load or red threshold unknown", control.name)
+            self._start_again(step)
             return False
         load, threshold = load_and_threshold
         if load + power > threshold:
@@ -410,6 +460,7 @@ class BalancingCoordinator:
                 source,
                 threshold,
             )
+            self._start_again(step)
             return False
         self._started_at = now
         self._start_again(step)
@@ -526,4 +577,7 @@ class BalancingCoordinator:
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
         finally:
-            self._sending.discard(control.switch)
+            if self._sending.get(control.switch) is on:
+                del self._sending[control.switch]
+            # What was wanted meanwhile is decided now, not in a minute
+            self.async_request_balance()
