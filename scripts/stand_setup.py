@@ -35,6 +35,7 @@ from scripts.stand.entries import (
     recreate_climate,
     recreate_devices,
     remove_broken_automations,
+    remove_stand_climate,
 )
 from scripts.stand.ha import HomeAssistant, StandError, registry
 from scripts.stand.layout import TOKEN_ENV
@@ -57,6 +58,7 @@ async def setup_stand(url: str, token: str) -> None:
             reg = await registry(ha)
             await ensure_mode(ha, reg)
             reg = await registry(ha)  # with the mode select
+            await remove_stand_climate(ha)
             await recreate_devices(ha, reg)
             await recreate_climate(ha, reg)
             reg = await registry(ha)

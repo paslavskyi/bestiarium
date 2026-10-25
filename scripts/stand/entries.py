@@ -185,11 +185,13 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
         print(f"  added {DEVICES}: {device.mock_id} (priority {device.priority})")
 
 
-async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
+async def remove_stand_climate(ha: HomeAssistant) -> None:
     """
-    Replace the stand's Bestiarium Climate entry and its thermostats.
+    Remove the stand's Bestiarium Climate entry; others are kept.
 
-    The stand's entry is the one with the stand thermostats; others are kept.
+    The stand's entry is the one with the stand thermostats. It goes before
+    the devices are made again: one relay lives in one integration, and an
+    old thermostat on a floor relay would refuse its device.
     """
     stand_thermostats = {name for name, _, _ in THERMOSTATS} | RETIRED_THERMOSTATS
     for entry in await ha.entries(CLIMATE):
@@ -198,6 +200,10 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         )
         if stand_thermostats & {subentry["title"] for subentry in subentries}:
             await ha.remove_entry(entry)
+
+
+async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
+    """Make the stand's Bestiarium Climate entry: air conditioners and thermostats."""
     result = await ha.flow(
         "flow",
         CLIMATE,
