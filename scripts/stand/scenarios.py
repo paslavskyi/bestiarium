@@ -128,6 +128,8 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         lost = reg.mock("switch", f"mock_{ac}_ir_lost")
         return [
             {"condition": "state", "entity_id": lost, "state": "off"},
+            # An air conditioner takes a few seconds to start
+            *([wait(5)] if watts == AC_RUNNING_W else []),
             ac_power(ac, watts),
         ]
 
