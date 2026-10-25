@@ -21,9 +21,11 @@ from .const import (
     CONF_THERMOSTAT_MODE,
     DOMAIN,
     DOMAIN_SWITCH,
+    ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
     ClimateMode,
 )
+from .devices import device_of_relay
 from .switch import ACTIONS, thermostats_of
 
 if TYPE_CHECKING:
@@ -39,6 +41,8 @@ async def async_create_fix_flow(
     """Return the fix of the issue: the shared switch's, or a switch's actions."""
     if issue_id.startswith(ISSUE_SWITCH_SHARED):
         return SharedSwitchRepairFlow(data or {})
+    if issue_id.startswith(ISSUE_SWITCH_IS_DEVICE):
+        return ThermostatSwitchRepairFlow(data or {})
     return ActionsRepairFlow(data or {})
 
 
@@ -133,4 +137,55 @@ class SharedSwitchRepairFlow(RepairsFlow):
             ),
             errors=errors,
             description_placeholders={"switch": self._switch},
+        )
+
+
+class ThermostatSwitchRepairFlow(RepairsFlow):
+    """Give a thermostat on a Bestiarium Devices relay a switch of its own."""
+
+    def __init__(self, data: dict[str, str]) -> None:
+        """Remember the thermostat."""
+        self._entry_id = data["entry_id"]
+        self._subentry_id = data["subentry_id"]
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Ask another switch; save it once valid."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None or self._subentry_id not in entry.subentries:
+            return self.async_abort(reason="thermostat_removed")
+        thermostat = entry.subentries[self._subentry_id]
+        device = device_of_relay(self.hass, thermostat.data[CONF_TARGET_SWITCH])
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            switch = user_input[CONF_TARGET_SWITCH]
+            mode = ClimateMode(
+                thermostat.data.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING)
+            )
+            if error := switch_error(
+                self.hass, switch, mode, besides=thermostat.subentry_id
+            ):
+                errors[CONF_TARGET_SWITCH] = error
+            else:
+                self.hass.config_entries.async_update_subentry(
+                    entry,
+                    thermostat,
+                    data={**thermostat.data, CONF_TARGET_SWITCH: switch},
+                )
+                return self.async_create_entry(data={})
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_TARGET_SWITCH): selector.EntitySelector(
+                        selector.EntitySelectorConfig(domain=DOMAIN_SWITCH)
+                    )
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "thermostat": thermostat.title,
+                "device": device.title if device else "",
+            },
         )

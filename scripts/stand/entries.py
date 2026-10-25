@@ -18,6 +18,8 @@ from .layout import (
     MODES,
     RED_PERCENT,
     RETIRED_TEST_DEVICES,
+    RETIRED_THERMOSTATS,
+    SCRIPT_PREFIX,
     STAND_DEVICES,
     TEST_ENTITY_ID,
     THERMOSTATS,
@@ -189,7 +191,7 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
 
     The stand's entry is the one with the stand thermostats; others are kept.
     """
-    stand_thermostats = {name for name, _, _ in THERMOSTATS}
+    stand_thermostats = {name for name, _, _ in THERMOSTATS} | RETIRED_THERMOSTATS
     for entry in await ha.entries(CLIMATE):
         subentries = await ha.ws(
             "config_entries/subentries/list", entry_id=entry["entry_id"]
@@ -213,7 +215,34 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         entry_id,
         {"attempts": 3, "tolerance_seconds": 60, "hysteresis_seconds": 60},
     )
-    for name, thermometer, socket in THERMOSTATS:
+    # The virtual switch of each air conditioner: IR by the stand's scripts,
+    # its state by the power of the AC's socket
+    for name, _thermometer, socket in THERMOSTATS:
+        await ha.flow(
+            "subentries/flow",
+            [entry_id, "switch"],
+            {
+                "name": f"{name} IR",
+                "power_entity": reg.mock("sensor", f"mock_{socket}_power"),
+                "min_power": 100,
+                "power_tolerance_seconds": 60,
+                "power_hysteresis_percent": 20,
+                "power_delay_seconds": 10,
+                "heating_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_on"}],
+                "off_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_off"}],
+            },
+        )
+    subentries = {
+        subentry["title"]: subentry["subentry_id"]
+        for subentry in await ha.ws("config_entries/subentries/list", entry_id=entry_id)
+    }
+    entities = await ha.ws("config/entity_registry/list")
+    for name, thermometer, _socket in THERMOSTATS:
+        switch = next(
+            e["entity_id"]
+            for e in entities
+            if e["platform"] == CLIMATE and e["unique_id"] == subentries[f"{name} IR"]
+        )
         await ha.flow(
             "subentries/flow",
             [entry_id, "thermostat"],
@@ -222,11 +251,11 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
                 "temperature_sensor": reg.mock(
                     "sensor", f"mock_{thermometer}_temperature"
                 ),
-                "target_switch": reg.mock("switch", f"mock_{socket}"),
+                "target_switch": switch,
                 "thermostat_mode": "heating",
                 "cold_tolerance": 0.3,
                 "hot_tolerance": 0.3,
             },
             {},
         )
-        print(f"  added {CLIMATE} thermostat: {name}")
+        print(f"  added {CLIMATE} thermostat: {name} on {switch}")

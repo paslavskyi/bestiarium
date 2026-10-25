@@ -199,7 +199,7 @@ Two-step flow:
 
 Both steps accumulate into `_options` dict. Reconfigure loads existing subentry data into `_options` before showing forms.
 
-The basic step refuses a switch another thermostat already controls (`switch_taken`: one switch, one thermostat — any switch, not only a virtual one) and a virtual switch of this integration without the action of the thermostat's mode (`switch_has_no_action`).
+The basic step refuses a switch another thermostat already controls (`switch_taken`: one switch, one thermostat — any switch, not only a virtual one), a switch that is the relay of a Bestiarium Devices device (`switch_is_device`, with the device's name: **one relay lives in one integration**, the owner's rule, review 18) and a virtual switch of this integration without the action of the thermostat's mode (`switch_has_no_action`). An existing thermostat on a device relay (configured before) is the fixable Repairs issue `switch_is_device` (its fix: another switch for the thermostat); the balancer leaves it alone meanwhile.
 
 ---
 
@@ -285,10 +285,13 @@ Climate follows the zones of `bestiarium_mode` as the devices' balancer does. It
 | green | the capacity applies; rotation; heaters start **one at a time** (the next a step of 10 s later, once the last has answered its first attempt; a switch that does not answer holds no other start longer) and **only if it fits**: load + heater power ≤ the red threshold — the rule of the devices' green strategy (DEV-006) |
 | no load limits | the capacity and the rotation only |
 | yellow | the ones heating go on; a rotation turns the one going out off but starts no other; no new starts |
-| pause, no data, overload | nothing starts and nothing rotates; the ones heating go on (the overload's emergency queue of the devices turns off what it must) |
+| pause, no data | nothing starts and nothing rotates; the ones heating go on |
+| overload | **all** heaters off at once: they are not in the devices' emergency queue (review 18) |
 | red | no starts; every 5 s one heater goes off, the room that needs it least first (the smallest difference between the target and the temperature) |
 
-**The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device whose relay is the thermostat's switch (its entry's `switch_entity_id`, the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. A start that does not fit waits, without a notification; a debug line tells the numbers.
+**The fit check** (the owner's decision, DEV-008 review 15) is a safety net over the capacity: the rest of the load changes, the capacity does not. The load is the power sensor of `bestiarium_mode` (its entry's `ac_power_sensor`), the threshold the red zone sensor's `red_threshold`; an unknown one does not fit. The heater's power is the "Expected power" of the `bestiarium_devices` device that **powers its virtual switch** — the device whose power sensor (`power_sensor_entity_id`) is the virtual switch's `power_entity`, as the socket of an air conditioner (the sensor by unique_id `<entry_id>_expected_power`); else the thermostat's `heater_power`; else 2000 W, a large heater as in devices. While that device's relay is off (the load protection cut the power) the heater does not start; once the power is back it starts as any other, one at a time and if it fits. The whole contract with Bestiarium Devices is in `devices.py`.
+
+**A power cut is protection, not a fault** (review 18): when the devices' emergency queue cuts an air conditioner's power, its virtual switch reads 0 W and turns off without a command of climate — no failed attempt, no "Not responding" (the rule of B1: a switch that changed after the command). A start that does not fit waits, without a notification; a debug line tells the numbers.
 
 A switch wanted on that turned off after the balancer's command (the devices' load protection, or a person) is no failed attempt: it is wanted off, and a new start has to fit again (review 17, B1). Out of green, a switch wanted on but found off (the devices' load protection turned it off) is wanted off: it is no failed attempt and is not turned on again until green. A thermostat that stops wanting heat (idle, off) is turned off in every zone. The capacity entity (FR-019: an automation lowering it in red) stays a finer setting; the rules above work without it.
 

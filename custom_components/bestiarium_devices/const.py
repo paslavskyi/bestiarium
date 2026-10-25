@@ -13,6 +13,9 @@ LOGGER: Logger = getLogger(__package__)
 
 DOMAIN = "bestiarium_devices"
 DOMAIN_BESTIARIUM_MODE = "bestiarium_mode"
+# One relay lives in one integration: a thermostat's switch is no device relay
+DOMAIN_BESTIARIUM_CLIMATE = "bestiarium_climate"
+CLIMATE_TARGET_SWITCH = "target_switch"
 
 # Config entry data keys
 CONF_DEVICE_TYPE = "device_type"

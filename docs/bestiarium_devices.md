@@ -653,7 +653,7 @@ Translation keys cover:
 
 10. **Missing sensors graceful degradation**: If bestiarium_mode's binary sensors don't exist (AC load limits not configured), the coordinator starts but stays inactive, with the Repairs issue `no_load_zones`. Sensors that appear later (limits configured on a running system) bring it alive at once.
 
-12. **One relay, one device** (`helpers.switch_taken`): the create, reconfigure and Repairs forms refuse a switch another Bestiarium device controls (`switch_taken`); one device with two relays may have two Bestiarium devices. Migration 1.2 uses the same rule.
+12. **One relay, one device** (`helpers.switch_taken`): the create, reconfigure and Repairs forms refuse a switch another Bestiarium device controls (`switch_taken`); one device with two relays may have two Bestiarium devices. Migration 1.2 uses the same rule. **One relay, one integration** (review 18, `helpers.thermostat_of_switch`): they also refuse the switch of a Bestiarium Climate thermostat (`switch_of_thermostat`).
 
 13. **The memories** (`store.py`): `PowerMemory` and `ResponseMemory` are `EntryStore`s — a value per device entry in a Store, saved a little later, forgotten with the entry.
 

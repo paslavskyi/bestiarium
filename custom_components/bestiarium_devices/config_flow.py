@@ -50,6 +50,7 @@ from .helpers import (
     build_priority_number_selector,
     extract_priorities_from_user_input,
     switch_taken,
+    thermostat_of_switch,
     validate_power_sensor,
 )
 from .power_memory import async_get_power_memory
@@ -224,13 +225,22 @@ class RelaySteps:
         self._power_sensor_entity_id = _keep_or_only(
             self._power_sensor_entity_id, power_sensors
         )
-        if len(switches) == 1 and self._switch_taken(switches[0]):
-            return "switch_taken"
+        if len(switches) == 1 and (error := self._switch_error(switches[0])):
+            return error
         return None
 
-    def _switch_taken(self, switch: str) -> bool:
-        """Return whether another device entry controls the switch."""
-        return switch_taken(self.hass, switch, self._entry_id) is not None
+    def _switch_error(self, switch: str) -> str | None:
+        """
+        Return why the switch cannot be this device's relay, or None.
+
+        Another device entry controls it, or it is the switch of a Bestiarium
+        Climate thermostat (one relay lives in one integration).
+        """
+        if switch_taken(self.hass, switch, self._entry_id) is not None:
+            return "switch_taken"
+        if thermostat_of_switch(self.hass, switch) is not None:
+            return "switch_of_thermostat"
+        return None
 
     async def _async_entities_of_device(self) -> FlowResult:
         """Ask for the switch and the sensor only if the device has several."""
@@ -280,8 +290,8 @@ class RelaySteps:
                     errors[CONF_SWITCH_ENTITY_ID] = "required"
                 elif switch_entity_id not in self._switches:
                     errors[CONF_SWITCH_ENTITY_ID] = "invalid_switch"
-                elif self._switch_taken(switch_entity_id):
-                    errors[CONF_SWITCH_ENTITY_ID] = "switch_taken"
+                elif error := self._switch_error(switch_entity_id):
+                    errors[CONF_SWITCH_ENTITY_ID] = error
                 else:
                     self._switch_entity_id = switch_entity_id
 
@@ -440,8 +450,8 @@ class BestiariumDevicesFlowHandler(
 
             if not switch_entity_id:
                 errors[CONF_SWITCH_ENTITY_ID] = "required"
-            elif self._switch_taken(switch_entity_id):
-                errors[CONF_SWITCH_ENTITY_ID] = "switch_taken"
+            elif error := self._switch_error(switch_entity_id):
+                errors[CONF_SWITCH_ENTITY_ID] = error
 
             if not power_sensor_entity_id:
                 errors[CONF_POWER_SENSOR_ENTITY_ID] = "required"

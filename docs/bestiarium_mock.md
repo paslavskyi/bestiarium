@@ -5,7 +5,7 @@
 `bestiarium_mock` (domain `bestiarium_mock`) simulates smart-home devices for
 testing the Bestiarium integrations without hardware. It has no dependencies.
 
-1. **13 mock smart sockets**, one per test scenario. Each socket has a
+1. **16 mock smart sockets**, one per test scenario. Each socket has a
    **fault model** that makes it misbehave like a real cloud socket (ignored
    commands, slow replies, a stale state in HA, short dropouts), chosen with
    a **fault profile**.
@@ -70,8 +70,9 @@ Device names are translated (`device` in the translations, `translation_key`
 | `dead_socket` | Mock Dead Socket | 500 W | Unresponsive | "not responding", deferral |
 | `cooker` | Mock Cooker | 400–4200 W | Reliable | pushes the load to yellow, red, overload |
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
-| `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Climate thermostats (DEV-008) |
+| `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
+| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. Fault profile "Unresponsive": the IR does not reach the AC |
 | `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
 
 ---

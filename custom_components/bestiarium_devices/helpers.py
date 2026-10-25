@@ -8,6 +8,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
+    CLIMATE_TARGET_SWITCH,
     CONF_ALLOWED,
     CONF_DEFAULT_PRIORITY,
     CONF_DEVICE_ID,
@@ -19,6 +20,7 @@ from .const import (
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
     DOMAIN,
+    DOMAIN_BESTIARIUM_CLIMATE,
     DOMAIN_BESTIARIUM_MODE,
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
@@ -173,6 +175,23 @@ def get_current_priority(hass: HomeAssistant, entry: ConfigEntry) -> int:
         return priorities[mode_state.state]
     # No mode (yet, or its select is gone): the device's own default priority
     return priorities.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
+
+
+def thermostat_of_switch(hass: HomeAssistant, switch: str) -> str | None:
+    """
+    Return the name of the Bestiarium Climate thermostat whose switch it is.
+
+    One relay lives in one integration (the owner's rule, DEV-008 review 18).
+    """
+    return next(
+        (
+            subentry.title
+            for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_CLIMATE)
+            for subentry in entry.subentries.values()
+            if subentry.data.get(CLIMATE_TARGET_SWITCH) == switch
+        ),
+        None,
+    )
 
 
 def switch_taken(hass: HomeAssistant, switch: str, entry_id: str | None) -> str | None:

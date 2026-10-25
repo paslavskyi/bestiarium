@@ -38,7 +38,7 @@ Depends on `bestiarium_mode`.
 
 ### bestiarium_mock
 
-Standalone test stand that simulates **12 smart sockets** (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor**, with reading fault profiles for the thermometers and the grid. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
+Standalone test stand that simulates **16 smart sockets** (three of them the power of air conditioners run by Bestiarium Climate through virtual switches) (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor**, with reading fault profiles for the thermometers and the grid. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
 
 ## Installation
 

@@ -86,7 +86,8 @@
       "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
       "name_required": "Device name is required",
       "required": "This field is required",
-      "switch_taken": "This switch is already controlled by another Bestiarium device"
+      "switch_taken": "This switch is already controlled by another Bestiarium device",
+      "switch_of_thermostat": "This switch is the switch of a Bestiarium Climate thermostat: one relay lives in one integration"
     },
     "abort": {
       "not_implemented": "Configuration flow not yet implemented",
@@ -357,7 +358,8 @@
           "invalid_switch": "Invalid switch entity selected",
           "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
           "required": "This field is required",
-          "switch_taken": "This switch is already controlled by another Bestiarium device"
+          "switch_taken": "This switch is already controlled by another Bestiarium device",
+          "switch_of_thermostat": "This switch is the switch of a Bestiarium Climate thermostat: one relay lives in one integration"
         }
       }
     },

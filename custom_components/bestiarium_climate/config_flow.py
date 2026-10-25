@@ -64,6 +64,7 @@ from .const import (
     ClimateMode,
     ControlSettings,
 )
+from .devices import device_of_relay
 from .switch import (
     ACTION_OF_MODE,
     ACTIONS,
@@ -122,11 +123,14 @@ def switch_error(
     """
     Return why the switch cannot serve a thermostat of the mode, or None.
 
-    One switch, one thermostat (any switch); a virtual switch needs the
-    action of the thermostat's mode.
+    One switch, one thermostat (any switch); one relay, one integration (not
+    a Bestiarium Devices relay); a virtual switch needs the action of the
+    thermostat's mode.
     """
     if thermostats_of(hass, switch, besides=besides):
         return "switch_taken"
+    if device_of_relay(hass, switch):
+        return "switch_is_device"
     entity = er.async_get(hass).async_get(switch)
     if entity is None or entity.platform != DOMAIN:
         return None
@@ -450,6 +454,8 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
         """Initialize the flow."""
         super().__init__()
         self._options: dict[str, Any] = {}
+        # The Bestiarium device whose relay the chosen switch is, for the error
+        self._device_name = ""
 
     @property
     def _is_new(self) -> bool:
@@ -458,6 +464,8 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
 
     def _switch_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
         """Return an error if the switch cannot serve this thermostat."""
+        device = device_of_relay(self.hass, user_input[CONF_TARGET_SWITCH])
+        self._device_name = device.title if device else ""
         mode = ClimateMode(user_input.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
         besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
         if error := switch_error(
@@ -654,6 +662,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             step_id="basic",
             data_schema=schema,
             errors=errors,
+            description_placeholders={"device": self._device_name},
         )
 
     async def async_step_presets(

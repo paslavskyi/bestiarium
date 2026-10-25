@@ -139,7 +139,8 @@ async def test_stand_setup_is_repeatable(
     ]
     climate = hass.config_entries.async_entries("bestiarium_climate")
     assert len(climate) == 1
-    assert len(climate[0].subentries) == len(THERMOSTATS)
+    # Each thermostat runs an air conditioner through its own virtual switch
+    assert len(climate[0].subentries) == 2 * len(THERMOSTATS)
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -281,6 +282,7 @@ def test_reset_leaves_always_on_devices_on() -> None:
     assert set(switched["switch.turn_on"]) == {
         "switch.mock_cooker",
         "switch.mock_fridge",
+        *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
 
@@ -289,7 +291,7 @@ def test_stand_climate_is_only_the_stand_entry() -> None:
     """The reset and the dashboard touch the stand's climate entry, no other."""
     reg = Registry(
         devices=[
-            {"name": "Stand floor 1", "config_entries": ["stand"]},
+            {"name": THERMOSTATS[0][0], "config_entries": ["stand"]},
             {"name": "Living room", "config_entries": ["home"]},
         ],
         entities=[

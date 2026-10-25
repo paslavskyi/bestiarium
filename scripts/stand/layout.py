@@ -67,13 +67,25 @@ STAND_DEVICES = (
     StandDevice("floor_heating_1", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_2", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_3", 2000, first_queue=True, thermostat_driven=True),
+    # The power of the air conditioners: always on, in the first queue
+    *(
+        StandDevice(f"ac_{number}", LOAD_PRIORITY_ALWAYS_ON, first_queue=True)
+        for number in range(1, 4)
+    ),
 )
-# Thermostat name, thermometer, floor heating socket
+# One relay lives in one integration (review 18): the floors are only
+# devices; the climate thermostats run air conditioners through virtual
+# switches whose power sensor is the AC's socket.
+# Thermostat name, thermometer, the AC socket
 THERMOSTATS = (
-    ("Stand floor 1", "thermo_1", "floor_heating_1"),
-    ("Stand floor 2", "thermo_2", "floor_heating_2"),
-    ("Stand floor 3", "thermo_3", "floor_heating_3"),
+    ("Stand AC 1", "thermo_1", "ac_1"),
+    ("Stand AC 2", "thermo_2", "ac_2"),
+    ("Stand AC 3", "thermo_3", "ac_3"),
 )
+# The thermostats of the stand before review 18, on the floors
+RETIRED_THERMOSTATS = frozenset({"Stand floor 1", "Stand floor 2", "Stand floor 3"})
+AC_RUNNING_W = 1200
+AC_STANDBY_W = 5
 MODES = ("Grid on", "Night")
 YELLOW_W = 3750  # the yellow threshold: 75 % of 5000 W
 RED_W = 4500  # the red threshold: 90 % of 5000 W

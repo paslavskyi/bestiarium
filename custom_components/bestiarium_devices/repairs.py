@@ -152,8 +152,8 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             power = user_input[CONF_POWER_SENSOR_ENTITY_ID]
-            if self._switch_taken(user_input[CONF_SWITCH_ENTITY_ID]):
-                errors[CONF_SWITCH_ENTITY_ID] = "switch_taken"
+            if error := self._switch_error(user_input[CONF_SWITCH_ENTITY_ID]):
+                errors[CONF_SWITCH_ENTITY_ID] = error
             elif error := validate_power_sensor(self.hass, power):
                 errors[CONF_POWER_SENSOR_ENTITY_ID] = error
             else:

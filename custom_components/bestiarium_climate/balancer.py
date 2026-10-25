@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -32,13 +31,11 @@ from .const import (
     CONF_MIN_WORKING_TIME,
     CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
-    DEVICES_EXPECTED_POWER_UNIQUE_ID,
-    DEVICES_SWITCH,
     DOMAIN,
-    DOMAIN_BESTIARIUM_DEVICES,
     DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
+    ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
     LARGE_HEATER_POWER_W,
     LOGGER,
@@ -55,6 +52,7 @@ from .const import (
     Zone,
 )
 from .control import ThermostatControl, async_get_thermostat_memory
+from .devices import device_of_relay, expected_power, power_device, relay_off
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
@@ -95,6 +93,7 @@ class BalancingCoordinator:
         self.controls: dict[str, ThermostatControl] = {}
         self._states: dict[str, ControlState] = {}
         self._shared: set[str] = set()
+        self._relays: set[str] = set()
         self._unsubscribe: list[CALLBACK_TYPE] = []
         # One cycle at a time; a request during one makes one more after it
         self._cycling = False
@@ -189,31 +188,74 @@ class BalancingCoordinator:
 
     def _report_shared_switches(self, *, force: bool = False) -> None:
         """
-        One switch, one thermostat: a shared switch is a setting to fix (Repairs).
+        Report the switches the balancer must leave alone, as Repairs issues.
 
-        Its thermostats are left out of the balancing (no command, no attempt)
-        until it is fixed; a configuration made before DEV-008 stage B may
-        have one. Read every cycle: another entry may share or free it.
+        One switch, one thermostat: a shared switch. One relay, one
+        integration: a switch that is a Bestiarium Devices relay (the
+        owner's rule, review 18). Their thermostats are left out of the
+        balancing (no command, no attempt) until fixed; a configuration made
+        before DEV-008 stage B may have them. Read every cycle: another entry
+        may share or free a switch.
         """
         shared = shared_switches(self._hass)
-        if shared == self._shared and not force:
+        relays = {
+            control.switch
+            for control in self.controls.values()
+            if device_of_relay(self._hass, control.switch)
+        }
+        if shared == self._shared and relays == self._relays and not force:
             return
-        self._shared = shared
+        self._shared, self._relays = shared, relays
         for control in self.controls.values():
-            issue_id = f"{ISSUE_SWITCH_SHARED}_{control.switch}"
-            if control.switch in self._shared:
-                ir.async_create_issue(
-                    self._hass,
-                    DOMAIN,
-                    issue_id,
-                    is_fixable=True,
-                    severity=ir.IssueSeverity.WARNING,
-                    translation_key=ISSUE_SWITCH_SHARED,
-                    translation_placeholders={"switch": control.switch},
-                    data={"switch": control.switch},
-                )
-            else:
-                ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            self._issue(
+                f"{ISSUE_SWITCH_SHARED}_{control.switch}",
+                ISSUE_SWITCH_SHARED,
+                control.switch in shared,
+                placeholders={"switch": control.switch},
+                data={"switch": control.switch},
+            )
+            device = device_of_relay(self._hass, control.switch)
+            self._issue(
+                f"{ISSUE_SWITCH_IS_DEVICE}_{control.subentry_id}",
+                ISSUE_SWITCH_IS_DEVICE,
+                device is not None,
+                placeholders={
+                    "thermostat": control.name,
+                    "switch": control.switch,
+                    "device": device.title if device else "",
+                },
+                data={
+                    "entry_id": self._entry.entry_id,
+                    "subentry_id": control.subentry_id,
+                },
+            )
+
+    def _issue(
+        self,
+        issue_id: str,
+        key: str,
+        active: bool,  # noqa: FBT001
+        *,
+        placeholders: dict[str, str],
+        data: dict[str, str],
+    ) -> None:
+        if not active:
+            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
+            return
+        ir.async_create_issue(
+            self._hass,
+            DOMAIN,
+            issue_id,
+            is_fixable=True,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key=key,
+            translation_placeholders=placeholders,
+            data=data,
+        )
+
+    def _left_alone(self, control: ThermostatControl) -> bool:
+        """Return whether the switch is shared or a device relay: no command."""
+        return control.switch in self._shared or control.switch in self._relays
 
     def _control_changed(self, control: ThermostatControl) -> CALLBACK_TYPE:
         """Return the listener that rebalances when the control's state changes."""
@@ -252,7 +294,7 @@ class BalancingCoordinator:
         self._report_shared_switches()
         self._allocate(self._thermostats(), now, self._zone())
         for control in self.controls.values():
-            if control.switch in self._shared:
+            if self._left_alone(control):
                 continue
             running = self._sending.get(control.switch)
             if running is not None and running is not (on := control.wanted(now)):
@@ -358,7 +400,7 @@ class BalancingCoordinator:
             (thermostat, control)
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
-            and control.switch not in self._shared
+            and not self._left_alone(control)
             and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
         for control in self.controls.values():
@@ -416,6 +458,9 @@ class BalancingCoordinator:
         self, control: ThermostatControl, now: datetime, zone: Zone, *, has_place: bool
     ) -> bool:
         """Return whether the thermostat is wanted on in the zone, given its place."""
+        if zone is Zone.OVERLOAD:
+            # Not in the devices' emergency queue: climate turns off all at once
+            return False
         if zone is Zone.YELLOW:
             return self._heating(control, now) and has_place
         if zone not in STARTING_ZONES:
@@ -441,9 +486,15 @@ class BalancingCoordinator:
         unknown load or threshold does not fit. Without load limits (no zone)
         only the capacity counts.
         """
+        step = timedelta(seconds=START_STEP_SECONDS)
+        device = power_device(self._hass, control.switch)
+        if device is not None and relay_off(self._hass, device):
+            # The load protection cut its power: it starts once it is back
+            LOGGER.debug("%s waits: the power of %s is off", control.name, device.title)
+            self._start_again(step)
+            return False
         if zone is Zone.NONE:
             return True
-        step = timedelta(seconds=START_STEP_SECONDS)
         if self._started_at is not None and now - self._started_at < step:
             self._start_again(step - (now - self._started_at))
             return False
@@ -484,22 +535,12 @@ class BalancingCoordinator:
         """
         Return the power of the thermostat's heater, and where it comes from.
 
-        The expected power of the bestiarium_devices device whose relay is the
+        The expected power of the Bestiarium device that powers its virtual
         switch; else the power in the thermostat's form; else a large heater.
         """
-        registry = er.async_get(self._hass)
-        for entry in self._hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES):
-            if entry.data.get(DEVICES_SWITCH) != control.switch:
-                continue
-            entity_id = registry.async_get_entity_id(
-                "sensor",
-                DOMAIN_BESTIARIUM_DEVICES,
-                DEVICES_EXPECTED_POWER_UNIQUE_ID.format(entry_id=entry.entry_id),
-            )
-            state = self._hass.states.get(entity_id) if entity_id else None
-            if state is not None:
-                with contextlib.suppress(ValueError):
-                    return float(state.state), "devices"
+        device = power_device(self._hass, control.switch)
+        if device is not None and (power := expected_power(self._hass, device)):
+            return power, "devices"
         if control.heater_power:
             return float(control.heater_power), "thermostat"
         return LARGE_HEATER_POWER_W, "large heater"

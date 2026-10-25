@@ -8,7 +8,11 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
-from homeassistant.config_entries import ConfigEntry, ConfigSubentryData
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigEntryDisabler,
+    ConfigSubentryData,
+)
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
@@ -32,12 +36,14 @@ from custom_components.bestiarium_climate.const import (
 from custom_components.bestiarium_climate.repairs import (
     ActionsRepairFlow,
     SharedSwitchRepairFlow,
+    ThermostatSwitchRepairFlow,
 )
 
 pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 SWITCH = "switch.floor"
 POWER = "sensor.floor_power"
+RELAY = "switch.ac_relay"
 DELAY = 10
 TOLERANCE = 60
 
@@ -417,3 +423,131 @@ async def test_a_cooling_switch_that_now_heats_is_fixed_in_its_form(
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, "switch_now_heats_switch_01") is None
     )
+
+
+async def _relay_powers_the_switch(hass: HomeAssistant, *, on: bool) -> None:
+    """Add the Bestiarium device whose power sensor the virtual switch reads."""
+    hass.states.async_set(RELAY, STATE_ON if on else STATE_OFF)
+    MockConfigEntry(
+        domain="bestiarium_devices",
+        title="AC power",
+        data={"switch_entity_id": RELAY, "power_sensor_entity_id": POWER},
+        disabled_by=ConfigEntryDisabler.USER,
+    ).add_to_hass(hass)
+
+
+async def _heat(hass: HomeAssistant) -> None:
+    hass.states.async_set("sensor.temp", "15")
+    await hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": "climate.heater", "hvac_mode": "heat"},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+
+async def test_no_start_while_the_power_is_cut(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """Review 18: the device powering the AC is off: no start, no attempt; back: start."""
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    _later(hass, 3 * 60)
+    await hass.async_block_till_done()
+
+    assert services["heat"] == []
+    assert hass.states.get("sensor.heater_control_state").state == "normal"
+
+    hass.states.async_set(RELAY, STATE_ON)
+    _later(hass, 4 * 60)
+    await hass.async_block_till_done()
+    assert len(services["heat"]) == 1
+
+
+async def test_a_power_cut_is_no_failed_attempt(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """Review 18: the AC heats, its power is cut (0 W): no attempt, no "unresponsive"."""
+    await _relay_powers_the_switch(hass, on=True)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    assert len(services["heat"]) == 1
+    hass.states.async_set(POWER, "1000")  # the AC runs
+    _later(hass, DELAY + 1)
+    await hass.async_block_till_done()
+    assert _state(hass) == STATE_ON
+
+    hass.states.async_set(RELAY, STATE_OFF)
+    hass.states.async_set(POWER, "0")
+    for minute in range(1, 11):
+        _later(hass, minute * 60)
+        await hass.async_block_till_done()
+
+    state = hass.states.get("sensor.heater_control_state")
+    assert state.state == "normal"
+    assert state.attributes["failed_attempts"] == 0
+    assert len(services["heat"]) == 1
+
+
+async def test_a_device_relay_is_no_thermostat_switch(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """Review 18: one relay lives in one integration: the form refuses it."""
+    hass.states.async_set(RELAY, STATE_OFF)
+    MockConfigEntry(
+        domain="bestiarium_devices",
+        title="Floor 1",
+        data={"switch_entity_id": RELAY},
+        disabled_by=ConfigEntryDisabler.USER,
+    ).add_to_hass(hass)
+    entry = await setup()
+    flow = hass.config_entries.subentries
+    result = await flow.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_THERMOSTAT), context={"source": "user"}
+    )
+    result = await flow.async_configure(
+        result["flow_id"],
+        {
+            "name": "Room",
+            "temperature_sensor": "sensor.temp",
+            "target_switch": RELAY,
+            "thermostat_mode": ClimateMode.HEATING,
+            "cold_tolerance": 0.3,
+            "hot_tolerance": 0.3,
+        },
+    )
+
+    assert result["errors"] == {"target_switch": "switch_is_device"}
+    assert result["description_placeholders"] == {"device": "Floor 1"}
+
+
+async def test_an_old_thermostat_on_a_device_relay_is_a_repair(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """Review 18: an existing one: a fixable issue, left alone, fixed in its form."""
+    hass.states.async_set(RELAY, STATE_OFF)
+    hass.states.async_set("switch.own", STATE_OFF)
+    MockConfigEntry(
+        domain="bestiarium_devices",
+        title="Floor 1",
+        data={"switch_entity_id": RELAY},
+        disabled_by=ConfigEntryDisabler.USER,
+    ).add_to_hass(hass)
+    thermostat = _thermostat("Heater", ClimateMode.HEATING)
+    thermostat["data"] = {**thermostat["data"], "target_switch": RELAY}
+    entry = await setup(thermostat)
+    await _heat(hass)
+
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "switch_is_device_Heater")
+    assert issue is not None
+    assert issue.is_fixable
+    flow = ThermostatSwitchRepairFlow(issue.data)
+    flow.hass = hass
+    result = await flow.async_step_init({"target_switch": "switch.own"})
+    await hass.async_block_till_done()
+
+    assert result["type"] == "create_entry"
+    assert entry.subentries["Heater"].data["target_switch"] == "switch.own"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "switch_is_device_Heater") is None

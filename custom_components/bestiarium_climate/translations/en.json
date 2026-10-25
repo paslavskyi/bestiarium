@@ -173,7 +173,8 @@
         "name_required": "Name is required",
         "required": "This field is required",
         "switch_has_no_action": "This virtual switch has no action for this mode",
-        "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat"
+        "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
+        "switch_is_device": "This switch is the relay of the Bestiarium device {device}: one relay lives in one integration"
       },
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"
@@ -221,7 +222,8 @@
         },
         "error": {
           "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
-          "switch_has_no_action": "This virtual switch has no action for this mode"
+          "switch_has_no_action": "This virtual switch has no action for this mode",
+          "switch_is_device": "This switch is the relay of a Bestiarium device: one relay lives in one integration"
         },
         "abort": {
           "switch_not_shared": "The switch is no longer shared"
@@ -271,6 +273,28 @@
         },
         "abort": {
           "switch_removed": "The switch is removed"
+        }
+      }
+    },
+    "switch_is_device": {
+      "title": "Thermostat {thermostat} controls the relay of {device}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "A switch for {thermostat}",
+            "description": "The switch of {thermostat} is the relay of the Bestiarium device {device}. One relay lives in one integration: until it has another switch, the balancer leaves this thermostat alone. Choose its switch (for an air conditioner: its virtual switch).",
+            "data": {
+              "target_switch": "Target switch"
+            }
+          }
+        },
+        "error": {
+          "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
+          "switch_is_device": "This switch is the relay of a Bestiarium device: one relay lives in one integration",
+          "switch_has_no_action": "This virtual switch has no action for this mode"
+        },
+        "abort": {
+          "thermostat_removed": "The thermostat is removed"
         }
       }
     }

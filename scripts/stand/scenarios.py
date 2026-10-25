@@ -18,7 +18,16 @@ from custom_components.bestiarium_mock.const import (
 )
 
 from .ha import StandError
-from .layout import MODE, RED_W, SCRIPT_PREFIX, STAND_DEVICES, YELLOW_W
+from .layout import (
+    AC_RUNNING_W,
+    AC_STANDBY_W,
+    MODE,
+    RED_W,
+    SCRIPT_PREFIX,
+    STAND_DEVICES,
+    THERMOSTATS,
+    YELLOW_W,
+)
 
 if TYPE_CHECKING:
     from .ha import HomeAssistant, Registry
@@ -101,6 +110,29 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             )
         return steps
 
+    def ac_power(ac: str, watts: int) -> dict[str, Any]:
+        return {
+            "action": "number.set_value",
+            "target": {"entity_id": reg.mock("number", f"mock_{ac}_mock_power")},
+            "data": {"value": watts},
+        }
+
+    def ir(ac: str, watts: int) -> list[dict[str, Any]]:
+        """
+        Play the IR of an air conditioner: it runs (or stands by) if it hears it.
+
+        Its socket's fault profile "unresponsive" is an IR that does not reach
+        it; with its socket off (the load protection) it draws nothing anyway.
+        """
+        fault = reg.mock("select", f"mock_{ac}_fault_profile")
+        return [
+            {
+                "condition": "template",
+                "value_template": f"{{{{ not is_state('{fault}', 'unresponsive') }}}}",
+            },
+            ac_power(ac, watts),
+        ]
+
     def reading(device: str, reading_profile: ReadingProfile) -> dict[str, Any]:
         return {
             "action": "select.select_option",
@@ -119,7 +151,20 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         for device in STAND_DEVICES
         if device.priority == LOAD_PRIORITY_ALWAYS_ON
     ]
+    irs = {
+        f"ir_{ac}_{command}": {
+            "alias": f"Стенд: ІЧ {name} — {label}",
+            "icon": "mdi:remote",
+            "sequence": ir(ac, watts),
+        }
+        for name, _, ac in THERMOSTATS
+        for command, label, watts in (
+            ("on", "увімкнути", AC_RUNNING_W),
+            ("off", "вимкнути", AC_STANDBY_W),
+        )
+    }
     return {
+        **irs,
         "reset": {
             "alias": "Стенд: скинути",
             "icon": "mdi:restore",
@@ -127,6 +172,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
                 *heat("off"),
+                *(ac_power(ac, AC_STANDBY_W) for _, _, ac in THERMOSTATS),
                 {
                     "action": "number.set_value",
                     "target": {"entity_id": capacity},
@@ -235,7 +281,8 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:radiator-off",
             "sequence": [
                 reset,
-                profile("floor_heating_1", FaultProfile.UNRESPONSIVE),
+                # The IR of the first air conditioner does not reach it
+                profile("ac_1", FaultProfile.UNRESPONSIVE),
                 *heat("heat"),
             ],
         },

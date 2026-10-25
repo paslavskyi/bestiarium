@@ -119,9 +119,11 @@ MODE_AC_LOAD_LIMITS = "ac_load_limits"
 MODE_AC_POWER_SENSOR = "ac_power_sensor"
 MODE_RED_THRESHOLD = "red_threshold"
 DEVICES_SWITCH = "switch_entity_id"
+DEVICES_POWER_SENSOR = "power_sensor_entity_id"
 DEVICES_EXPECTED_POWER_UNIQUE_ID = "{entry_id}_expected_power"
 LARGE_HEATER_POWER_W = 2000
 ISSUE_SWITCH_SHARED = "switch_shared"
+ISSUE_SWITCH_IS_DEVICE = "switch_is_device"
 ISSUE_INVALID_ACTION = "invalid_action"
 ISSUE_SWITCH_NOW_HEATS = "switch_now_heats"
 

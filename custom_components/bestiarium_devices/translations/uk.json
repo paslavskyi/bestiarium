@@ -86,7 +86,8 @@
       "invalid_power_sensor": "Сенсор потужності повинен мати device_class=power та одиницю вимірювання Вт (W)",
       "name_required": "Назва пристрою є обов'язковою",
       "required": "Це поле є обов'язковим",
-      "switch_taken": "Цим вимикачем уже керує інший прилад Bestiarium"
+      "switch_taken": "Цим вимикачем уже керує інший прилад Bestiarium",
+      "switch_of_thermostat": "Цей вимикач — вимикач термостата Bestiarium Climate: одне реле живе лише в одній інтеграції"
     },
     "abort": {
       "not_implemented": "Потік конфігурації ще не реалізовано",
@@ -357,7 +358,8 @@
           "invalid_switch": "Обрано недійсну сутність вимикача",
           "invalid_power_sensor": "Сенсор потужності повинен мати device_class=power та одиницю вимірювання Вт (W)",
           "required": "Це поле є обов'язковим",
-          "switch_taken": "Цим вимикачем уже керує інший прилад Bestiarium"
+          "switch_taken": "Цим вимикачем уже керує інший прилад Bestiarium",
+          "switch_of_thermostat": "Цей вимикач — вимикач термостата Bestiarium Climate: одне реле живе лише в одній інтеграції"
         }
       }
     },

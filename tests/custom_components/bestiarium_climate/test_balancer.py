@@ -503,10 +503,10 @@ async def test_yellow_rotates_out_without_starting(floors: Floors) -> None:
     assert ("turn_on", "floor_3") not in floors.calls
 
 
-async def test_pause_no_data_and_overload_start_nothing(floors: Floors) -> None:
-    """The pause, no data and the overload: nothing starts, the heating goes on."""
+async def test_pause_and_no_data_start_nothing(floors: Floors) -> None:
+    """The pause and no data: nothing starts, the heating goes on."""
     await floors.setup(zones=True)
-    for zone in ("pause", "no_data", "overload"):
+    for zone in ("pause", "no_data"):
         floors.zone(zone)
         await _hvac(floors, "floor_1", "off")
         await floors.tick(MINUTE)
@@ -683,25 +683,15 @@ async def test_heater_power_from_the_thermostat(floors: Floors) -> None:
     assert floors.on() == {"floor_1"}
 
 
-async def test_heater_power_from_its_bestiarium_device(floors: Floors) -> None:
-    """The expected power of the devices' entry whose relay is the switch counts."""
-    entry = MockConfigEntry(
-        domain="bestiarium_devices",
-        data={"switch_entity_id": "switch.floor_1"},
-        disabled_by=ConfigEntryDisabler.USER,
-    )
-    entry.add_to_hass(floors.hass)
-    er.async_get(floors.hass).async_get_or_create(
-        "sensor",
-        "bestiarium_devices",
-        f"{entry.entry_id}_expected_power",
-        suggested_object_id="floor_1_expected_power",
-    )
-    floors.hass.states.async_set("sensor.floor_1_expected_power", "700")
-    floors.load(3700)
-    await floors.setup(zones=True, settle=False)
+async def test_overload_turns_all_off_at_once(floors: Floors) -> None:
+    """Review 18: not in the devices' emergency queue: all off at once."""
+    await floors.setup(capacity=3, zones=True)
+    assert floors.on() == set(FLOORS)
 
-    assert floors.on() == {"floor_1"}
+    floors.zone("overload")
+    await floors.hass.async_block_till_done()
+
+    assert floors.on() == set()
 
 
 async def test_a_protection_off_is_a_new_start_that_must_fit(floors: Floors) -> None:

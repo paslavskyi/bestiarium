@@ -144,6 +144,15 @@
     },
     "matter_socket": {
       "name": "Matter socket (free)"
+    },
+    "ac_1": {
+      "name": "Mock AC 1 Power"
+    },
+    "ac_2": {
+      "name": "Mock AC 2 Power"
+    },
+    "ac_3": {
+      "name": "Mock AC 3 Power"
     }
   }
 }
