@@ -285,12 +285,14 @@ class _Registry:
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
     reset = scenario_scripts(_Registry())["reset"]["sequence"]
-    switched = {
-        step["action"]: step["target"]["entity_id"]
-        for step in reset
-        if step.get("action", "").startswith("switch.")
-    }
-    assert set(switched["switch.turn_on"]) == {
+    switched: dict[str, set[str]] = {}
+    for step in reset:
+        if step.get("action", "").startswith("switch."):
+            switched.setdefault(step["action"], set()).update(
+                step["target"]["entity_id"]
+            )
+    sockets = {e for e in switched["switch.turn_on"] if e.startswith("switch.mock_")}
+    assert sockets == {
         "switch.mock_cooker",
         "switch.mock_fridge",
         *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
@@ -349,7 +351,7 @@ def test_a_hung_ir_waits_for_its_knob() -> None:
 
 
 def test_a_fault_scenario_shows_its_fault_first() -> None:
-    """Review 24, E7: the faulty AC first, the stand's loads waiting, reset restores."""
+    """Review 24, E7: the faulty AC's room the coldest, the stand's loads waiting."""
     scripts = scenario_scripts(_Registry())
     loads = [
         "switch.commode_socket_allowed",
@@ -361,23 +363,23 @@ def test_a_fault_scenario_shows_its_fault_first() -> None:
         "switch.dead_socket_allowed",
     ]
     for name, ac in (
-        ("thermostats_dead_switch", 0),
-        ("thermostats_hung_command", 2),
-        ("thermostats_no_temperature", 1),
+        ("thermostats_dead_switch", 1),
+        ("thermostats_hung_command", 3),
+        ("thermostats_no_temperature", 2),
     ):
         sequence = scripts[name]["sequence"]
-        snapshot = next(s for s in sequence if s.get("action") == "scene.create")
-        assert snapshot["data"]["snapshot_entities"] == loads
         assert {"action": "switch.turn_off", "target": {"entity_id": loads}} in sequence
-        first = [
-            s
+        rooms = {
+            s["target"]["entity_id"]: s["data"]["value"]
             for s in sequence
-            if s.get("action") == "climate.set_temperature"
-            and s["data"]["temperature"] == 30  # noqa: PLR2004
-        ]
-        assert len(first) == 1
-        assert first[0]["target"]["entity_id"] == f"climate.stand_ac_{ac + 1}"
+            if s.get("action") == "number.set_value"
+            and "thermo" in s["target"]["entity_id"]
+        }
+        assert rooms == {
+            f"number.mock_thermo_{n}_mock_temperature": 15 if n == ac else 21
+            for n in (1, 2, 3)
+        }
+    # Review 30, F1: the reset allows them again, a restart of HA in between too
     reset = scripts["reset"]["sequence"]
-    restore = [s for s in reset if s.get("action") in ("scene.turn_on", "scene.delete")]
-    assert [s["action"] for s in restore] == ["scene.turn_on", "scene.delete"]
-    assert all(s["continue_on_error"] for s in restore)
+    assert {"action": "switch.turn_on", "target": {"entity_id": loads}} in reset
+    assert not [s for s in reset if s.get("action", "").startswith("scene.")]

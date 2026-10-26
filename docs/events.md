@@ -277,7 +277,7 @@ action:
 
 **When**: Capacity slot removed from a thermostat that was previously ON (deficit path).
 
-A rotation fires `rotated_out` and `rotated_in` together, in one cycle; the yellow zone rotates none (no one starts there, decision 29); the red zone's turn-offs one by one are not a rotation and fire nothing (an `info` line each), nor do the pause, no data and the overload ([climate zones](bestiarium_climate.md#load-zones-the-owners-rules-dev-008-review-13)).
+In green a rotation fires `rotated_out` at once and `rotated_in` when the new heater starts (the moment it fits); in yellow only `rotated_out` (no one starts there, decision 32); the red zone's turn-offs one by one are not a rotation and fire nothing (an `info` line each), nor do the pause, no data and the overload ([climate zones](bestiarium_climate.md#load-zones-the-owners-rules-dev-008-review-13)).
 
 | Field                    | Type   | Description                    |
 |--------------------------|--------|--------------------------------|

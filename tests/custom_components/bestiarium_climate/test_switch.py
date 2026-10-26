@@ -837,9 +837,9 @@ async def test_the_power_back_waits_for_the_pause_after_the_off(
 ) -> None:
     """Decision 29: the AC's power cut, back a minute later: it starts after the pause."""
 
-    async def minutes(count: int) -> None:
-        for _ in range(count):
-            freezer.tick(timedelta(minutes=1))
+    async def seconds(count: int) -> None:
+        for _ in range(count // 10):
+            freezer.tick(timedelta(seconds=10))
             async_fire_time_changed(hass)
             await hass.async_block_till_done()
 
@@ -847,16 +847,102 @@ async def test_the_power_back_waits_for_the_pause_after_the_off(
     await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
     await _heat(hass)
     hass.states.async_set(POWER, "1000")  # the AC runs
-    await minutes(1)
+    await seconds(60)
     assert _state(hass) == STATE_ON
 
     hass.states.async_set(RELAY, STATE_OFF)
     hass.states.async_set(POWER, "0")
-    await minutes(2)  # its switch off by its 0 W
-    assert _state(hass) == STATE_OFF
+    off_at = None
+    while off_at is None:  # its switch off by its 0 W
+        await seconds(10)
+        if _state(hass) == STATE_OFF:
+            off_at = dt_util.utcnow()
+    await seconds(60)
     hass.states.async_set(RELAY, STATE_ON)
-    await minutes(2)
-    assert len(services["heat"]) == 1  # in its pause
+    starts = len(services["heat"])
+    while dt_util.utcnow() < off_at + timedelta(minutes=5) - timedelta(seconds=10):
+        await seconds(10)
+        assert len(services["heat"]) == starts  # in its pause
+    await seconds(80)  # the pause over, the next cycle
+    assert len(services["heat"]) == starts + 1
 
-    await minutes(3)
-    assert len(services["heat"]) > 1  # started again after its pause
+
+async def test_no_power_is_no_fault(
+    hass: HomeAssistant,
+    setup: Setup,
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Decision 28: "No power" after the tolerance, below no temperature, no warning."""
+
+    async def seconds(count: int) -> None:
+        for _ in range(count // 10):
+            freezer.tick(timedelta(seconds=10))
+            async_fire_time_changed(hass)
+            await hass.async_block_till_done()
+
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    await seconds(40)
+    assert _control_state(hass).state == "normal"  # within the tolerance
+    await seconds(40)
+    assert _control_state(hass).state == "no_power"
+    assert not [
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING" and "bestiarium_climate" in r.name
+    ]
+
+    hass.states.async_set("sensor.temp", STATE_UNAVAILABLE)
+    await seconds(80)
+    assert _control_state(hass).state == "no_temperature"
+
+
+async def test_not_responding_goes_before_no_power(
+    hass: HomeAssistant, setup: Setup, hass_storage: dict
+) -> None:
+    """Decision 28: a heater "Not responding" whose power is cut shows the problem."""
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "minor_version": 2,
+        "data": {
+            "Heater": {
+                "expected_on": False,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "series": {},
+                "unresponsive": True,
+                "deferred_until": None,
+            }
+        },
+    }
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    for minute in range(1, 4):
+        _later(hass, minute * 60)
+        await hass.async_block_till_done()
+
+    assert _control_state(hass).state == "unresponsive"
+
+
+async def test_no_power_while_the_thermostat_is_off_is_normal(
+    hass: HomeAssistant, setup: Setup, freezer: FrozenDateTimeFactory
+) -> None:
+    """Decision 32: the thermostat off, its power off: "Normal"; heating: "No power"."""
+
+    async def seconds(count: int) -> None:
+        for _ in range(count // 10):
+            freezer.tick(timedelta(seconds=10))
+            async_fire_time_changed(hass)
+            await hass.async_block_till_done()
+
+    await _relay_powers_the_switch(hass, on=False)
+    hass.states.async_set("sensor.temp", "15")
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await seconds(120)
+    assert _control_state(hass).state == "normal"
+
+    await _heat(hass)
+    await seconds(80)
+    assert _control_state(hass).state == "no_power"

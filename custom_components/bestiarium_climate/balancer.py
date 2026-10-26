@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
-from homeassistant.components.climate import HVACAction
+from homeassistant.components.climate import HVACAction, HVACMode
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -52,12 +52,7 @@ from .const import (
     ControlState,
     Zone,
 )
-from .control import (
-    DEFAULT_PAUSE,
-    SwitchCommand,
-    ThermostatControl,
-    async_get_thermostat_memory,
-)
+from .control import DEFAULT_PAUSE, ThermostatControl, async_get_thermostat_memory
 from .devices import (
     device_of_relay,
     expected_power,
@@ -65,6 +60,7 @@ from .devices import (
     power_device,
     power_relays,
 )
+from .rotation import Heater, arrange
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
@@ -73,9 +69,10 @@ if TYPE_CHECKING:
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant
 
     from .climate import VirtualThermostat
+    from .command import SwitchCommand
     from .data import BestiariumClimateConfigEntry
 
-# The zones in which the balancer starts heaters; yellow only rotates them out
+# The zones in which the balancer starts heaters (and so rotates them)
 STARTING_ZONES = (Zone.GREEN, Zone.NONE)
 
 
@@ -139,7 +136,6 @@ class BalancingCoordinator:
         # One cycle at a time; a request during one makes one more after it
         self._cycling = False
         self._pending = False
-        # The command under way of each switch (on or off), and their tasks
         self._stopped = False
         self._red_off_at: datetime | None = None
         self._red_timer: CALLBACK_TYPE | None = None
@@ -149,6 +145,7 @@ class BalancingCoordinator:
         # In green whether a start may go in this cycle (one at a time)
         self._gate_open = True
         self._start_timer: CALLBACK_TYPE | None = None
+        self._start_due: datetime | None = None
 
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
@@ -219,7 +216,7 @@ class BalancingCoordinator:
         self._cancel_red_timer()
         if self._start_timer is not None:
             self._start_timer()
-            self._start_timer = None
+            self._start_timer = self._start_due = None
         for control in self.controls.values():
             control.async_stop()
 
@@ -463,12 +460,19 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
-        for control in self.controls.values():
+        for subentry_id, control in self.controls.items():
             control.defer_if_exhausted(now)
             if not control.heating(now) and power_cut(self._hass, control.switch):
                 control.lost_power(now)
                 cut.add(control)
-            control.set_power(cut=control in cut, now=now)
+            # "No power" only while its thermostat is not off (decision 32)
+            thermostat = thermostats.get(subentry_id)
+            control.set_power(
+                cut=control in cut
+                and thermostat is not None
+                and thermostat.hvac_mode != HVACMode.OFF,
+                now=now,
+            )
         working = [
             (thermostat, control)
             for subentry_id, thermostat in thermostats.items()
@@ -523,15 +527,14 @@ class BalancingCoordinator:
         now: datetime,
     ) -> None:
         """
-        Decide who heats after this cycle, by the zone (the owner, decision 29).
+        Carry out the arrangement by the zone's rules (the owner, decision 32).
 
-        Overload: all off at once. Out of a starting zone the ones that heat
-        go on heating (yellow: up to the capacity) and none starts. In a
-        starting zone the free places go to the best waiting heaters that
-        may start; with no free place a waiting one takes the place of the
-        worst-ranked heater past its working time, both at once, and only if
-        it may start. The one turned out pauses, so it cannot come straight
-        back: the next cycle with the same data keeps the arrangement.
+        Who should heat is decided without the zone (rotation.arrange). Green
+        (or no load limits): its "off"s at once, even before the new heater
+        fits, and its starts one at a time, if they fit with the power of
+        the ones turned off freed. Yellow: its "off"s only. The pause and no
+        data: no rotation. Overload: all off at once. Out of green a heater
+        that does not heat is not wanted on (B1).
         """
         deficit = capacity < len(ranked)
         if zone is Zone.OVERLOAD:
@@ -539,54 +542,58 @@ class BalancingCoordinator:
             for pair in ranked:
                 self._turn(pair, on=False, now=now, deficit=deficit)
             return
-        if zone not in STARTING_ZONES:
-            kept = 0
-            for pair in ranked:
-                on = self._heating(pair[1], now) and (
-                    zone is not Zone.YELLOW or kept < capacity
+        arranged = arrange(
+            (
+                Heater(
+                    control.subentry_id,
+                    self._rank(thermostat, control, now),
+                    running=control.expected_on,
+                    starting=control.starting(now),
+                    paused=control.paused_until(now) is not None,
                 )
-                kept += on
+                for thermostat, control in ranked
+            ),
+            capacity,
+        )
+        for _thermostat, control in ranked:
+            # Decide again the moment a pause ends
+            if not control.expected_on and (until := control.paused_until(now)):
+                self._start_again(until - now)
+        if zone not in STARTING_ZONES:
+            for pair in ranked:
+                control = pair[1]
+                on = self._heating(control, now) and (
+                    zone is not Zone.YELLOW or control.subentry_id in arranged
+                )
                 self._turn(pair, on=on, now=now, deficit=deficit)
             return
-        runners = [pair for pair in ranked if pair[1].expected_on]
-        # The capacity lowered: the worst-ranked go off
-        for pair in runners[capacity:]:
+        out = [
+            pair
+            for pair in ranked
+            if pair[1].expected_on and pair[1].subentry_id not in arranged
+        ]
+        for pair in out:
             self._turn(pair, on=False, now=now, deficit=deficit)
-        runners = runners[:capacity]
-        waiters = [pair for pair in ranked if not pair[1].expected_on]
-        free = capacity - len(runners)
-        for pair in waiters:
-            if free and self._start(pair[1], now, zone):
+        freed = [control for _, control in out]
+        for pair in ranked:
+            control = pair[1]
+            if (
+                control.subentry_id in arranged
+                and not control.expected_on
+                and self._start(control, now, zone, freed)
+            ):
                 self._turn(pair, on=True, now=now, deficit=deficit)
-                free -= 1
-        if free or not runners:
-            return
-        worst = runners[-1]
-        for pair in waiters:
-            if self._rank(*pair, now) >= self._rank(*worst, now):
-                return
-            if self._start(pair[1], now, zone, freed=worst[1]):
-                self._turn(worst, on=False, now=now, deficit=deficit)
-                self._turn(pair, on=True, now=now, deficit=deficit)
-                return
 
     def _start(
         self,
         control: ThermostatControl,
         now: datetime,
         zone: Zone,
-        freed: ThermostatControl | None = None,
+        freed: list[ThermostatControl],
     ) -> bool:
-        """
-        Return whether a waiting heater starts now: not in its pause, one at a time.
-
-        A heater in its pause after turning off neither starts nor holds a
-        place: the next one that may start takes it.
-        """
+        """Return whether an arranged heater starts now: one at a time, if it fits."""
         if not self._gate_open:
             self._start_again(timedelta(seconds=START_STEP_SECONDS))
-            return False
-        if control.paused_until(now) is not None:
             return False
         on = self._may_start(control, now, zone, freed)
         self._gate_open = not on
@@ -622,7 +629,7 @@ class BalancingCoordinator:
         control: ThermostatControl,
         now: datetime,
         zone: Zone,
-        freed: ThermostatControl | None = None,
+        freed: list[ThermostatControl],
     ) -> bool:
         """
         Return whether a heater may start now: one at a time, if it fits.
@@ -630,7 +637,7 @@ class BalancingCoordinator:
         The next start waits a step, so that the load shows the last one. A
         start fits when the load plus the heater's power stays at or below the
         red threshold (the rule of the devices' balancer, DEV-006), less the
-        power of the heater it takes the place of; an unknown load or
+        power of the heaters turned off in this cycle; an unknown load or
         threshold does not fit. Without load limits (no zone) only the
         capacity counts.
         """
@@ -646,8 +653,7 @@ class BalancingCoordinator:
             self._start_again(step)
             return False
         load, threshold = load_and_threshold
-        if freed is not None:
-            load -= self._heater_power(freed)[0]
+        load -= sum(self._heater_power(control)[0] for control in freed)
         if load + power > threshold:
             LOGGER.debug(
                 "%s does not fit: %s W + %s W (%s) > %s W",
@@ -664,15 +670,20 @@ class BalancingCoordinator:
         return True
 
     def _start_again(self, delay: timedelta) -> None:
-        """Run a cycle after the start step, for the heaters still waiting."""
-        if self._start_timer is None:
-            self._start_timer = async_call_later(
-                self._hass, delay.total_seconds(), self._async_start_timer
-            )
+        """Run a cycle after a delay (the start step, a pause), the earliest one."""
+        due = dt_util.utcnow() + delay
+        if self._start_timer is not None and self._start_due is not None:
+            if self._start_due <= due:
+                return
+            self._start_timer()
+        self._start_due = due
+        self._start_timer = async_call_later(
+            self._hass, delay.total_seconds(), self._async_start_timer
+        )
 
     @callback
     def _async_start_timer(self, _now: datetime) -> None:
-        self._start_timer = None
+        self._start_timer = self._start_due = None
         self.async_request_balance()
 
     def _heater_power(self, control: ThermostatControl) -> tuple[float, str]:

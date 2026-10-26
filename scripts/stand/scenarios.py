@@ -169,33 +169,32 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         for device in STAND_DEVICES
         if device.priority != LOAD_PRIORITY_ALWAYS_ON and not device.thermostat_driven
     ]
-    loads_scene_id = "bestiarium_stand_loads_allowed"
-    loads_scene = f"scene.{loads_scene_id}"
+    # The stand's loads not allowed (the reset allows them again)
+    loads_wait = [{"action": "switch.turn_off", "target": {"entity_id": loads}}]
 
-    # The stand's loads not allowed, their state kept for the reset
-    loads_wait = [
-        {
-            "action": "scene.create",
-            "data": {"scene_id": loads_scene_id, "snapshot_entities": loads},
-        },
-        {"action": "switch.turn_off", "target": {"entity_id": loads}},
-    ]
+    def room(thermometer: str, celsius: float) -> dict[str, Any]:
+        return {
+            "action": "number.set_value",
+            "target": {
+                "entity_id": reg.mock("number", f"mock_{thermometer}_mock_temperature")
+            },
+            "data": {"value": celsius},
+        }
 
     def faulty_first(ac: int) -> list[dict[str, Any]]:
         """
         Make one air conditioner the first in the queue, the load green.
 
-        Its thermostat heats to 30 °C, the others to 25 °C: the largest
-        difference goes first.
+        Its room is the coldest (15 °C, the others 21 °C; all heat to 25 °C):
+        the largest difference goes first, whatever the rooms were before.
         """
         return [
             *loads_wait,
+            *(
+                room(thermometer, 15 if number == ac else 21)
+                for number, (_, thermometer, _) in enumerate(THERMOSTATS, start=1)
+            ),
             *heat("heat"),
-            {
-                "action": "climate.set_temperature",
-                "target": {"entity_id": thermostats[ac - 1]},
-                "data": {"temperature": 30},
-            },
         ]
 
     ir_hangs = [reg.mock("switch", f"mock_{ac}_ir_hangs") for _, _, ac in THERMOSTATS]
@@ -235,17 +234,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 cooker(400),
                 turn("turn_off", *(s for s in all_sockets if s not in always_on)),
                 turn("turn_on", *always_on),
-                # The loads a fault scenario did not allow: as they were before it
-                {
-                    "action": "scene.turn_on",
-                    "target": {"entity_id": loads_scene},
-                    "continue_on_error": True,
-                },
-                {
-                    "action": "scene.delete",
-                    "target": {"entity_id": loads_scene},
-                    "continue_on_error": True,
-                },
+                # The loads a fault scenario did not allow, allowed again; the
+                # rooms at 20 °C
+                {"action": "switch.turn_on", "target": {"entity_id": loads}},
+                *(room(thermometer, 20) for _, thermometer, _ in THERMOSTATS),
                 wait(2),
             ],
         },

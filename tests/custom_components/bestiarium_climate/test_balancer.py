@@ -499,15 +499,23 @@ async def test_yellow_keeps_the_heating_and_starts_none(floors: Floors) -> None:
     assert floors.on() == {"floor_2", "floor_3"}
 
 
-async def test_yellow_rotates_none_out(floors: Floors) -> None:
-    """Decision 29: in yellow none starts, so none goes out for the rotation."""
-    await floors.setup(zones=True)
-    floors.zone("yellow")
-
-    await floors.tick(11 * MINUTE)
-
+async def test_yellow_rotates_out_and_starts_none(floors: Floors) -> None:
+    """Decision 32: yellow turns the one past its time off, starts none; green starts."""
+    await floors.setup(zones=True, min_working_minutes=1)
     assert floors.on() == {"floor_1", "floor_2"}
-    assert ("turn_on", "floor_3") not in floors.calls
+    floors.zone("yellow")
+    since = len(floors.calls)
+
+    await floors.tick(2 * MINUTE)
+    assert [c for c in floors.calls[since:] if c[0] == "turn_on"] == []
+    assert len([c for c in floors.calls[since:] if c[0] == "turn_off"]) == 1
+    since = len(floors.calls)
+    await floors.tick(2 * MINUTE)
+    assert floors.calls[since:] == []
+
+    floors.zone("green")
+    await floors.tick(MINUTE, step=10)
+    assert ("turn_on", "floor_3") in floors.calls
 
 
 async def test_pause_and_no_data_start_nothing(floors: Floors) -> None:
@@ -707,6 +715,8 @@ async def test_a_protection_off_is_a_new_start_that_must_fit(floors: Floors) -> 
     """B1: started, then turned off by the protection: in green again only if it fits."""
     await floors.setup(capacity=1, zones=True)
     assert floors.on() == {"floor_1"}
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
 
     floors.zone("red")
     floors.hass.states.async_set("switch.floor_1", STATE_OFF)
@@ -721,11 +731,11 @@ async def test_a_protection_off_is_a_new_start_that_must_fit(floors: Floors) -> 
     assert ("turn_on", "floor_1") not in floors.calls[calls:]
     assert floors.state("floor_1") == "normal"
 
-    # It fits now, in its pause after the protection's "off" (decision 29):
-    # the next heater takes the place
+    # It fits now: once its pause after the protection's "off" is over
+    # (decision 29), it starts again
     floors.load(1000)
-    await floors.tick(MINUTE, step=10)
-    assert floors.on() == {"floor_2"}
+    await floors.tick(3 * MINUTE, step=10)
+    assert floors.on() == {"floor_1"}
 
 
 async def test_a_stuck_switch_does_not_close_the_starts(floors: Floors) -> None:
@@ -864,8 +874,10 @@ async def test_a_long_command_spends_no_attempts(floors: Floors) -> None:
     await setup
 
 
-async def test_an_overtaking_command_is_an_attempt(floors: Floors) -> None:
-    """C5: "off" over a running "on" counts as an attempt; not taken, it stays."""
+async def test_an_overtaking_off_not_taken_fails_after_its_window(
+    floors: Floors,
+) -> None:
+    """C5: "off" over a running "on" is an attempt; not taken, it fails a window later."""
     released, on_started = asyncio.Event(), asyncio.Event()
 
     async def slow_on() -> None:
@@ -1093,10 +1105,8 @@ async def test_an_overtaken_command_that_ends_late_changes_nothing(
     assert floors.state("floor_1") == "normal"
 
 
-async def test_a_hung_start_taken_off_by_yellow_goes_on_counting(
-    floors: Floors,
-) -> None:
-    """E4: a hung start, taken off by yellow, is no new series in green: deferred."""
+async def test_a_hung_start_interrupted_goes_on_counting(floors: Floors) -> None:
+    """E4: a hung start, its thermostat off and back to heat: the series goes on."""
     released, on_started = asyncio.Event(), asyncio.Event()
 
     async def hangs() -> None:
@@ -1105,12 +1115,9 @@ async def test_a_hung_start_taken_off_by_yellow_goes_on_counting(
             await released.wait()
 
     floors.before["floor_1"] = hangs
-    setup = floors.hass.async_create_task(
-        floors.setup(capacity=1, zones=True, settle=False)
-    )
+    setup = floors.hass.async_create_task(floors.setup(capacity=1))
     await on_started.wait()
     floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
-    # Only floor 1 heats: no other takes its place during its pause
     for floor in ("floor_2", "floor_3"):
         await floors.hass.services.async_call(
             "climate",
@@ -1118,21 +1125,26 @@ async def test_a_hung_start_taken_off_by_yellow_goes_on_counting(
             {"entity_id": floors.climate(floor), "hvac_mode": "off"},
         )
     await _turns()
+
+    def first() -> list[tuple[str, str]]:
+        return [call for call in floors.calls if call[1] == "floor_1"]
+
     for attempt in (1, 2):
-        assert floors.calls.count(("turn_on", "floor_1")) == attempt
-        assert floors.calls[-1] == ("turn_on", "floor_1")
-        _minutes(floors, MINUTE)  # past the start's window: not starting
-        await _turns()
-        floors.zone("yellow")
-        await _turns()
-        assert floors.calls[-1] == ("turn_off", "floor_1")
-        floors.zone("green")
-        await _turns()
-        # Past the pause after its "off" (decision 29) and its window
+        assert first().count(("turn_on", "floor_1")) == attempt
+        assert first()[-1] == ("turn_on", "floor_1")
+        for hvac_mode in ("off", "heat"):
+            await floors.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": floors.climate("floor_1"), "hvac_mode": hvac_mode},
+            )
+            await _turns()
+        assert first()[-1] == ("turn_off", "floor_1")
+        # Past the pause after its start cut short (decision 32) and its window
         _minutes(floors, 5 * MINUTE)
         await _turns()
 
-    assert floors.calls.count(("turn_on", "floor_1")) == 2
+    assert first().count(("turn_on", "floor_1")) == 2
     assert floors.state("floor_1") == "unresponsive"
     released.set()
     await setup
@@ -1314,15 +1326,28 @@ async def test_a_heater_off_in_red_waits_for_its_pause(floors: Floors) -> None:
 
 
 async def test_the_pause_starts_when_climate_turns_it_off(floors: Floors) -> None:
-    """Decision 29: the one rotated out pauses before its switch shows "off"."""
+    """Decision 29: the one rotated out pauses from climate's "off", before its switch."""
     await floors.setup(min_working_minutes=1)
     floors.stuck.add("floor_2")  # its "off" shows late, as a virtual switch
     await floors.tick(2 * MINUTE)
     assert ("turn_off", "floor_2") in floors.calls
     assert "floor_2" in floors.on()
-
     sensor = floors.entity_id("sensor", "floor_2_control_state")
     assert floors.hass.states.get(sensor).attributes["pause_until"] is not None
+
+    # Its switch off later: the pause runs from then; a place is free
+    floors.stuck.clear()
+    await floors.tick(MINUTE)
+    assert "floor_2" not in floors.on()
+    pause_until = floors.hass.states.get(sensor).attributes["pause_until"]
+    await _hvac(floors, "floor_1", "off")
+    since = len(floors.calls)
+    while dt_util.utcnow() < pause_until - timedelta(seconds=10):
+        await floors.tick(10, step=10)
+    assert ("turn_on", "floor_2") not in floors.calls[since:]
+
+    await floors.tick(20, step=10)
+    assert "floor_2" in floors.on()
 
 
 async def test_a_heater_out_of_attempts_takes_no_place(
@@ -1351,3 +1376,132 @@ async def test_a_heater_out_of_attempts_takes_no_place(
     assert floors.state("floor_3") == "unresponsive"
     assert floors.on() == {"floor_1", "floor_2"}
     assert ("turn_off", "floor_2") not in floors.calls
+
+
+async def test_a_command_before_a_deferral_answers_nothing(
+    floors: Floors, caplog: pytest.LogCaptureFixture
+) -> None:
+    """G1: after the deferral, a person turns the switch on: no "Normal" between."""
+    floors.stuck.add("floor_1")
+    await floors.setup(capacity=1)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
+    await floors.tick(3 * MINUTE)
+    assert floors.state("floor_1") == "unresponsive"
+
+    await _hvac(floors, "floor_1", "off")
+    await floors.tick(70 * MINUTE)  # the deferral (1 hour) is over
+    # A person turns it on by its own remote: no command of climate answered
+    floors.hass.states.async_set("switch.floor_1", STATE_ON)
+    await floors.tick(3 * MINUTE)
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert "Floor_1: control state back to normal" not in caplog.text
+    assert caplog.text.count("Floor_1: control state unresponsive") == 1
+
+
+async def test_a_start_after_a_failed_one_is_under_way(
+    floors: Floors, hass_storage: dict
+) -> None:
+    """G2: a failed start kept ({"on": 1}), a fresh one: yellow keeps it, green waits."""
+    hour_ago = (dt_util.utcnow() - timedelta(hours=1)).isoformat()
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "minor_version": 2,
+        "data": {
+            "floor_1": {
+                "expected_on": False,
+                "expected_changed_at": hour_ago,
+                "series": {"on": 1},
+                "unresponsive": False,
+                "deferred_until": None,
+            }
+        },
+    }
+    floors.stuck.add("floor_1")  # its "on" shows later, as a virtual switch
+    await floors.setup(zones=True, settle=False)
+    assert ("turn_on", "floor_1") in floors.calls
+
+    await floors.tick(30, step=10)
+    assert ("turn_on", "floor_2") not in floors.calls  # the start is under way
+    floors.zone("yellow")
+    await floors.tick(10, step=10)
+    assert ("turn_off", "floor_1") not in floors.calls
+
+
+async def test_the_failed_attempt_shows_at_the_end_of_its_window(
+    floors: Floors,
+) -> None:
+    """G5: failed_attempts counts the attempt when its window ends; shown when deferred."""
+    floors.stuck.add("floor_1")
+    await floors.setup(capacity=1)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+
+    await floors.tick(56, step=56)  # the window of the first is over, no cycle yet
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+
+    await floors.tick(2 * MINUTE)
+    state = floors.hass.states.get(sensor)
+    assert state.state == "unresponsive"
+    assert state.attributes["failed_attempts"] == 2
+
+
+async def test_a_start_under_way_is_not_rotated_out(floors: Floors) -> None:
+    """F1: a hung start past the working time is not turned out; its budget decides."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if floors.calls[-1] == ("turn_on", "floor_1"):
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(
+        floors.setup(capacity=1, min_working_minutes=1)
+    )
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    for _ in range(2):
+        _minutes(floors, MINUTE)  # past its working time, within the budget
+        await _turns()
+    assert ("turn_off", "floor_1") not in floors.calls
+
+    _minutes(floors, MINUTE)  # past the budget (3 x 55 s)
+    await _turns()
+    assert floors.state("floor_1") == "unresponsive"
+    released.set()
+    await setup
+
+
+async def test_green_turns_out_before_the_new_one_fits(floors: Floors) -> None:
+    """Decision 32: the one past its time goes off; the new starts once it fits."""
+    await floors.setup(zones=True, min_working_minutes=1)
+    assert floors.on() == {"floor_1", "floor_2"}
+    floors.load(4600)  # 4600 - 2000 + 2000 > 4500: the new one does not fit
+
+    await floors.tick(2 * MINUTE)
+    assert len(floors.on()) == 1
+    assert ("turn_on", "floor_3") not in floors.calls
+
+    floors.load(1000)
+    await floors.tick(MINUTE, step=10)
+    assert "floor_3" in floors.on()
+
+
+async def test_a_start_cut_short_pauses(floors: Floors) -> None:
+    """Decision 32: a start turned off before its switch showed "on" pauses too."""
+    floors.stuck.add("floor_1")  # its "on" never shows
+    await floors.setup(capacity=1)
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
+    floors.stuck.clear()
+    for hvac_mode in ("off", "heat"):
+        await _hvac(floors, "floor_1", hvac_mode)
+    starts = floors.calls.count(("turn_on", "floor_1"))
+
+    await floors.tick(4 * MINUTE)
+    assert floors.calls.count(("turn_on", "floor_1")) == starts
+    await floors.tick(2 * MINUTE)
+    assert "floor_1" in floors.on()
