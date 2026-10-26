@@ -16,6 +16,15 @@ report each time. Bestiarium reacts only to **confirmed** problems, quietly.
    strategy's step. A new device starts with a conservative default. In the
    **red zone** the total wait for one device has a **hard limit** (default
    30 s): the load must come down.
+   **A series of attempts** (review 24): the commands of one direction sent
+   to a device without an answer. Only the device's answer (it is in the
+   state of the command) ends the series, never a change of what is wanted
+   in between; a device that does not answer becomes "not responding" after
+   the configured number of commands without an answer, however often the
+   wish changed between them. A command that never ends counts too: one that
+   runs longer than the budget of the attempts is a problem. A protection
+   that cuts a command short (the load protection cutting the power) is no
+   failed attempt.
 4. **Unstable connection.** A device that works but had many short glitches
    in the last hour (the count is a parameter) is shown as "unstable
    connection", without a log line per glitch.
@@ -61,6 +70,12 @@ the first implementation, described in
 - **Unstable connection:** 3 short dropouts in an hour.
 - **Frugality:** the details are `_unrecorded_attributes`; the response memory
   holds 10 values per device; the deferral is not stored.
+
+The thermostats' control of Bestiarium Climate (`bestiarium_climate/control.py`,
+DEV-008) keeps the series of each direction apart: an "off" in between (the
+rotation, the load zone) leaves the series "on" counting. The devices' control
+still starts a new series with a command of the other direction (a known
+difference, not changed in DEV-008).
 
 The load zones of `bestiarium_mode` (DEV-008, [../bestiarium_mode.md](../bestiarium_mode.md#zones)):
 up at once, down only below the threshold minus a margin (3 % of the limit),

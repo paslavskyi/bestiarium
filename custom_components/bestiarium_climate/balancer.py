@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING
 
 from homeassistant.components.climate import (
@@ -51,7 +52,7 @@ from .const import (
     ControlState,
     Zone,
 )
-from .control import ThermostatControl, async_get_thermostat_memory
+from .control import SwitchCommand, ThermostatControl, async_get_thermostat_memory
 from .devices import (
     device_of_relay,
     expected_power,
@@ -134,8 +135,6 @@ class BalancingCoordinator:
         self._cycling = False
         self._pending = False
         # The command under way of each switch (on or off), and their tasks
-        self._sending: dict[str, bool] = {}
-        self._tasks: set[asyncio.Task[None]] = set()
         self._stopped = False
         self._red_off_at: datetime | None = None
         self._red_timer: CALLBACK_TYPE | None = None
@@ -205,8 +204,8 @@ class BalancingCoordinator:
     def stop(self) -> None:
         """Stop balancing and following; cancel the commands under way."""
         self._stopped = True
-        for task in self._tasks:
-            task.cancel()
+        for control in self.controls.values():
+            control.cancel_commands()
         while self._unsubscribe:
             self._unsubscribe.pop()()
         if self._zone_unsubscribe is not None:
@@ -354,33 +353,15 @@ class BalancingCoordinator:
         self._report_shared_switches()
         self._allocate(self._thermostats(), now, self._zone())
         for control in self.controls.values():
-            if self._left_alone(control):
+            if self._left_alone(control) or (on := control.next_command(now)) is None:
                 continue
-            running = self._sending.get(control.switch)
-            if running is not None:
-                # A command under way past the budget of its attempts is a
-                # problem, whatever is wanted now: the switch is deferred, and
-                # the deferral's "off" overtakes a hung "on". Before it, the
-                # same command waits for its answer (no attempt); the other way
-                # overtakes it at once ("off" cancels a running "on" sequence)
-                # and counts an attempt
-                if control.overdue(now):
-                    control.defer_now(now)
-                    if not running:
-                        continue
-                    on = False
-                elif running is (on := control.wanted(now)):
-                    continue
-                else:
-                    control.overtake(now, on=on)
-            elif (on := control.to_command(now)) is None:
-                continue
-            self._sending[control.switch] = on
-            task = self._entry.async_create_task(
+            command = control.send(on, now)
+            command.task = self._entry.async_create_task(
                 self._hass, self._async_send(control, on=on), f"switch {control.switch}"
             )
-            self._tasks.add(task)
-            task.add_done_callback(self._command_ended)
+            command.task.add_done_callback(
+                partial(self._command_ended, control, command)
+            )
 
     def _capacity(self) -> int:
         """Read the capacity from its entity, the one source of it."""
@@ -469,17 +450,22 @@ class BalancingCoordinator:
         switch the load protection turned off is no failed attempt: out of
         green the balancer does not want it on again.
         """
+        # The power cut: a heater that does not heat waits for it, holding no
+        # place, and gets no command; one that heats goes off by its 0 W
+        # (turned off by another), so a short glitch of a cloud relay commands
+        # nothing
+        cut: set[ThermostatControl] = set()
         for control in self.controls.values():
             control.defer_if_exhausted(now)
+            if not control.heating(now) and power_cut(self._hass, control.switch):
+                control.lost_power(now)
+                cut.add(control)
         working = [
             (thermostat, control)
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
             and not self._left_alone(control)
-            # The power cut: a heater not held on waits for it, holding no
-            # place; one held on goes off by its 0 W (turned off by another),
-            # so a short glitch of a cloud relay commands nothing
-            and (control.expected_on or not power_cut(self._hass, control.switch))
+            and control not in cut
             and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
         for control in self.controls.values():
@@ -676,11 +662,21 @@ class BalancingCoordinator:
             self._red_timer()
             self._red_timer = None
 
-    def _command_ended(self, task: asyncio.Task[None]) -> None:
-        """Forget the command's task; an unexpected error of it is logged."""
-        self._tasks.discard(task)
+    def _command_ended(
+        self,
+        control: ThermostatControl,
+        command: SwitchCommand,
+        task: asyncio.Task[None],
+    ) -> None:
+        """
+        Note the end of a command, whatever ended it; decide what was wanted meanwhile.
+
+        An unexpected error of it is logged; the switch is free for the next one.
+        """
         if not task.cancelled() and (err := task.exception()) is not None:
             LOGGER.error("%s failed", task.get_name(), exc_info=err)
+        control.ended(command, dt_util.utcnow())
+        self.async_request_balance()
 
     async def _async_send(self, control: ThermostatControl, *, on: bool) -> None:
         """
@@ -698,11 +694,3 @@ class BalancingCoordinator:
             )
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
-        finally:
-            # Whatever ended it, the switch is free for the next command
-            if self._sending.get(control.switch) is on:
-                del self._sending[control.switch]
-                # The answer is awaited from the end of the command
-                control.command_done(dt_util.utcnow(), on=on)
-            # What was wanted meanwhile is decided now (not once stopped)
-            self.async_request_balance()

@@ -220,7 +220,7 @@ the script fails if HA did not load them.
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway) |
+   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway); the stand's loads a fault scenario did not allow are back as they were before it (its scene, then deleted) |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |
@@ -229,9 +229,9 @@ the script fails if HA did not load them.
    | `mode_off_unresponsive` | reset; the Tuya socket on, then "Unresponsive"; "Night": retries, then "Does not turn off by mode" |
    | `mode_off_turned_on` | reset; the Tuya socket on; "Night" turns it off; 10 s later a person turns it on; green leaves it on |
    | `mode_off_red` | reset; "Night"; the Tuya socket, night light and boiler on; the cooker pushes the grid 200 W into red: the Tuya socket goes first, then the queue |
-   | `thermostats_dead_switch` | reset; floor heating 1 "Unresponsive"; the three thermostats heat to 25 °C (capacity 2): floor 1 is deferred after 3 attempts and floor 3 takes its place |
-   | `thermostats_hung_command` | reset; the IR "on" of AC 1 never ends ("IR hangs"); the thermostats heat: past 3 attempts' time AC 1 is "Not responding", its "off" overtakes the hung "on" |
-   | `thermostats_no_temperature` | reset; the thermostats heat; 90 s later thermometer 2 "No data": after a minute floor 2 is off, its thermostat unavailable, "No temperature data" |
+   | `thermostats_dead_switch` | reset; the IR of AC 1 lost ("IR lost"); the stand's loads not allowed (the load stays green); AC 1 heats to 30 °C, the others to 25 °C (capacity 2), so AC 1 starts first: after 3 attempts (about 3 minutes) it is "Not responding" and AC 3 takes its place |
+   | `thermostats_hung_command` | reset; the IR "on" of AC 1 never ends ("IR hangs"); the stand's loads not allowed; AC 1 heats to 30 °C, the others to 25 °C, so AC 1 starts first: past 3 attempts' time (165 s) it is "Not responding", its "off" overtakes the hung "on" |
+   | `thermostats_no_temperature` | reset; the stand's loads not allowed; AC 2 heats to 30 °C, the others to 25 °C, so AC 2 starts first; 90 s later thermometer 2 "No data": after a minute AC 2 is off, its thermostat unavailable, "No temperature data" |
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |
    | `unstable_tuya` | reset; the Tuya socket "Unstable" and on |

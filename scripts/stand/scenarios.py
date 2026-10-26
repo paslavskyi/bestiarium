@@ -161,6 +161,39 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         if device.priority == LOAD_PRIORITY_ALWAYS_ON
     ]
     ir_lost = [reg.mock("switch", f"mock_{ac}_ir_lost") for _, _, ac in THERMOSTATS]
+    # The stand's own loads that a person turns on (not always on, not run by
+    # a thermostat): a fault scenario does not allow them, so the load stays
+    # green and the faulty air conditioner gets its start
+    loads = [
+        reg.control(reg.mock_device(device.mock_id)["id"], "allowed")
+        for device in STAND_DEVICES
+        if device.priority != LOAD_PRIORITY_ALWAYS_ON and not device.thermostat_driven
+    ]
+    loads_scene_id = "bestiarium_stand_loads_allowed"
+    loads_scene = f"scene.{loads_scene_id}"
+
+    def faulty_first(ac: int) -> list[dict[str, Any]]:
+        """
+        Make one air conditioner the first in the queue, the load green.
+
+        Its thermostat heats to 30 °C, the others to 25 °C: the largest
+        difference goes first. The stand's loads are not allowed, their state
+        kept for the reset.
+        """
+        return [
+            {
+                "action": "scene.create",
+                "data": {"scene_id": loads_scene_id, "snapshot_entities": loads},
+            },
+            {"action": "switch.turn_off", "target": {"entity_id": loads}},
+            *heat("heat"),
+            {
+                "action": "climate.set_temperature",
+                "target": {"entity_id": thermostats[ac - 1]},
+                "data": {"temperature": 30},
+            },
+        ]
+
     ir_hangs = [reg.mock("switch", f"mock_{ac}_ir_hangs") for _, _, ac in THERMOSTATS]
     irs = {
         f"ir_{ac}_{command}": {
@@ -197,6 +230,17 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 cooker(400),
                 turn("turn_off", *(s for s in all_sockets if s not in always_on)),
                 turn("turn_on", *always_on),
+                # The loads a fault scenario did not allow: as they were before it
+                {
+                    "action": "scene.turn_on",
+                    "target": {"entity_id": loads_scene},
+                    "continue_on_error": True,
+                },
+                {
+                    "action": "scene.delete",
+                    "target": {"entity_id": loads_scene},
+                    "continue_on_error": True,
+                },
                 wait(2),
             ],
         },
@@ -298,7 +342,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 reset,
                 # The IR of the first air conditioner does not reach it
                 {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
-                *heat("heat"),
+                *faulty_first(1),
             ],
         },
         "thermostats_hung_command": {
@@ -308,7 +352,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 reset,
                 # The "on" of the first air conditioner never ends
                 {"action": "switch.turn_on", "target": {"entity_id": ir_hangs[0]}},
-                *heat("heat"),
+                *faulty_first(1),
             ],
         },
         "thermostats_no_temperature": {
@@ -316,7 +360,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:thermometer-off",
             "sequence": [
                 reset,
-                *heat("heat"),
+                *faulty_first(2),
                 wait(90),
                 reading("thermo_2", ReadingProfile.NO_DATA),
             ],

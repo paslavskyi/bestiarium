@@ -70,6 +70,8 @@ SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
 # The thermostats' state the balancer keeps across restarts (Store)
 STORAGE_KEY = f"{DOMAIN}.thermostats"
 STORAGE_VERSION = 1
+# 1.2: the series of each direction and "Not responding", not one count of tries
+STORAGE_MINOR_VERSION = 2
 SAVE_DELAY_SECONDS = 10
 
 

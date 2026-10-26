@@ -270,7 +270,16 @@ class _Registry:
         return f"{domain}.{unique_id}"
 
     def stand_climate(self) -> list:
-        return []
+        return [
+            *({"entity_id": f"climate.stand_ac_{n}"} for n in (1, 2, 3)),
+            {"entity_id": "number.stand_capacity"},
+        ]
+
+    def mock_device(self, mock_id: str) -> dict:
+        return {"id": mock_id}
+
+    def control(self, device_id: str, key: str) -> str:
+        return f"switch.{device_id}_{key}"
 
 
 def test_reset_leaves_always_on_devices_on() -> None:
@@ -337,3 +346,38 @@ def test_a_hung_ir_waits_for_its_knob() -> None:
     assert all(
         "wait_template" not in step for step in scripts["ir_ac_1_off"]["sequence"]
     )
+
+
+def test_a_fault_scenario_shows_its_fault_first() -> None:
+    """Review 24, E7: the faulty AC first, the stand's loads waiting, reset restores."""
+    scripts = scenario_scripts(_Registry())
+    loads = [
+        "switch.commode_socket_allowed",
+        "switch.bedside_socket_allowed",
+        "switch.boiler_allowed",
+        "switch.slow_cloud_socket_allowed",
+        "switch.tuya_socket_allowed",
+        "switch.night_light_allowed",
+        "switch.dead_socket_allowed",
+    ]
+    for name, ac in (
+        ("thermostats_dead_switch", 0),
+        ("thermostats_hung_command", 0),
+        ("thermostats_no_temperature", 1),
+    ):
+        sequence = scripts[name]["sequence"]
+        snapshot = next(s for s in sequence if s.get("action") == "scene.create")
+        assert snapshot["data"]["snapshot_entities"] == loads
+        assert {"action": "switch.turn_off", "target": {"entity_id": loads}} in sequence
+        first = [
+            s
+            for s in sequence
+            if s.get("action") == "climate.set_temperature"
+            and s["data"]["temperature"] == 30  # noqa: PLR2004
+        ]
+        assert len(first) == 1
+        assert first[0]["target"]["entity_id"] == f"climate.stand_ac_{ac + 1}"
+    reset = scripts["reset"]["sequence"]
+    restore = [s for s in reset if s.get("action") in ("scene.turn_on", "scene.delete")]
+    assert [s["action"] for s in restore] == ["scene.turn_on", "scene.delete"]
+    assert all(s["continue_on_error"] for s in restore)

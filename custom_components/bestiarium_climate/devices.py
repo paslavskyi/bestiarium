@@ -5,8 +5,8 @@ One relay lives in one integration (the owner's rule, DEV-008 review 18): a
 thermostat's switch is never a device relay. A virtual switch's power,
 though, is often a device: the relay that powers an air conditioner, whose
 power sensor the virtual switch reads. Its expected power is the heater's
-power, and while its relay is off (the load protection cut it) a heater not
-held on leaves the rotation until the power is back.
+power, and while its relay is off (the load protection cut it) a heater that
+does not heat leaves the rotation until the power is back.
 """
 
 from __future__ import annotations
@@ -96,8 +96,10 @@ def power_cut(hass: HomeAssistant, switch: str) -> bool:
     """
     Return whether the device powering a virtual switch has its relay off.
 
-    The load protection (or a person) cut the power: the heater leaves the
-    rotation, holding no place of the capacity, until the power is back.
+    The load protection (or a person) cut the power: a heater that does not
+    heat (not on, no start under way) leaves the rotation, holding no place
+    of the capacity, until the power is back. One that heats stays: it goes
+    off by its 0 W, so a moment "off" of a cloud relay commands nothing.
     """
     device = power_device(hass, switch)
     if device is None:

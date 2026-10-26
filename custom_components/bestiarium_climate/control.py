@@ -2,10 +2,12 @@
 The control of a thermostat's switch and its control state (DEC-014).
 
 A switch or temperature gone for longer than the tolerance is a problem; a
-problem ends after the hysteresis. A switch that does not take the expected
-state for its attempts is deferred for the recovery timeout and tried
-again. What the balancer must remember across restarts lives in a Store,
-not in the thermostat's attributes.
+problem ends after the hysteresis. The commands to a switch are its control's
+(SwitchCommand); the series of a direction is its commands sent without an
+answer, and only the switch's answer ends it (DEC-014). A switch out of
+attempts, or whose command outlasts their budget, is deferred for the
+recovery timeout and tried again. What the balancer must remember across
+restarts lives in a Store, not in the thermostat's attributes.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from .const import (
     SAVE_DELAY_SECONDS,
     SIGNAL_CONTROL_CHANGED,
     STORAGE_KEY,
+    STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
     ControlSettings,
     ControlState,
@@ -44,6 +47,8 @@ from .const import (
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
+    import asyncio
+
     from homeassistant.config_entries import ConfigSubentry
     from homeassistant.core import (
         CALLBACK_TYPE,
@@ -60,13 +65,31 @@ GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 ATTEMPT_INTERVAL = timedelta(seconds=BALANCING_INTERVAL_SECONDS - 5)
 
 
+class _MemoryStore(Store[dict[str, dict[str, Any]]]):
+    """The thermostats' store; 1.1 kept one count of tries, not the series."""
+
+    async def _async_migrate_func(
+        self,
+        old_major_version: int,  # noqa: ARG002
+        old_minor_version: int,
+        old_data: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        if old_minor_version < 2:  # noqa: PLR2004
+            for kept in old_data.values():
+                # The tries counted the direction the balancer wanted
+                tries = kept.pop("tries", 0)
+                kept["series"] = {_direction(kept.get("expected_on", False)): tries}
+                kept["unresponsive"] = kept.get("deferred_until") is not None
+        return old_data
+
+
 class ThermostatMemory:
     """What the thermostats keep across restarts, by subentry id."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Start empty; call async_load to read the store."""
-        self._store: Store[dict[str, dict[str, Any]]] = Store(
-            hass, STORAGE_VERSION, STORAGE_KEY
+        self._store = _MemoryStore(
+            hass, STORAGE_VERSION, STORAGE_KEY, minor_version=STORAGE_MINOR_VERSION
         )
         self._data: dict[str, dict[str, Any]] = {}
 
@@ -121,6 +144,35 @@ class _Condition:
         return self.since + (enter if self.raw else leave)
 
 
+@dataclass(eq=False)
+class SwitchCommand:
+    """One command to the switch: its direction, its task, its times."""
+
+    on: bool
+    sent_at: datetime
+    # The deferral's "off": its answer ends no "Not responding"
+    deferral: bool = False
+    task: asyncio.Task[None] | None = None
+    ended_at: datetime | None = None
+    # Its series is closed: the switch answered, or the power was cut
+    closed: bool = False
+
+    @property
+    def running(self) -> bool:
+        """Return whether its task has not ended yet."""
+        return self.ended_at is None
+
+    def waiting(self, now: datetime) -> bool:
+        """Return whether it waits for its answer: running, or in the window after."""
+        return not self.closed and (
+            self.ended_at is None or now < self.ended_at + ATTEMPT_INTERVAL
+        )
+
+
+def _direction(on: bool) -> str:  # noqa: FBT001
+    return "on" if on else "off"
+
+
 def _gone(state: State | None) -> bool:
     return state is None or state.state in GONE_STATES
 
@@ -158,26 +210,24 @@ class ThermostatControl:
         kept = memory.get(self.subentry_id)
         self.expected_on: bool = kept.get("expected_on", False)
         self.expected_changed_at: datetime = _time(kept.get("expected_changed_at"))
-        self._tries: int = kept.get("tries", 0)
+        # The series of each direction: its commands sent without an answer
+        series = kept.get("series", {})
+        self._series = {on: series.get(_direction(on), 0) for on in (True, False)}
         self.deferred_until: datetime | None = (
             _time(kept["deferred_until"]) if kept.get("deferred_until") else None
         )
         self._switch_gone = _Condition()
         self._no_temperature = _Condition()
-        self._unresponsive = _Condition(
-            raw=self.deferred_until is not None,
-            confirmed=self.deferred_until is not None,
-        )
-        # A restored deferral is no new problem: no second warning
-        self.state = (
-            ControlState.UNRESPONSIVE
-            if self.deferred_until is not None
-            else ControlState.NORMAL
-        )
-        # When the switch got its last command: an attempt is one a cycle
-        self._last_command: tuple[datetime, bool] | None = None
-        # When the last deferral ended: a command after it ends "Not responding"
-        self._retry_from: datetime | None = None
+        # "Not responding" lasts across a restart until a command is carried out
+        unresponsive = kept.get("unresponsive", False)
+        self._unresponsive = _Condition(raw=unresponsive, confirmed=unresponsive)
+        # A restored problem is no new one: no second warning
+        self.state = ControlState.UNRESPONSIVE if unresponsive else ControlState.NORMAL
+        # The commands running or waiting for their answer, and the last of
+        # each direction
+        self._commands: list[SwitchCommand] = []
+        # A deferral turns the switch off once
+        self._off_owed = False
         self._watching = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -249,19 +299,20 @@ class ThermostatControl:
         load protection) is no start under way, nor is one that did not take
         its first attempt: it holds no other start back.
         """
+        command = self._latest()
         if not (
             self.expected_on
-            and self._tries <= 1
-            and self._last_command
-            and self._last_command[1]
-            and now - self._last_command[0] < ATTEMPT_INTERVAL
+            and command is not None
+            and command.on
+            and self._series[True] <= 1
+            and now - command.sent_at < ATTEMPT_INTERVAL
         ):
             return False
         state = self._hass.states.get(self.switch)
         return (
             state is not None
             and state.state != STATE_ON
-            and state.last_changed <= self._last_command[0]
+            and state.last_changed <= command.sent_at
         )
 
     def turned_off_by_another(self) -> bool:
@@ -271,129 +322,180 @@ class ThermostatControl:
         The load protection of the devices (or a person) did it: no failed
         attempt; a new start has to fit again.
         """
-        if not (self.expected_on and self._last_command and self._last_command[1]):
+        command = self._latest()
+        if not (self.expected_on and command is not None and command.on):
             return False
         state = self._hass.states.get(self.switch)
         return (
             state is not None
             and state.state == STATE_OFF
-            and state.last_changed > self._last_command[0]
+            and state.last_changed > command.sent_at
         )
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
-        """Set what the balancer wants the switch to be."""
+        """Set what the balancer wants the switch to be; the series go on."""
         if on != self.expected_on:
-            self.expected_on, self.expected_changed_at, self._tries = on, now, 0
+            self.expected_on, self.expected_changed_at = on, now
             self._keep()
 
     def wanted(self, now: datetime) -> bool:
         """Return the state the switch should have now."""
         return self.expected_on and self.in_rotation(now)
 
-    def overtake(self, now: datetime, *, on: bool) -> None:
-        """
-        Count a command sent over one still running the other way.
-
-        A new wanted state starts the count of attempts again, as in
-        to_command: the overtaking command is its first attempt.
-        """
-        self._last_command = (now, on)
-        self._tries = 1
-        self._keep()
-        self._refresh(now)
-
-    def to_command(self, now: datetime) -> bool | None:
+    def next_command(self, now: datetime) -> bool | None:
         """
         Return the state to send the switch now, or None.
 
-        Each balancing cycle (a minute) the switch is not as wanted counts an
-        attempt; the cycles a thermostat's change runs in between wait for
-        the answer. A new wanted state is sent at once and starts the count
-        again. Out of attempts the switch is deferred and turned off once.
+        A command waits while one of its direction waits for its answer: runs,
+        or is in the window after its end (a cycle), an overtaken one too, so
+        a toggling IR code is never sent twice. One the other way overtakes
+        the running one at once. A deferral sends its "off" once, then nothing
+        until it ends.
         """
+        self._observe(now)
         actual = self.switch_is_on()
+        if actual is None:
+            return None
+        if self.deferred_until is not None:
+            return False if self._off_owed else None
         wanted = self.wanted(now)
-        if actual is None or self.deferred_until is not None:
+        if any(c.on is wanted and c.waiting(now) for c in self._commands):
             return None
-        if actual == wanted:
-            answered = self._answered(wanted)
-            if self._tries or (self._unresponsive.raw and answered):
-                self._tries = 0
-                if answered:
-                    self._unresponsive.set(False, now)  # noqa: FBT003
-                self._keep()
-                self._refresh(now)
-            return None
-        if self._last_command is not None:
-            if self._last_command[1] != wanted:
-                self._tries = 0
-            elif now - self._last_command[0] < ATTEMPT_INTERVAL:
-                return None
-        self._last_command = (now, wanted)
-        if self._tries >= self.settings.attempts:
-            self._defer(now)
-            return False
-        self._tries += 1
+        latest = self._latest()
+        if latest is not None and latest.running:
+            return None if latest.on is wanted else wanted
+        return None if actual is wanted else wanted
+
+    def send(self, on: bool, now: datetime) -> SwitchCommand:  # noqa: FBT001
+        """
+        Count a command sent now; the one still running the other way is cancelled.
+
+        A command is an attempt of its direction's series when it is sent; the
+        deferral's "off" is none.
+        """
+        latest = self._latest()
+        if latest is not None and latest.running and latest.task is not None:
+            latest.task.cancel()
+        command = SwitchCommand(on, now, deferral=self.deferred_until is not None)
+        self._commands.append(command)
+        if command.deferral:
+            self._off_owed = False
+        else:
+            self._series[on] += 1
         self._keep()
         self._refresh(now)
-        return wanted
+        return command
 
-    def _answered(self, wanted: bool) -> bool:  # noqa: FBT001
+    def ended(self, command: SwitchCommand, now: datetime) -> None:
         """
-        Return whether the switch carried out a command since its deferral ended.
+        Note the end of a command, whatever ended it.
 
-        "Not responding" ends only so: not when the switch is merely as wanted
-        (a thermostat that needs no heat while the IR is still lost).
+        Only that command: an overtaken one that ends late frees or restamps
+        none newer. The ended ones are forgotten once their window is over,
+        but the last of each direction.
         """
-        return (
-            self._retry_from is not None
-            and self._last_command is not None
-            and self._last_command[1] == wanted
-            and self._last_command[0] >= self._retry_from
-        )
+        command.ended_at = now
+        self._commands = [
+            c
+            for c in self._commands
+            if c.waiting(now) or c.running or c is self._latest(c.on)
+        ]
 
-    def overdue(self, now: datetime) -> bool:
-        """Return whether the command under way outlasted the budget of the attempts."""
-        return self._last_command is not None and (
-            now - self._last_command[0] >= ATTEMPT_INTERVAL * self.settings.attempts
-        )
-
-    def defer_now(self, now: datetime) -> None:
-        """Defer the switch now, its command hung: it holds no place meanwhile."""
-        self._last_command = (now, False)
-        self._defer(now)
-
-    def command_done(self, now: datetime, *, on: bool) -> None:
-        """Await the answer from the end of the command, not its start."""
-        if self._last_command is not None and self._last_command[1] is on:
-            self._last_command = (now, on)
+    def cancel_commands(self) -> None:
+        """Cancel the commands still running (the entry unloads)."""
+        for command in self._commands:
+            if command.running and command.task is not None:
+                command.task.cancel()
 
     def defer_if_exhausted(self, now: datetime) -> None:
         """
-        Defer the switch now if its next attempt would be one too many.
+        Defer the switch now if it is out of attempts or a command hangs.
 
-        Called before the capacity is shared, so that its place goes to
-        another thermostat in this cycle, not after a needless rotation.
+        Out of attempts: the series of the wanted state has as many failed
+        attempts as the attempts. Hung: a command not answered runs longer
+        than the budget of the attempts (attempts x a cycle). Called before
+        the capacity is shared, so that its place goes to another thermostat
+        in this cycle.
+        """
+        self._observe(now)
+        actual = self.switch_is_on()
+        if actual is None or self.deferred_until is not None:
+            return
+        attempts = self.settings.attempts
+        wanted = self.wanted(now)
+        hung = any(
+            c.running
+            and not c.closed
+            and now - c.sent_at >= ATTEMPT_INTERVAL * attempts
+            for c in self._commands
+        )
+        if hung or (actual is not wanted and self._failed(wanted, now) >= attempts):
+            self._defer(now)
+
+    def _latest(self, on: bool | None = None) -> SwitchCommand | None:  # noqa: FBT001
+        """Return the last command, or the last of a direction."""
+        return next(
+            (c for c in reversed(self._commands) if on is None or c.on is on), None
+        )
+
+    def _failed(self, on: bool, now: datetime) -> int:  # noqa: FBT001
+        """
+        Return the failed attempts of a direction's series.
+
+        A command is a failed attempt once its window is over without an
+        answer (DEC-014, rule 3), an overtaken one too: the ones still waiting
+        are not failed yet.
+        """
+        waiting = sum(
+            c.on is on and not c.deferral and c.waiting(now) for c in self._commands
+        )
+        return self._series[on] - waiting
+
+    def _observe(self, now: datetime) -> None:
+        """
+        End the series the switch answered: it is in the state of its command.
+
+        Only the switch's answer ends a series, never a new wanted state; an
+        answer to a command sent out of a deferral ends "Not responding".
         """
         actual = self.switch_is_on()
-        wanted = self.wanted(now)
-        if (
-            actual is not None
-            and self.deferred_until is None
-            and actual != wanted
-            and self._last_command is not None
-            and self._last_command[1] == wanted
-            and now - self._last_command[0] >= ATTEMPT_INTERVAL
-            and self._tries >= self.settings.attempts
+        if actual is None:
+            return
+        command = self._latest(actual)
+        if command is not None and not command.closed:
+            if not command.deferral and self.deferred_until is None:
+                self._unresponsive.set(False, now)  # noqa: FBT003
+        elif not self._series[actual]:
+            return
+        self._close(actual, now)
+
+    def lost_power(self, now: datetime) -> None:
+        """
+        Close the series "on": the power of the heater is cut.
+
+        A power cut is protection, not a fault (review 18): a start it cut
+        short is no failed attempt.
+        """
+        if self._series[True] or (
+            (command := self._latest(on=True)) is not None and not command.closed
         ):
-            self._last_command = (now, False)
-            self._defer(now)
+            self._close(True, now)  # noqa: FBT003
+
+    def _close(self, on: bool, now: datetime) -> None:  # noqa: FBT001
+        for c in self._commands:
+            c.closed = c.closed or c.on is on
+        self._series[on] = 0
+        self._keep()
+        self._refresh(now)
 
     def _defer(self, now: datetime) -> None:
         self.deferred_until = now + duration_dict_to_timedelta(
             self._entry.data.get(CONF_RECOVERY_TIMEOUT)
         )
-        self.expected_on, self.expected_changed_at, self._tries = False, now, 0
+        self.expected_on, self.expected_changed_at = False, now
+        # The retry after the deferral starts its series again
+        self._series = dict.fromkeys(self._series, 0)
+        self._off_owed = True
         self._unresponsive.set(True, now)  # noqa: FBT003
         self._keep()
         self._refresh(now)
@@ -401,7 +503,6 @@ class ThermostatControl:
     def _end_deferral(self, now: datetime) -> None:
         if self.deferred_until is not None and now >= self.deferred_until:
             self.deferred_until = None
-            self._retry_from = now
             self._keep()
 
     def _keep(self) -> None:
@@ -409,7 +510,8 @@ class ThermostatControl:
             self.subentry_id,
             expected_on=self.expected_on,
             expected_changed_at=self.expected_changed_at.isoformat(),
-            tries=self._tries,
+            series={_direction(on): n for on, n in self._series.items()},
+            unresponsive=self._unresponsive.raw,
             deferred_until=self.deferred_until.isoformat()
             if self.deferred_until
             else None,
@@ -487,8 +589,9 @@ class ThermostatControl:
     @property
     def attributes(self) -> dict[str, Any]:
         """Return the details of the control state."""
+        now = dt_util.utcnow()
         return {
-            "failed_attempts": self._tries,
+            "failed_attempts": max(self._failed(on, now) for on in (True, False)),
             "next_attempt": self.deferred_until,
         }
 

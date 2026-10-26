@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Any
 
 import pytest
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryDisabler,
@@ -18,6 +19,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -758,11 +760,67 @@ async def test_a_fix_of_a_gone_switch_removes_its_issue(
         translation_key="invalid_action",
         data={"entry_id": entry.entry_id, "subentry_id": "gone"},
     )
-    flow = ActionsRepairFlow({"entry_id": entry.entry_id, "subentry_id": "gone"})
-    flow.hass = hass
-    flow.issue_id = "invalid_action_gone"
+    assert await async_setup_component(hass, "repairs", {})
+    flows = hass.data["repairs"]["flow_manager"]
 
-    result = await flow.async_step_init()
+    result = await flows.async_init(DOMAIN, context={"issue_id": "invalid_action_gone"})
 
     assert result["type"] == "abort"
     assert ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_gone") is None
+
+
+async def test_a_start_cut_by_the_power_is_no_attempt(
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """E3: the power cut during a start: no "on" again, no failed attempt."""
+    await _relay_powers_the_switch(hass, on=True)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    assert len(services["heat"]) == 1
+    freezer.tick(timedelta(seconds=5))
+    hass.states.async_set(RELAY, STATE_OFF)  # the AC never started
+    for _ in range(5):
+        freezer.tick(timedelta(minutes=1))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+
+    state = _control_state(hass)
+    assert len(services["heat"]) == 1
+    assert state.state == "normal"
+    assert state.attributes["failed_attempts"] == 0
+
+
+async def test_a_heater_kept_on_without_power_after_a_restart(
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    hass_storage: dict,
+) -> None:
+    """E3: wanted on in the memory, its switch off, its power cut: no "on"."""
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "minor_version": 2,
+        "data": {
+            "Heater": {
+                "expected_on": True,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "series": {"on": 1},
+                "unresponsive": False,
+                "deferred_until": None,
+            }
+        },
+    }
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    for minute in range(1, 6):
+        _later(hass, minute * 60)
+        await hass.async_block_till_done()
+
+    state = _control_state(hass)
+    assert services["heat"] == []
+    assert state.state == "normal"
+    assert state.attributes["failed_attempts"] == 0

@@ -9,6 +9,7 @@ switch never stops the others; nothing is repeated every minute.
 # ruff: noqa: S101
 
 import asyncio
+import contextlib
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -390,14 +391,16 @@ async def test_attempts_are_one_a_cycle(floors: Floors) -> None:
     assert floors.calls.count(("turn_on", "floor_1")) <= 3
 
 
-async def test_attempts_are_shown_as_they_are_made(floors: Floors) -> None:
-    """The control state's failed_attempts follows each attempt."""
+async def test_attempts_are_shown_as_they_fail(floors: Floors) -> None:
+    """failed_attempts counts the attempts whose window is over unanswered."""
     floors.stuck.add("floor_1")
     await floors.setup()
-    await floors.tick(MINUTE)
-
     sensor = floors.entity_id("sensor", "floor_1_control_state")
-    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 2
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
+
+    await floors.tick(MINUTE)
+    assert floors.calls.count(("turn_on", "floor_1")) == 2
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
 
 
 async def test_memory_forgets_a_removed_thermostat(
@@ -608,13 +611,13 @@ async def test_a_restored_deferral_warns_once(
 
 
 async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> None:
-    """The first command after a start is no new decision: the kept tries go on."""
+    """The first command after a start is no new decision: the kept series goes on."""
     memory = ThermostatMemory(hass)
     memory.update(
         "floor_1",
         expected_on=True,
         expected_changed_at=dt_util.utcnow().isoformat(),
-        tries=2,
+        series={"on": 2},
         deferred_until=None,
     )
     entry = MockConfigEntry(domain=DOMAIN, minor_version=2, data={})
@@ -627,8 +630,10 @@ async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> No
     hass.states.async_set("switch.floor_1", STATE_OFF)
     control = ThermostatControl(hass, entry, subentry, memory)
 
-    assert control.to_command(dt_util.utcnow()) is True
-    assert control.attributes["failed_attempts"] == 3
+    now = dt_util.utcnow()
+    assert control.next_command(now) is True
+    control.send(True, now)  # noqa: FBT003
+    assert control.attributes["failed_attempts"] == 2
 
 
 async def test_a_start_that_brings_yellow_is_not_cancelled(floors: Floors) -> None:
@@ -847,7 +852,7 @@ async def test_a_long_command_spends_no_attempts(floors: Floors) -> None:
         await asyncio.sleep(0)
 
     assert floors.calls.count(("turn_on", "floor_1")) == 1
-    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
     assert floors.state("floor_1") == "normal"
     released.set()
     await setup
@@ -877,9 +882,10 @@ async def test_an_overtaking_command_is_an_attempt(floors: Floors) -> None:
 
     sensor = floors.entity_id("sensor", "floor_1_control_state")
     assert ("turn_off", "floor_1") in floors.calls
-    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
     released.set()
     await setup
+    await floors.tick(MINUTE)
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
 
 
 async def test_no_command_after_an_unload_during_a_slow_one(floors: Floors) -> None:
@@ -911,7 +917,7 @@ def _minutes(floors: Floors, seconds: int) -> None:
 async def test_an_unexpected_error_frees_the_switch(
     floors: Floors, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """D1: a command that raises (not a HomeAssistantError) is tried again, counted."""
+    """D1: a command that raises (not a HomeAssistantError) is tried again."""
     broken = True
 
     async def breaks() -> None:
@@ -927,7 +933,7 @@ async def test_an_unexpected_error_frees_the_switch(
 
     sensor = floors.entity_id("sensor", "floor_1_control_state")
     assert floors.calls.count(("turn_on", "floor_1")) == 2
-    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 2
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
 
     broken = False
     await floors.tick(MINUTE)
@@ -1010,7 +1016,8 @@ async def test_the_answer_is_awaited_from_the_end_of_the_command(
     await floors.tick(10, step=10)
     sensor = floors.entity_id("sensor", "floor_1_control_state")
     assert floors.calls.count(("turn_on", "floor_1")) == 1
-    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+    # Its window runs from its end: not failed yet
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
 
     floors.hass.states.async_set("switch.floor_1", STATE_ON)
     await floors.tick(MINUTE)
@@ -1037,3 +1044,204 @@ async def test_not_responding_ends_only_with_a_command_carried_out(
     await floors.tick(5 * MINUTE)
     assert "floor_1" in floors.on()
     assert floors.state("floor_1") == "normal"
+
+
+async def _turns() -> None:
+    """Let the tasks run without waiting for a command that hangs."""
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+
+async def test_an_overtaken_command_that_ends_late_changes_nothing(
+    floors: Floors,
+) -> None:
+    """E4: an "on" ignores its cancel by "off"; wanted on again: no second "on"."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def ignores_its_cancel() -> None:
+        if floors.calls[-1][0] != "turn_on":
+            return
+        on_started.set()
+        while not released.is_set():
+            with contextlib.suppress(asyncio.CancelledError):
+                await released.wait()
+
+    floors.before["floor_1"] = ignores_its_cancel
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    for hvac_mode in ("off", "heat"):
+        await floors.hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": floors.climate("floor_1"), "hvac_mode": hvac_mode},
+        )
+        await _turns()
+    first = [call for call in floors.calls if call[1] == "floor_1"]
+    released.set()  # the first "on" ends, the switch on
+    assert first == [("turn_on", "floor_1"), ("turn_off", "floor_1")]
+
+    await setup
+    await floors.tick(MINUTE)
+    assert floors.calls.count(("turn_on", "floor_1")) == 1
+    assert "floor_1" in floors.on()
+    assert floors.state("floor_1") == "normal"
+
+
+async def test_a_hung_start_taken_off_by_yellow_goes_on_counting(
+    floors: Floors,
+) -> None:
+    """E4: a hung start, taken off by yellow, is no new series in green: deferred."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if floors.calls[-1][0] == "turn_on":
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(
+        floors.setup(capacity=1, zones=True, settle=False)
+    )
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    for attempt in (1, 2):
+        assert floors.calls.count(("turn_on", "floor_1")) == attempt
+        assert floors.calls[-1] == ("turn_on", "floor_1")
+        _minutes(floors, MINUTE)  # past the start's window: not starting
+        await _turns()
+        floors.zone("yellow")
+        await _turns()
+        assert floors.calls[-1] == ("turn_off", "floor_1")
+        floors.zone("green")
+        await _turns()
+        _minutes(floors, MINUTE)  # past the window of the start taken off
+        await _turns()
+
+    assert floors.calls.count(("turn_on", "floor_1")) == 2
+    assert floors.state("floor_1") == "unresponsive"
+    released.set()
+    await setup
+
+
+async def test_a_hung_command_frees_its_place_in_the_same_cycle(
+    floors: Floors,
+) -> None:
+    """E1: A hangs past the budget, B works past its time, C waits: B stays, C starts."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if floors.calls[-1][0] == "turn_on":
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(floors.setup(min_working_minutes=1))
+    await on_started.wait()
+    await _turns()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_3"), "hvac_mode": "off"},
+    )
+    await _turns()
+    assert floors.on() == {"floor_2"}
+
+    # Past the budget (2 x 55 s) and B's working time, with no cycle between
+    floors.freezer.tick(timedelta(seconds=115))
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_3"), "hvac_mode": "heat"},
+    )
+    await _turns()
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert ("turn_off", "floor_2") not in floors.calls
+    assert floors.on() == {"floor_2", "floor_3"}
+    released.set()
+    await setup
+
+
+async def test_a_command_whose_switch_answered_never_hangs(floors: Floors) -> None:
+    """E2: an "on" whose sequence never ends, the switch on 10 s later: it stays."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if floors.calls[-1][0] == "turn_on":
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    _minutes(floors, 10)
+    floors.hass.states.async_set("switch.floor_1", STATE_ON)
+    for _ in range(5):
+        _minutes(floors, MINUTE)
+        await _turns()
+
+    assert ("turn_off", "floor_1") not in floors.calls
+    assert floors.state("floor_1") == "normal"
+    released.set()
+    await setup
+
+
+async def test_not_responding_lasts_across_a_restart(
+    floors: Floors, hass_storage: dict
+) -> None:
+    """E5: the deferral over, then a restart: "Not responding" until a command works."""
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "minor_version": 2,
+        "data": {
+            "floor_1": {
+                "expected_on": False,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "series": {},
+                "unresponsive": True,
+                "deferred_until": None,
+            }
+        },
+    }
+    floors.stuck.add("floor_1")
+    await floors.setup()
+    await floors.tick(MINUTE)
+    assert floors.state("floor_1") == "unresponsive"
+
+    floors.stuck.clear()
+    await floors.tick(3 * MINUTE)
+    assert "floor_1" in floors.on()
+    assert floors.state("floor_1") == "normal"
+
+
+async def test_the_old_memory_reads_as_series(
+    hass: HomeAssistant, hass_storage: dict
+) -> None:
+    """The memory of 1.1 (one count of tries) reads as the series, 1.2."""
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "data": {
+            "floor_1": {
+                "expected_on": True,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "tries": 2,
+                "deferred_until": None,
+            },
+            "floor_2": {
+                "expected_on": False,
+                "expected_changed_at": dt_util.utcnow().isoformat(),
+                "tries": 0,
+                "deferred_until": (dt_util.utcnow() + timedelta(hours=1)).isoformat(),
+            },
+        },
+    }
+    memory = ThermostatMemory(hass)
+    await memory.async_load()
+
+    assert memory.get("floor_1")["series"] == {"on": 2}
+    assert memory.get("floor_1")["unresponsive"] is False
+    assert "tries" not in memory.get("floor_1")
+    assert memory.get("floor_2")["series"] == {"off": 0}
+    assert memory.get("floor_2")["unresponsive"] is True
