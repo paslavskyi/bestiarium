@@ -222,7 +222,8 @@ class ThermostatControl:
         self._switch_gone = _Condition()
         self._no_temperature = _Condition()
         self._no_power = _Condition()
-        # When the switch last turned off: a start waits for the pause after it
+        # When the heater was last wanted off or its switch turned off: a
+        # start waits for the pause after it
         self.off_at: datetime | None = (
             _time(kept["off_at"]) if kept.get("off_at") else None
         )
@@ -343,8 +344,15 @@ class ThermostatControl:
         )
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
-        """Set what the balancer wants the switch to be; the series go on."""
+        """
+        Set what the balancer wants the switch to be; the series go on.
+
+        Wanted off, the heater pauses from now, before its switch shows it
+        (a virtual switch shows its power a delay later).
+        """
         if on != self.expected_on:
+            if not on:
+                self.off_at = now
             self.expected_on, self.expected_changed_at = on, now
             self._keep()
 
@@ -374,7 +382,9 @@ class ThermostatControl:
         the running one at once. A deferral sends its "off" once, then nothing
         until it ends.
         """
-        self._observe(now)
+        # Out of attempts already (a start decided after the check before the
+        # sharing, as one after its pause): no attempt more, the deferral
+        self.defer_if_exhausted(now)
         actual = self.switch_is_on()
         if actual is None:
             return None
