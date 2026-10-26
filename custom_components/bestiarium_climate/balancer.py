@@ -181,17 +181,17 @@ class BalancingCoordinator:
                 )
             )
         self._follow_zones()
-        # A power relay back on (or cut) changes the rotation: decide at once
-        if relays := power_relays(
-            self._hass, [c.switch for c in self.controls.values()]
-        ):
-            self._unsubscribe.append(
-                async_track_state_change_event(
-                    self._hass,
-                    relays,
-                    callback(lambda _event: self.async_request_balance()),
-                )
+        # A power relay back on (or cut) changes the rotation, and a switch
+        # that changes may disagree with what is wanted (a virtual switch
+        # showing its "on" late, a person): decide at once
+        switches = [c.switch for c in self.controls.values()]
+        self._unsubscribe.append(
+            async_track_state_change_event(
+                self._hass,
+                [*switches, *power_relays(self._hass, switches)],
+                callback(lambda _event: self.async_request_balance()),
             )
+        )
         self._unsubscribe.append(
             self._hass.bus.async_listen(
                 EVENT_ENTITY_REGISTRY_UPDATED, self._on_registry_updated

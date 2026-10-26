@@ -1103,7 +1103,8 @@ async def test_an_overtaken_command_that_ends_late_changes_nothing(
     await setup
     await floors.tick(MINUTE)
     assert floors.calls.count(("turn_on", "floor_1")) == 1
-    assert "floor_1" in floors.on()
+    # Its late "on" took no place: the capacity stays 2
+    assert len(floors.on()) <= 2
     assert floors.state("floor_1") == "normal"
 
 
@@ -1623,3 +1624,16 @@ async def test_a_command_runs_outside_the_script_that_ran_the_cycle(
         script_stack_cv.reset(token)
 
     assert stacks == [None]
+
+
+async def test_a_switch_turned_on_unwanted_is_turned_off_at_once(
+    floors: Floors,
+) -> None:
+    """A switch on that is not wanted (a person, a late "on"): "off" at once."""
+    await floors.setup()
+    assert floors.on() == {"floor_1", "floor_2"}
+
+    floors.hass.states.async_set("switch.floor_3", STATE_ON)
+    await floors.hass.async_block_till_done()
+
+    assert ("turn_off", "floor_3") in floors.calls
