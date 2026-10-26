@@ -46,12 +46,12 @@ def device_of_relay(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
     )
 
 
-def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
-    """Return the Bestiarium device that powers a virtual switch of Climate."""
+def power_entity(hass: HomeAssistant, switch: str) -> str | None:
+    """Return the power sensor a virtual switch of Climate reads, if it is one."""
     entity = er.async_get(hass).async_get(switch)
     if entity is None or entity.platform != DOMAIN:
         return None
-    power = next(
+    return next(
         (
             subentry.data.get(CONF_POWER_ENTITY)
             for entry in hass.config_entries.async_entries(DOMAIN)
@@ -61,6 +61,11 @@ def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
         ),
         None,
     )
+
+
+def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
+    """Return the Bestiarium device that powers a virtual switch of Climate."""
+    power = power_entity(hass, switch)
     devices = [
         entry
         for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES)

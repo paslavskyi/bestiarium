@@ -21,6 +21,7 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.script import script_stack_cv
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -39,6 +40,7 @@ from custom_components.bestiarium_climate.const import (
 )
 
 from custom_components.bestiarium_climate.control import (
+    async_get_thermostat_memory,
     ThermostatControl,
     ThermostatMemory,
 )
@@ -1475,19 +1477,22 @@ async def test_a_start_under_way_is_not_rotated_out(floors: Floors) -> None:
     await setup
 
 
-async def test_green_turns_out_before_the_new_one_fits(floors: Floors) -> None:
-    """Decision 32: the one past its time goes off; the new starts once it fits."""
-    await floors.setup(zones=True, min_working_minutes=1)
-    assert floors.on() == {"floor_1", "floor_2"}
-    floors.load(4600)  # 4600 - 2000 + 2000 > 4500: the new one does not fit
+async def test_a_waiting_heater_that_does_not_fit_takes_no_place(
+    floors: Floors,
+) -> None:
+    """SRC-140: the waiting one does not fit even with the freed power: heat goes on."""
+    # The running one draws 500 W; the waiting one 2000 W: 4000 - 500 + 2000 > 4500
+    await floors.setup(capacity=1, zones=True, heater_power=500, min_working_minutes=1)
+    await _hvac(floors, "floor_3", "off")
+    assert floors.on() == {"floor_1"}
+    floors.load(4000)
 
-    await floors.tick(2 * MINUTE)
-    assert len(floors.on()) == 1
-    assert ("turn_on", "floor_3") not in floors.calls
-
-    floors.load(1000)
-    await floors.tick(MINUTE, step=10)
-    assert "floor_3" in floors.on()
+    heating = 0
+    for _ in range(30):
+        await floors.tick(MINUTE)
+        heating += bool(floors.on())
+    assert heating >= 20
+    assert ("turn_off", "floor_1") not in floors.calls
 
 
 async def test_a_start_cut_short_pauses(floors: Floors) -> None:
@@ -1505,3 +1510,116 @@ async def test_a_start_cut_short_pauses(floors: Floors) -> None:
     assert floors.calls.count(("turn_on", "floor_1")) == starts
     await floors.tick(2 * MINUTE)
     assert "floor_1" in floors.on()
+
+
+async def test_a_second_attempt_is_no_start_under_way(floors: Floors) -> None:
+    """H1: a stuck switch's second "on" is no start under way, whatever is forgotten."""
+    floors.stuck.add("floor_1")
+    await floors.setup(capacity=1)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
+    control = floors.hass.data[DOMAIN][floors.entry.entry_id].controls["floor_1"]
+    assert control.starting(dt_util.utcnow())
+
+    for attempt in (2, 3):
+        await floors.tick(MINUTE)
+        assert floors.calls.count(("turn_on", "floor_1")) == attempt
+        assert not control.starting(dt_util.utcnow())
+
+
+async def test_a_switch_off_already_is_no_answer(
+    floors: Floors, caplog: pytest.LogCaptureFixture
+) -> None:
+    """H4: after the deferral a slow "on", overtaken by "off" of a switch off anyway."""
+    floors.stuck.add("floor_1")
+    await floors.setup(capacity=1)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
+    await floors.tick(3 * MINUTE)
+    assert floors.state("floor_1") == "unresponsive"
+
+    released = asyncio.Event()
+
+    async def slow() -> None:
+        if floors.calls[-1] == ("turn_on", "floor_1"):
+            await released.wait()
+
+    floors.before["floor_1"] = slow
+    _minutes(floors, 60 * MINUTE)  # the deferral (1 hour) is over: a retry
+    await _turns()
+    assert floors.calls[-1] == ("turn_on", "floor_1")
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_1"), "hvac_mode": "off"},
+    )
+    await _turns()
+    assert floors.calls[-1] == ("turn_off", "floor_1")  # the switch is off anyway
+    released.set()
+    await floors.tick(3 * MINUTE)
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert "Floor_1: control state back to normal" not in caplog.text
+
+
+async def test_the_overload_is_no_rotation(floors: Floors) -> None:
+    """H5: the overload turns all off at once and fires no rotation event."""
+    await floors.setup(capacity=1, zones=True)
+    floors.events.clear()
+    floors.zone("overload")
+    await floors.tick(10, step=10)
+
+    assert floors.on() == set()
+    assert "bestiarium_climate_device_rotated_out" not in floors.events
+
+
+async def test_a_hung_command_deferred_shows_its_failed_attempt(
+    floors: Floors,
+) -> None:
+    """H6: deferred by a command that never ends: one failed attempt, kept."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if floors.calls[-1] == ("turn_on", "floor_1"):
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(floors.setup(capacity=1))
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    for _ in range(3):
+        _minutes(floors, MINUTE)
+        await _turns()
+
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    state = floors.hass.states.get(sensor)
+    assert state.state == "unresponsive"
+    assert state.attributes["failed_attempts"] == 1
+    memory = await async_get_thermostat_memory(floors.hass)
+    assert memory.get("floor_1")["failed_at_deferral"] == 1
+    released.set()
+    await setup
+
+
+async def test_a_command_runs_outside_the_script_that_ran_the_cycle(
+    floors: Floors,
+) -> None:
+    """H8: a cycle run by a script's step sends with no script stack of its own."""
+    stacks: list[list[str] | None] = []
+
+    async def record() -> None:
+        stacks.append(script_stack_cv.get())
+
+    await floors.setup(capacity=3)
+    floors.before["floor_1"] = record
+    # As if a virtual switch's sequence turned the thermostat off
+    token = script_stack_cv.set(["bestiarium_climate.A off_action"])
+    try:
+        await _hvac(floors, "floor_1", "off")
+    finally:
+        script_stack_cv.reset(token)
+
+    assert stacks == [None]

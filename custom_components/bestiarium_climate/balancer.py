@@ -23,6 +23,7 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
+from homeassistant.helpers.script import script_stack_cv
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -58,6 +59,7 @@ from .devices import (
     expected_power,
     power_cut,
     power_device,
+    power_entity,
     power_relays,
 )
 from .rotation import Heater, arrange
@@ -72,7 +74,7 @@ if TYPE_CHECKING:
     from .command import SwitchCommand
     from .data import BestiariumClimateConfigEntry
 
-# The zones in which the balancer starts heaters (and so rotates them)
+# The zones in which the balancer starts heaters
 STARTING_ZONES = (Zone.GREEN, Zone.NONE)
 
 
@@ -446,11 +448,11 @@ class BalancingCoordinator:
         that needs Bestiarium Climate: the ones that worked least go first.
 
         The zones of the load, as the devices' balancer: green (or no load
-        limits) shares the capacity and rotates; yellow keeps the ones that
-        heat, starting none; the pause and no data change nothing; red turns
-        the heaters off one by one, the overload all at once. A switch the
-        load protection turned off is no failed attempt: out of green the
-        balancer does not want it on again.
+        limits) shares the capacity and rotates; yellow only turns off, by
+        the rotation, starting none; the pause and no data change nothing;
+        red turns the heaters off one by one, the overload all at once. A
+        switch the load protection turned off is no failed attempt: out of
+        green the balancer does not want it on again.
         """
         # The power cut: a heater that does not heat waits for it, holding no
         # place, and gets no command; one that heats goes off by its 0 W
@@ -538,23 +540,12 @@ class BalancingCoordinator:
         """
         deficit = capacity < len(ranked)
         if zone is Zone.OVERLOAD:
-            # Not in the devices' emergency queue: climate turns off all at once
+            # Not in the devices' emergency queue: climate turns off all at
+            # once; no rotation, so no rotation events
             for pair in ranked:
-                self._turn(pair, on=False, now=now, deficit=deficit)
+                self._turn(pair, on=False, now=now, deficit=False)
             return
-        arranged = arrange(
-            (
-                Heater(
-                    control.subentry_id,
-                    self._rank(thermostat, control, now),
-                    running=control.expected_on,
-                    starting=control.starting(now),
-                    paused=control.paused_until(now) is not None,
-                )
-                for thermostat, control in ranked
-            ),
-            capacity,
-        )
+        arranged = self._arranged(ranked, capacity, zone, now)
         for _thermostat, control in ranked:
             # Decide again the moment a pause ends
             if not control.expected_on and (until := control.paused_until(now)):
@@ -583,6 +574,60 @@ class BalancingCoordinator:
                 and self._start(control, now, zone, freed)
             ):
                 self._turn(pair, on=True, now=now, deficit=deficit)
+
+    def _arranged(
+        self,
+        ranked: list[tuple[VirtualThermostat, ThermostatControl]],
+        capacity: int,
+        zone: Zone,
+        now: datetime,
+    ) -> set[str]:
+        """
+        Return who should heat; a waiting one that does not fit holds no place.
+
+        The owner's decision (SRC-140): a waiting heater that does not fit
+        even with the power of the running one it would replace freed (load
+        minus that one's measured power plus its own over the red threshold;
+        an unknown load or threshold does not fit) takes no place, as one in
+        its pause: the running one goes on heating. Without load limits all
+        fit.
+        """
+        heaters = {
+            control.subentry_id: Heater(
+                control.subentry_id,
+                self._rank(thermostat, control, now),
+                running=control.expected_on,
+                starting=control.starting(now),
+                paused=control.paused_until(now) is not None,
+            )
+            for thermostat, control in ranked
+        }
+        load_and_threshold = self._load_and_red_threshold()
+        unfit: set[str] = set()
+        while True:
+            arranged = arrange(
+                (h for key, h in heaters.items() if key not in unfit), capacity
+            )
+            if zone is Zone.NONE:
+                return arranged
+            new = [
+                c for _, c in ranked if c.subentry_id in arranged and not c.expected_on
+            ]
+            out = [
+                c
+                for _, c in reversed(ranked)
+                if c.expected_on and c.subentry_id not in arranged
+            ]
+            for place, control in enumerate(new):
+                freed = self._measured_power(out[place]) if place < len(out) else 0
+                if load_and_threshold is None or (
+                    load_and_threshold[0] - freed + self._heater_power(control)[0]
+                    > load_and_threshold[1]
+                ):
+                    unfit.add(control.subentry_id)
+                    break
+            else:
+                return arranged
 
     def _start(
         self,
@@ -637,7 +682,8 @@ class BalancingCoordinator:
         The next start waits a step, so that the load shows the last one. A
         start fits when the load plus the heater's power stays at or below the
         red threshold (the rule of the devices' balancer, DEV-006), less the
-        power of the heaters turned off in this cycle; an unknown load or
+        measured power of the heaters turned off in this cycle; an unknown
+        load or
         threshold does not fit. Without load limits (no zone) only the
         capacity counts.
         """
@@ -653,7 +699,7 @@ class BalancingCoordinator:
             self._start_again(step)
             return False
         load, threshold = load_and_threshold
-        load -= sum(self._heater_power(control)[0] for control in freed)
+        load -= sum(self._measured_power(control) for control in freed)
         if load + power > threshold:
             LOGGER.debug(
                 "%s does not fit: %s W + %s W (%s) > %s W",
@@ -699,6 +745,20 @@ class BalancingCoordinator:
         if control.heater_power:
             return float(control.heater_power), "thermostat"
         return LARGE_HEATER_POWER_W, "large heater"
+
+    def _measured_power(self, control: ThermostatControl) -> float:
+        """
+        Return what a heater draws now: the power of its virtual switch.
+
+        A running air conditioner idling draws less than its expected power,
+        and frees only that; a switch without a power sensor, the expected.
+        """
+        entity_id = power_entity(self._hass, control.switch)
+        state = self._hass.states.get(entity_id) if entity_id else None
+        try:
+            return float(state.state) if state else self._heater_power(control)[0]
+        except ValueError:
+            return self._heater_power(control)[0]
 
     def _load_and_red_threshold(self) -> tuple[float, float] | None:
         """Return the load and the red threshold of bestiarium_mode, in W."""
@@ -781,6 +841,10 @@ class BalancingCoordinator:
         A command HA refuses counts as an attempt; the control state tells a
         lasting problem, so the refusal itself is only a debug line.
         """
+        # The command is no step of a script that happened to run the cycle
+        # (a virtual switch's sequence changing a power): with its stack, HA
+        # would refuse another switch's sequence as a recursion
+        script_stack_cv.set(None)
         try:
             await self._hass.services.async_call(
                 "switch",

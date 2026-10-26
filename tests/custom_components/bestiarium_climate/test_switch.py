@@ -946,3 +946,16 @@ async def test_no_power_while_the_thermostat_is_off_is_normal(
     await _heat(hass)
     await seconds(80)
     assert _control_state(hass).state == "no_power"
+
+
+async def test_the_freed_power_is_the_measured_one(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """H3: a virtual switch frees what its power sensor reads, not its expected."""
+    hass.states.async_set("sensor.temp", "15")
+    entry = await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    control = coordinator.controls["Heater"]
+    hass.states.async_set(POWER, "300")  # an air conditioner idling
+
+    assert coordinator._measured_power(control) == 300

@@ -65,6 +65,9 @@ class SwitchCommands:
         self._series = {on: kept.get(direction(on), 0) for on in (True, False)}
         # The commands running or in their window, and the last of each direction
         self._commands: list[SwitchCommand] = []
+        # The "on"s of the start the balancer wants now: its first, and how many
+        self._start: SwitchCommand | None = None
+        self._start_ons = 0
 
     @property
     def kept(self) -> dict[str, int]:
@@ -77,9 +80,19 @@ class SwitchCommands:
             (c for c in reversed(self._commands) if on is None or c.on is on), None
         )
 
-    def since(self, when: datetime, *, on: bool) -> list[SwitchCommand]:
-        """Return the commands of a direction sent at or after a moment."""
-        return [c for c in self._commands if c.on is on and c.sent_at >= when]
+    def new_start(self) -> None:
+        """Count the "on"s of a new start: the balancer wants the switch on now."""
+        self._start, self._start_ons = None, 0
+
+    @property
+    def start(self) -> SwitchCommand | None:
+        """Return the start's first command while it is the only "on" since."""
+        return self._start if self._start_ons == 1 else None
+
+    @property
+    def start_sent(self) -> bool:
+        """Return whether an "on" was sent for the start the balancer wants now."""
+        return self._start_ons > 0
 
     def waiting(self, now: datetime, *, on: bool) -> bool:
         """Return whether a command of a direction waits for its answer."""
@@ -132,6 +145,9 @@ class SwitchCommands:
         self._commands.append(command)
         if not deferral:
             self._series[on] += 1
+        if on:
+            self._start_ons += 1
+            self._start = self._start or command
         return command
 
     def ended(self, command: SwitchCommand, now: datetime) -> None:

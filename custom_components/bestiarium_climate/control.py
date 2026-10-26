@@ -201,7 +201,7 @@ class ThermostatControl:
         # A deferral turns the switch off once
         self._off_owed = False
         # The failed attempts that deferred the switch, shown while deferred
-        self._failed_at_deferral = 0
+        self._failed_at_deferral: int = kept.get("failed_at_deferral", 0)
         self._watching = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -278,8 +278,8 @@ class ThermostatControl:
         """
         if not self.expected_on:
             return False
-        commands = self._commands.since(self.expected_changed_at, on=True)
-        if len(commands) != 1 or not (command := commands[0]).waiting(now):
+        command = self._commands.start
+        if command is None or not command.waiting(now):
             return False
         state = self._hass.states.get(self.switch)
         return (
@@ -314,11 +314,10 @@ class ThermostatControl:
         switch shows it (a virtual switch shows its power a delay later).
         """
         if on != self.expected_on:
-            if not on and (
-                self.switch_is_on()
-                or self._commands.since(self.expected_changed_at, on=True)
-            ):
+            if not on and (self.switch_is_on() or self._commands.start_sent):
                 self.off_at = now
+            if on:
+                self._commands.new_start()
             self.expected_on, self.expected_changed_at = on, now
             self._keep()
 
@@ -403,7 +402,10 @@ class ThermostatControl:
         attempts = self.settings.attempts
         # The series the switch is not in the state of
         failed = self._commands.failed(now, on=not actual)
-        if failed >= attempts or self._commands.hung(now, ATTEMPT_INTERVAL * attempts):
+        if self._commands.hung(now, ATTEMPT_INTERVAL * attempts):
+            # The hung command is a failed attempt too
+            self._defer(now, failed + 1)
+        elif failed >= attempts:
             self._defer(now, failed)
 
     def _observe(self, now: datetime) -> None:
@@ -418,7 +420,16 @@ class ThermostatControl:
             return
         before = self._commands.kept
         command = self._commands.answer(actual)
-        if command is not None and not command.deferral and self.deferred_until is None:
+        # A switch in the state already when the command went is no answer of
+        # it: only a change after the command ends "Not responding"
+        state = self._hass.states.get(self.switch)
+        if (
+            command is not None
+            and not command.deferral
+            and self.deferred_until is None
+            and state is not None
+            and state.last_changed >= command.sent_at
+        ):
             self._unresponsive.set(False, now)  # noqa: FBT003
         if command is not None or self._commands.kept != before:
             self._keep()
@@ -461,6 +472,7 @@ class ThermostatControl:
             expected_changed_at=self.expected_changed_at.isoformat(),
             series=self._commands.kept,
             off_at=self.off_at.isoformat() if self.off_at else None,
+            failed_at_deferral=self._failed_at_deferral,
             unresponsive=self._unresponsive.raw,
             deferred_until=self.deferred_until.isoformat()
             if self.deferred_until
