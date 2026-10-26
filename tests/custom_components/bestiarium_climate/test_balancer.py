@@ -958,6 +958,37 @@ async def test_a_command_that_never_ends_is_a_problem(floors: Floors) -> None:
     await setup
 
 
+async def test_a_hung_command_no_longer_wanted_is_still_a_problem(
+    floors: Floors,
+) -> None:
+    """D3 on the stand: the rotation turns out a hung "on" past its budget: deferred."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if ("turn_off", "floor_1") not in floors.calls:
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    # Past the budget (3 x 55 s) with no cycle; then its thermostat goes off
+    floors.freezer.tick(timedelta(minutes=3))
+    await floors.hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": floors.climate("floor_1"), "hvac_mode": "off"},
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert ("turn_off", "floor_1") in floors.calls
+    released.set()
+    await setup
+
+
 async def test_the_answer_is_awaited_from_the_end_of_the_command(
     floors: Floors,
 ) -> None:

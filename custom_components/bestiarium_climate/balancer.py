@@ -358,18 +358,19 @@ class BalancingCoordinator:
                 continue
             running = self._sending.get(control.switch)
             if running is not None:
-                # A command under way: the same one waits for its answer (no
-                # attempt); the other way overtakes it at once ("off" cancels a
-                # running "on" sequence) and counts an attempt
-                if running is (on := control.wanted(now)):
-                    if not control.overdue(now):
-                        continue
-                    # Running past the budget of its attempts: a problem.
-                    # The deferral's "off" overtakes a hung "on".
+                # A command under way past the budget of its attempts is a
+                # problem, whatever is wanted now: the switch is deferred, and
+                # the deferral's "off" overtakes a hung "on". Before it, the
+                # same command waits for its answer (no attempt); the other way
+                # overtakes it at once ("off" cancels a running "on" sequence)
+                # and counts an attempt
+                if control.overdue(now):
                     control.defer_now(now)
                     if not running:
                         continue
                     on = False
+                elif running is (on := control.wanted(now)):
+                    continue
                 else:
                     control.overtake(now, on=on)
             elif (on := control.to_command(now)) is None:
