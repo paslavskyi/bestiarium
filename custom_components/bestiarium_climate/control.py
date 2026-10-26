@@ -347,11 +347,11 @@ class ThermostatControl:
         """
         Set what the balancer wants the switch to be; the series go on.
 
-        Wanted off, the heater pauses from now, before its switch shows it
-        (a virtual switch shows its power a delay later).
+        Wanted off while its switch is on, the heater pauses from now, before
+        its switch shows it (a virtual switch shows its power a delay later).
         """
         if on != self.expected_on:
-            if not on:
+            if not on and self.switch_is_on():
                 self.off_at = now
             self.expected_on, self.expected_changed_at = on, now
             self._keep()
@@ -382,9 +382,7 @@ class ThermostatControl:
         the running one at once. A deferral sends its "off" once, then nothing
         until it ends.
         """
-        # Out of attempts already (a start decided after the check before the
-        # sharing, as one after its pause): no attempt more, the deferral
-        self.defer_if_exhausted(now)
+        self._observe(now)
         actual = self.switch_is_on()
         if actual is None:
             return None
@@ -443,25 +441,28 @@ class ThermostatControl:
         """
         Defer the switch now if it is out of attempts or a command hangs.
 
-        Out of attempts: the series of the wanted state has as many failed
-        attempts as the attempts. Hung: a command not answered runs longer
-        than the budget of the attempts (attempts x a cycle). Called before
-        the capacity is shared, so that its place goes to another thermostat
-        in this cycle.
+        Out of attempts: a series has as many failed attempts as the
+        attempts, the switch not in its state, whatever is wanted now (a
+        heater out of attempts never takes another's place). Hung: a command
+        not answered runs longer than the budget of the attempts (attempts x
+        a cycle). Called before the capacity is shared, so that its place goes
+        to another thermostat in this cycle.
         """
         self._observe(now)
         actual = self.switch_is_on()
         if actual is None or self.deferred_until is not None:
             return
         attempts = self.settings.attempts
-        wanted = self.wanted(now)
         hung = any(
             c.running
             and not c.closed
             and now - c.sent_at >= ATTEMPT_INTERVAL * attempts
             for c in self._commands
         )
-        if hung or (actual is not wanted and self._failed(wanted, now) >= attempts):
+        if hung or any(
+            actual is not on and self._failed(on, now) >= attempts
+            for on in (True, False)
+        ):
             self._defer(now)
 
     def _latest(self, on: bool | None = None) -> SwitchCommand | None:  # noqa: FBT001

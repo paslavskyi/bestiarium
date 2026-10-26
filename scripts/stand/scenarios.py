@@ -217,9 +217,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "alias": "Стенд: скинути",
             "icon": "mdi:restore",
             "sequence": [
+                # The thermostats first: no start in a cycle the reset itself runs
+                *heat("off"),
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
-                *heat("off"),
                 *(ac_power(ac, AC_STANDBY_W) for _, _, ac in THERMOSTATS),
                 {
                     "action": "switch.turn_off",

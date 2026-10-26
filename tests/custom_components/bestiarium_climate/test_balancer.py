@@ -1323,3 +1323,31 @@ async def test_the_pause_starts_when_climate_turns_it_off(floors: Floors) -> Non
 
     sensor = floors.entity_id("sensor", "floor_2_control_state")
     assert floors.hass.states.get(sensor).attributes["pause_until"] is not None
+
+
+async def test_a_heater_out_of_attempts_takes_no_place(
+    floors: Floors, hass_storage: dict
+) -> None:
+    """A waiting heater out of attempts is deferred: it takes no runner's place."""
+    hour_ago = (dt_util.utcnow() - timedelta(hours=1)).isoformat()
+    kept = {"series": {}, "unresponsive": False, "deferred_until": None}
+    hass_storage["bestiarium_climate.thermostats"] = {
+        "version": 1,
+        "minor_version": 2,
+        "data": {
+            # Two run for an hour; the third's starts all went unanswered
+            "floor_1": {**kept, "expected_on": True, "expected_changed_at": hour_ago},
+            "floor_2": {**kept, "expected_on": True, "expected_changed_at": hour_ago},
+            "floor_3": {
+                **kept,
+                "expected_on": False,
+                "expected_changed_at": hour_ago,
+                "series": {"on": 7},
+            },
+        },
+    }
+    await floors.setup()
+
+    assert floors.state("floor_3") == "unresponsive"
+    assert floors.on() == {"floor_1", "floor_2"}
+    assert ("turn_off", "floor_2") not in floors.calls
