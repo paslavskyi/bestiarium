@@ -10,6 +10,7 @@ longer than the tolerance it is unavailable.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -229,6 +230,11 @@ class VirtualSwitch(SwitchEntity):
                 await other.async_stop()
         try:
             await script.async_run(context=self._context)
+        except asyncio.CancelledError:
+            # Stopped by another command (a step's call cancelled): a result
+            # for the caller, not its cancellation; its own is passed on
+            if (task := asyncio.current_task()) is not None and task.cancelling():
+                raise
         except HomeAssistantError:
             raise
         except Exception as err:

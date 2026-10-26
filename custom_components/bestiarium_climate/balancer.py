@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 from collections import Counter
 from datetime import datetime, timedelta
 from functools import partial
@@ -23,7 +24,6 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
-from homeassistant.helpers.script import script_stack_cv
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -68,7 +68,7 @@ from .util import duration_dict_to_timedelta
 if TYPE_CHECKING:
     import asyncio
 
-    from homeassistant.core import CALLBACK_TYPE, HomeAssistant
+    from homeassistant.core import CALLBACK_TYPE, EventStateChangedData, HomeAssistant
 
     from .climate import VirtualThermostat
     from .command import SwitchCommand
@@ -181,16 +181,19 @@ class BalancingCoordinator:
                 )
             )
         self._follow_zones()
-        # A power relay back on (or cut) changes the rotation, and a switch
-        # that changes may disagree with what is wanted (a virtual switch
-        # showing its "on" late, a person): decide at once
+        # Decide at once when a power relay changes (the rotation changes)
+        # and when a switch turns on (a virtual switch showing its "on" late,
+        # a person: it may not be wanted). A switch's "off" waits for the
+        # cycle: a moment's glitch turns nothing off. Changes of the state
+        # only, not of its attributes.
         switches = [c.switch for c in self.controls.values()]
         self._unsubscribe.append(
             async_track_state_change_event(
-                self._hass,
-                [*switches, *power_relays(self._hass, switches)],
-                callback(lambda _event: self.async_request_balance()),
+                self._hass, power_relays(self._hass, switches), self._on_changed
             )
+        )
+        self._unsubscribe.append(
+            async_track_state_change_event(self._hass, switches, self._on_switch_on)
         )
         self._unsubscribe.append(
             self._hass.bus.async_listen(
@@ -330,6 +333,22 @@ class BalancingCoordinator:
         return changed
 
     @callback
+    def _on_changed(self, event: Event[EventStateChangedData]) -> None:
+        old, new = event.data["old_state"], event.data["new_state"]
+        if (old and old.state) != (new and new.state):
+            self.async_request_balance()
+
+    @callback
+    def _on_switch_on(self, event: Event[EventStateChangedData]) -> None:
+        old, new = event.data["old_state"], event.data["new_state"]
+        if (
+            new is not None
+            and new.state == STATE_ON
+            and (old and old.state) != STATE_ON
+        ):
+            self.async_request_balance()
+
+    @callback
     def async_request_balance(self, _now: datetime | None = None) -> None:
         """
         Run a cycle now; asked for during one, it runs once more after it.
@@ -343,6 +362,12 @@ class BalancingCoordinator:
         if self._cycling:
             self._pending = True
             return
+        # Not a step of the script that asked (a virtual switch's sequence
+        # changing a power): its commands, events and timers carry no script
+        # stack, else HA refuses another switch's sequence as a recursion
+        contextvars.Context().run(self._cycles)
+
+    def _cycles(self) -> None:
         self._cycling = True
         try:
             self._pending = True
@@ -487,7 +512,7 @@ class BalancingCoordinator:
             if not any(control is c for _, c in working):
                 control.set_expected(False, now)  # noqa: FBT003
         for _thermostat, control in working:
-            if control.turned_off_by_another():
+            if control.turned_off_by_another(now):
                 control.set_expected(False, now)  # noqa: FBT003
         if zone is not Zone.RED:
             self._red_off_at = None
@@ -545,7 +570,7 @@ class BalancingCoordinator:
             for pair in ranked:
                 self._turn(pair, on=False, now=now, deficit=False)
             return
-        arranged = self._arranged(ranked, capacity, zone, now)
+        arranged, freed = self._arranged(ranked, capacity, zone, now)
         for _thermostat, control in ranked:
             # Decide again the moment a pause ends
             if not control.expected_on and (until := control.paused_until(now)):
@@ -565,13 +590,12 @@ class BalancingCoordinator:
         ]
         for pair in out:
             self._turn(pair, on=False, now=now, deficit=deficit)
-        freed = [control for _, control in out]
         for pair in ranked:
             control = pair[1]
             if (
                 control.subentry_id in arranged
                 and not control.expected_on
-                and self._start(control, now, zone, freed)
+                and self._start(control, now, zone, freed[control.subentry_id])
             ):
                 self._turn(pair, on=True, now=now, deficit=deficit)
 
@@ -581,16 +605,18 @@ class BalancingCoordinator:
         capacity: int,
         zone: Zone,
         now: datetime,
-    ) -> set[str]:
+    ) -> tuple[set[str], dict[str, float]]:
         """
-        Return who should heat; a waiting one that does not fit holds no place.
+        Return who should heat, and the power each new one frees by its place.
+
+        A waiting one that does not fit holds no place.
 
         The owner's decision (SRC-140): a waiting heater that does not fit
         even with the power of the running one it would replace freed (load
         minus that one's measured power plus its own over the red threshold;
         an unknown load or threshold does not fit) takes no place, as one in
         its pause: the running one goes on heating. Without load limits all
-        fit.
+        fit. While one does not fit, the next step decides again.
         """
         heaters = {
             control.subentry_id: Heater(
@@ -602,14 +628,11 @@ class BalancingCoordinator:
             )
             for thermostat, control in ranked
         }
-        load_and_threshold = self._load_and_red_threshold()
         unfit: set[str] = set()
         while True:
             arranged = arrange(
                 (h for key, h in heaters.items() if key not in unfit), capacity
             )
-            if zone is Zone.NONE:
-                return arranged
             new = [
                 c for _, c in ranked if c.subentry_id in arranged and not c.expected_on
             ]
@@ -618,23 +641,32 @@ class BalancingCoordinator:
                 for _, c in reversed(ranked)
                 if c.expected_on and c.subentry_id not in arranged
             ]
-            for place, control in enumerate(new):
-                freed = self._measured_power(out[place]) if place < len(out) else 0
-                if load_and_threshold is None or (
-                    load_and_threshold[0] - freed + self._heater_power(control)[0]
-                    > load_and_threshold[1]
-                ):
-                    unfit.add(control.subentry_id)
-                    break
-            else:
-                return arranged
+            # Each new one takes the place of the worst-ranked going out
+            freed = {
+                control.subentry_id: self._measured_power(out[place])
+                if place < len(out)
+                else 0.0
+                for place, control in enumerate(new)
+            }
+            if zone is Zone.NONE:
+                return arranged, freed
+            if (
+                no_fit := next(
+                    (c for c in new if not self._fits(c, freed[c.subentry_id])),
+                    None,
+                )
+            ) is None:
+                if unfit:
+                    self._start_again(timedelta(seconds=START_STEP_SECONDS))
+                return arranged, freed
+            unfit.add(no_fit.subentry_id)
 
     def _start(
         self,
         control: ThermostatControl,
         now: datetime,
         zone: Zone,
-        freed: list[ThermostatControl],
+        freed: float,
     ) -> bool:
         """Return whether an arranged heater starts now: one at a time, if it fits."""
         if not self._gate_open:
@@ -674,18 +706,13 @@ class BalancingCoordinator:
         control: ThermostatControl,
         now: datetime,
         zone: Zone,
-        freed: list[ThermostatControl],
+        freed: float,
     ) -> bool:
         """
         Return whether a heater may start now: one at a time, if it fits.
 
-        The next start waits a step, so that the load shows the last one. A
-        start fits when the load plus the heater's power stays at or below the
-        red threshold (the rule of the devices' balancer, DEV-006), less the
-        measured power of the heaters turned off in this cycle; an unknown
-        load or
-        threshold does not fit. Without load limits (no zone) only the
-        capacity counts.
+        The next start waits a step, so that the load shows the last one.
+        Without load limits (no zone) only the capacity counts.
         """
         step = timedelta(seconds=START_STEP_SECONDS)
         if zone is Zone.NONE:
@@ -693,26 +720,37 @@ class BalancingCoordinator:
         if self._started_at is not None and now - self._started_at < step:
             self._start_again(step - (now - self._started_at))
             return False
-        power, source = self._heater_power(control)
-        if (load_and_threshold := self._load_and_red_threshold()) is None:
-            LOGGER.debug("%s does not fit: load or red threshold unknown", control.name)
-            self._start_again(step)
-            return False
-        load, threshold = load_and_threshold
-        load -= sum(self._measured_power(control) for control in freed)
-        if load + power > threshold:
-            LOGGER.debug(
-                "%s does not fit: %s W + %s W (%s) > %s W",
-                control.name,
-                load,
-                power,
-                source,
-                threshold,
-            )
+        if not self._fits(control, freed):
             self._start_again(step)
             return False
         self._started_at = now
         self._start_again(step)
+        return True
+
+    def _fits(self, control: ThermostatControl, freed: float) -> bool:
+        """
+        Return whether a heater's start fits: the rule of the devices' balancer.
+
+        The load, less the measured power freed by the one it takes the place
+        of, plus the heater's power stays at or below the red threshold
+        (DEV-006, SRC-140); an unknown load or threshold does not fit.
+        """
+        if (load_and_threshold := self._load_and_red_threshold()) is None:
+            LOGGER.debug("%s does not fit: load or red threshold unknown", control.name)
+            return False
+        load, threshold = load_and_threshold
+        power, source = self._heater_power(control)
+        if load - freed + power > threshold:
+            LOGGER.debug(
+                "%s does not fit: %s W - %s W + %s W (%s) > %s W",
+                control.name,
+                load,
+                freed,
+                power,
+                source,
+                threshold,
+            )
+            return False
         return True
 
     def _start_again(self, delay: timedelta) -> None:
@@ -841,10 +879,6 @@ class BalancingCoordinator:
         A command HA refuses counts as an attempt; the control state tells a
         lasting problem, so the refusal itself is only a debug line.
         """
-        # The command is no step of a script that happened to run the cycle
-        # (a virtual switch's sequence changing a power): with its stack, HA
-        # would refuse another switch's sequence as a recursion
-        script_stack_cv.set(None)
         try:
             await self._hass.services.async_call(
                 "switch",

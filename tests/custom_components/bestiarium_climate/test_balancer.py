@@ -21,7 +21,6 @@ from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.script import script_stack_cv
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -1103,8 +1102,9 @@ async def test_an_overtaken_command_that_ends_late_changes_nothing(
     await setup
     await floors.tick(MINUTE)
     assert floors.calls.count(("turn_on", "floor_1")) == 1
-    # Its late "on" took no place: the capacity stays 2
-    assert len(floors.on()) <= 2
+    # Its late "on" took no place: turned off again, the others heat
+    assert floors.calls.count(("turn_off", "floor_1")) == 2
+    assert floors.on() == {"floor_2", "floor_3"}
     assert floors.state("floor_1") == "normal"
 
 
@@ -1605,27 +1605,6 @@ async def test_a_hung_command_deferred_shows_its_failed_attempt(
     await setup
 
 
-async def test_a_command_runs_outside_the_script_that_ran_the_cycle(
-    floors: Floors,
-) -> None:
-    """H8: a cycle run by a script's step sends with no script stack of its own."""
-    stacks: list[list[str] | None] = []
-
-    async def record() -> None:
-        stacks.append(script_stack_cv.get())
-
-    await floors.setup(capacity=3)
-    floors.before["floor_1"] = record
-    # As if a virtual switch's sequence turned the thermostat off
-    token = script_stack_cv.set(["bestiarium_climate.A off_action"])
-    try:
-        await _hvac(floors, "floor_1", "off")
-    finally:
-        script_stack_cv.reset(token)
-
-    assert stacks == [None]
-
-
 async def test_a_switch_turned_on_unwanted_is_turned_off_at_once(
     floors: Floors,
 ) -> None:
@@ -1637,3 +1616,74 @@ async def test_a_switch_turned_on_unwanted_is_turned_off_at_once(
     await floors.hass.async_block_till_done()
 
     assert ("turn_off", "floor_3") in floors.calls
+
+
+async def test_a_moment_off_of_a_running_switch_turns_nothing_off(
+    floors: Floors,
+) -> None:
+    """I1: a running switch off for a second, then on: no "off", the same heaters."""
+    await floors.setup()
+    await floors.tick(MINUTE)
+    assert floors.on() == {"floor_1", "floor_2"}
+
+    floors.hass.states.async_set("switch.floor_1", STATE_OFF)
+    await floors.hass.async_block_till_done()
+    floors.freezer.tick(timedelta(seconds=1))
+    # A cycle within the glitch (the periodic one) turns nothing off either
+    floors.hass.data[DOMAIN][floors.entry.entry_id].async_request_balance()
+    floors.hass.states.async_set("switch.floor_1", STATE_ON)
+    await floors.hass.async_block_till_done()
+    await floors.tick(MINUTE)
+
+    assert ("turn_off", "floor_1") not in floors.calls
+    assert floors.on() == {"floor_1", "floor_2"}
+
+
+async def test_a_waiting_heater_starts_the_step_after_it_fits(
+    floors: Floors,
+) -> None:
+    """I2: the load falls: the waiting one that did not fit starts within a step."""
+    await floors.setup(capacity=1, zones=True, heater_power=500, min_working_minutes=1)
+    await _hvac(floors, "floor_3", "off")
+    floors.load(4000)  # 4000 - 500 + 2000 > 4500: floor 2 does not fit
+    await floors.tick(2 * MINUTE)
+    assert ("turn_on", "floor_2") not in floors.calls
+
+    floors.load(1000)
+    await floors.tick(10, step=10)
+    assert ("turn_on", "floor_2") in floors.calls
+
+
+async def test_an_idling_heater_frees_only_what_it_draws(floors: Floors) -> None:
+    """I7: the running one draws 300 W of its 2000: it frees 300; none starts into red."""
+    floors.hass.states.async_set("sensor.floor_1_power", "300")
+    with patch(
+        "custom_components.bestiarium_climate.balancer.power_entity",
+        lambda _hass, switch: "sensor.floor_1_power"
+        if switch == "switch.floor_1"
+        else None,
+    ):
+        await floors.setup(capacity=1, zones=True, min_working_minutes=1)
+        await _hvac(floors, "floor_3", "off")
+        # 4000 - 300 + 2000 > 4500; with its expected 2000 freed it would fit
+        floors.load(4000)
+        await floors.tick(3 * MINUTE)
+
+    assert ("turn_on", "floor_2") not in floors.calls
+    assert ("turn_off", "floor_1") not in floors.calls
+
+
+async def test_a_second_attempt_in_yellow_is_turned_off(floors: Floors) -> None:
+    """I7 (H1): a stuck switch's second attempt is no start under way in yellow."""
+    floors.stuck.add("floor_1")
+    await floors.setup(capacity=1, zones=True, settle=False)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    for floor in ("floor_2", "floor_3"):
+        await _hvac(floors, floor, "off")
+    await floors.tick(MINUTE)
+    assert floors.calls.count(("turn_on", "floor_1")) == 2
+
+    floors.zone("yellow")
+    await floors.tick(10, step=10)
+    control = floors.hass.data[DOMAIN][floors.entry.entry_id].controls["floor_1"]
+    assert not control.expected_on

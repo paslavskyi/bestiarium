@@ -15,10 +15,11 @@ from homeassistant.config_entries import (
     ConfigSubentryData,
 )
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant, ServiceCall, State
+from homeassistant.core import HomeAssistant, ServiceCall, State, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.script import script_stack_cv
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -219,7 +220,9 @@ async def test_off_stops_a_running_sequence(
         )
     )
     started = asyncio.Event()
-    hass.services.async_register("test", "started", lambda _call: started.set())
+    hass.services.async_register(
+        "test", "started", callback(lambda _call: started.set())
+    )
     turning_on = hass.async_create_task(_turn(hass, "turn_on"))
     await started.wait()
 
@@ -959,3 +962,93 @@ async def test_the_freed_power_is_the_measured_one(
     hass.states.async_set(POWER, "300")  # an air conditioner idling
 
     assert coordinator._measured_power(control) == 300
+
+
+async def test_off_during_a_step_call_is_no_cancel_for_the_caller(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """I4: "off" while the "on" sequence waits in a service call: "on" just ends."""
+    started, never = asyncio.Event(), asyncio.Event()
+
+    async def slow(_call: ServiceCall) -> None:
+        started.set()
+        await never.wait()
+
+    hass.services.async_register("test", "slow", slow)
+    await setup(
+        _switch(heating_action=[{"action": "test.slow"}, {"action": "test.heat"}])
+    )
+    turning_on = hass.async_create_task(_turn(hass, "turn_on"))
+    await started.wait()
+
+    await _turn(hass, "turn_off")
+    await turning_on  # no CancelledError for the one who turned it on
+
+    assert len(services["off"]) == 1
+    assert services["heat"] == []
+
+
+async def test_ha_refuses_a_sequence_already_on_the_script_stack(
+    hass: HomeAssistant, setup: Setup, caplog: pytest.LogCaptureFixture
+) -> None:
+    """I5: HA's recursion guard, as climate relies on it (script_stack_cv)."""
+    await setup(_switch(off_action=[{"action": "test.off"}]))
+    switch = hass.data["entity_components"]["switch"].get_entity(SWITCH)
+    off_action = switch._scripts["off_action"]
+    token = script_stack_cv.set([off_action.unique_id])
+    try:
+        await off_action.async_run(context=None)
+    finally:
+        script_stack_cv.reset(token)
+
+    assert "Disallowed recursion detected" in caplog.text
+
+
+async def test_a_cycle_run_inside_a_sequence_refuses_no_other_switch(
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    freezer: FrozenDateTimeFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """I5, I7 (H8): A's sequence runs the cycle while B's "off" is on the stack."""
+    hass.states.async_set(POWER, "1000")
+    hass.states.async_set(POWER_B, "1000")
+    hass.states.async_set("sensor.temp", "15")
+    await setup(
+        _switch(),
+        _second_switch(off_action=[{"action": "test.cool"}]),
+        _thermostat("Heater", ClimateMode.HEATING),
+        _second_thermostat(),
+        power="1000",
+    )
+    for name in ("climate.heater", "climate.second"):
+        await hass.services.async_call(
+            "climate", "set_hvac_mode", {"entity_id": name, "hvac_mode": "heat"}
+        )
+    await hass.async_block_till_done()
+    freezer.tick(timedelta(minutes=2))  # the windows of the first commands over
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    cools = len(services["cool"])
+
+    # As in A's sequence (its stack shared), B's "off" already on the stack
+    switch_b = hass.data["entity_components"]["switch"].get_entity(SWITCH_B)
+    stack = [
+        "bestiarium_climate.Floor off_action",
+        switch_b._scripts["off_action"].unique_id,
+    ]
+    token = script_stack_cv.set(stack)
+    try:
+        await hass.services.async_call(
+            "climate",
+            "set_hvac_mode",
+            {"entity_id": "climate.second", "hvac_mode": "off"},
+            blocking=True,
+        )
+    finally:
+        script_stack_cv.reset(token)
+    await hass.async_block_till_done()
+
+    assert len(services["cool"]) == cools + 1  # B's "off" sequence ran
+    assert "Disallowed recursion detected" not in caplog.text

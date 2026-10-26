@@ -288,12 +288,13 @@ class ThermostatControl:
             and state.last_changed <= command.sent_at
         )
 
-    def turned_off_by_another(self) -> bool:
+    def turned_off_by_another(self, now: datetime) -> bool:
         """
         Return whether the switch, wanted on, was turned off after the last command.
 
         The load protection of the devices (or a person) did it: no failed
-        attempt; a new start has to fit again.
+        attempt; a new start has to fit again. An "off" shorter than the
+        tolerance is a glitch (DEC-014, rule 1): the heater goes on.
         """
         command = self._commands.latest()
         if not (self.expected_on and command is not None and command.on):
@@ -303,6 +304,8 @@ class ThermostatControl:
             state is not None
             and state.state == STATE_OFF
             and state.last_changed > command.sent_at
+            and now - state.last_changed
+            >= timedelta(seconds=self.settings.tolerance_seconds)
         )
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
