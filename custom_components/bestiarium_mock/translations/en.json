@@ -18,6 +18,9 @@
       },
       "ir_lost": {
         "name": "IR lost"
+      },
+      "ir_hangs": {
+        "name": "IR hangs"
       }
     },
     "sensor": {

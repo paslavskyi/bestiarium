@@ -121,15 +121,24 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         """
         Play the IR of an air conditioner: it runs (or stands by) if it hears it.
 
-        Its knob "IR lost" is an IR that does not reach it, its socket (the
-        power) still working; with its socket off (the load protection) it
-        draws nothing anyway.
+        Its knob "IR lost" is an IR that does not reach it, "IR hangs" an "on"
+        that never ends while the knob is on; its socket (the power) still
+        works. With its socket off (the load protection) it draws nothing anyway.
         """
         lost = reg.mock("switch", f"mock_{ac}_ir_lost")
+        hangs = reg.mock("switch", f"mock_{ac}_ir_hangs")
+        starting = (
+            [
+                {"wait_template": f"{{{{ is_state('{hangs}', 'off') }}}}"},
+                # An air conditioner takes a few seconds to start
+                wait(5),
+            ]
+            if watts == AC_RUNNING_W
+            else []
+        )
         return [
             {"condition": "state", "entity_id": lost, "state": "off"},
-            # An air conditioner takes a few seconds to start
-            *([wait(5)] if watts == AC_RUNNING_W else []),
+            *starting,
             ac_power(ac, watts),
         ]
 
@@ -152,6 +161,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         if device.priority == LOAD_PRIORITY_ALWAYS_ON
     ]
     ir_lost = [reg.mock("switch", f"mock_{ac}_ir_lost") for _, _, ac in THERMOSTATS]
+    ir_hangs = [reg.mock("switch", f"mock_{ac}_ir_hangs") for _, _, ac in THERMOSTATS]
     irs = {
         f"ir_{ac}_{command}": {
             "alias": f"Стенд: ІЧ {name} — {label}",
@@ -174,7 +184,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
                 *heat("off"),
                 *(ac_power(ac, AC_STANDBY_W) for _, _, ac in THERMOSTATS),
-                {"action": "switch.turn_off", "target": {"entity_id": ir_lost}},
+                {
+                    "action": "switch.turn_off",
+                    "target": {"entity_id": [*ir_lost, *ir_hangs]},
+                },
                 {
                     "action": "number.set_value",
                     "target": {"entity_id": capacity},
@@ -285,6 +298,16 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 reset,
                 # The IR of the first air conditioner does not reach it
                 {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
+                *heat("heat"),
+            ],
+        },
+        "thermostats_hung_command": {
+            "alias": "Стенд: термостати — команда, що не закінчується",
+            "icon": "mdi:timer-sand-paused",
+            "sequence": [
+                reset,
+                # The "on" of the first air conditioner never ends
+                {"action": "switch.turn_on", "target": {"entity_id": ir_hangs[0]}},
                 *heat("heat"),
             ],
         },

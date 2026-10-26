@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
+    from .faults import MockSocket
 
 
 async def async_setup_entry(
@@ -30,25 +31,32 @@ async def async_setup_entry(
         MockDeviceSwitch(socket, None) for socket in coordinator.sockets.values()
     )
     async_add_entities(
-        MockIrLostSwitch(socket, "ir_lost")
+        MockIrKnobSwitch(socket, knob)
         for socket in coordinator.sockets.values()
         if socket.spec.has_ir
+        for knob in ("ir_lost", "ir_hangs")
     )
 
 
-class MockIrLostSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):
+class MockIrKnobSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):
     """
-    A test knob: the IR does not reach the air conditioner.
+    A test knob of the air conditioner's IR, checked by the stand's IR scripts.
 
-    The stand's IR scripts check it; the socket (the AC's power) still works.
+    "IR lost": the IR does not reach the air conditioner. "IR hangs": its "on"
+    never ends (a cloud call that never returns). The socket (the AC's power)
+    still works.
     """
 
-    _attr_translation_key = "ir_lost"
     _attr_entity_category = EntityCategory.CONFIG
     _attr_is_on = False
 
+    def __init__(self, socket: MockSocket, knob: str) -> None:
+        """Initialize the knob."""
+        super().__init__(socket, knob)
+        self._attr_translation_key = knob
+
     async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
-        """Lose the IR."""
+        """Break the IR."""
         self._attr_is_on = True
         self.async_write_ha_state()
 

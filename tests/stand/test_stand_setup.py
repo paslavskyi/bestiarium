@@ -258,21 +258,23 @@ async def test_broken_automation_is_removed(
     assert "old_mock_click" not in (tmp_path / "automations.yaml").read_text()
 
 
+class _Registry:
+    """The stand's registry with every mock entity named by its unique_id."""
+
+    entities: list = []  # noqa: RUF012
+
+    def mock(self, domain: str, unique_id: str) -> str:
+        return f"{domain}.{unique_id}"
+
+    def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
+        return f"{domain}.{unique_id}"
+
+    def stand_climate(self) -> list:
+        return []
+
+
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
-
-    class _Registry:
-        entities: list = []  # noqa: RUF012
-
-        def mock(self, domain: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
-        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
-        def stand_climate(self) -> list:
-            return []
-
     reset = scenario_scripts(_Registry())["reset"]["sequence"]
     switched = {
         step["action"]: step["target"]["entity_id"]
@@ -305,19 +307,6 @@ def test_stand_climate_is_only_the_stand_entry() -> None:
 
 def test_a_dead_ir_leaves_the_power_working() -> None:
     """Review 20, C7: the dead IR is its own knob, not the AC socket's profile."""
-
-    class _Registry:
-        entities: list = []  # noqa: RUF012
-
-        def mock(self, domain: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
-        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
-        def stand_climate(self) -> list:
-            return []
-
     scripts = scenario_scripts(_Registry())
     dead = scripts["thermostats_dead_switch"]["sequence"]
     assert {
@@ -333,3 +322,18 @@ def test_a_dead_ir_leaves_the_power_working() -> None:
         "entity_id": "switch.mock_ac_1_ir_lost",
         "state": "off",
     }
+
+
+def test_a_hung_ir_waits_for_its_knob() -> None:
+    """Review 22, D3: the "on" of a hung IR does not end while its knob is on."""
+    scripts = scenario_scripts(_Registry())
+    assert {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.mock_ac_1_ir_hangs"},
+    } in scripts["thermostats_hung_command"]["sequence"]
+    assert scripts["ir_ac_1_on"]["sequence"][1] == {
+        "wait_template": "{{ is_state('switch.mock_ac_1_ir_hangs', 'off') }}"
+    }
+    assert all(
+        "wait_template" not in step for step in scripts["ir_ac_1_off"]["sequence"]
+    )

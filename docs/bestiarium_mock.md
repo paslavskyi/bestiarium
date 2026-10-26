@@ -72,7 +72,7 @@ Device names are translated (`device` in the translations, `translation_key`
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
-| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; the fault profile is the socket's (the power relay's) own (review 20, C7) |
+| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7) |
 | `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
 
 ---
@@ -230,6 +230,7 @@ the script fails if HA did not load them.
    | `mode_off_turned_on` | reset; the Tuya socket on; "Night" turns it off; 10 s later a person turns it on; green leaves it on |
    | `mode_off_red` | reset; "Night"; the Tuya socket, night light and boiler on; the cooker pushes the grid 200 W into red: the Tuya socket goes first, then the queue |
    | `thermostats_dead_switch` | reset; floor heating 1 "Unresponsive"; the three thermostats heat to 25 °C (capacity 2): floor 1 is deferred after 3 attempts and floor 3 takes its place |
+   | `thermostats_hung_command` | reset; the IR "on" of AC 1 never ends ("IR hangs"); the thermostats heat: past 3 attempts' time AC 1 is "Not responding", its "off" overtakes the hung "on" |
    | `thermostats_no_temperature` | reset; the thermostats heat; 90 s later thermometer 2 "No data": after a minute floor 2 is off, its thermostat unavailable, "No temperature data" |
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |
