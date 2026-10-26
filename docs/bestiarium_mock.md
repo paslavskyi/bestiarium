@@ -212,10 +212,14 @@ the script fails if HA did not load them.
    The Matter socket gets no entry: it is free for re-pointing the boiler to
    it (the boiler's "Reconfigure" → another device).
 
-3. Replaces the stand's Bestiarium Climate entry (the one with the "Stand
-   floor" thermostats; others are kept) with one entry (capacity 2, control
-   settings: 3 attempts, so a dead switch is deferred in 3 minutes) and
-   thermostats "Stand floor 1–3" on thermometers 1–3 and floor heating 1–3.
+3. Replaces the stand's Bestiarium Climate entry (the one with the stand
+   thermostats; others are kept) with one entry (capacity 2, control
+   settings: 2 attempts, so a dead switch is deferred in 2 minutes; the
+   recovery timeout 5 minutes) and thermostats "Stand AC 1–3" on
+   thermometers 1–3 and the virtual switches of AC 1–3, each with a minimum
+   cycle duration of 1 minute (the pause after an "off" and the working time
+   before a rotation, decision 29), so that a scenario shows its result
+   within 4 minutes of its button.
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
@@ -229,8 +233,9 @@ the script fails if HA did not load them.
    | `mode_off_unresponsive` | reset; the Tuya socket on, then "Unresponsive"; "Night": retries, then "Does not turn off by mode" |
    | `mode_off_turned_on` | reset; the Tuya socket on; "Night" turns it off; 10 s later a person turns it on; green leaves it on |
    | `mode_off_red` | reset; "Night"; the Tuya socket, night light and boiler on; the cooker pushes the grid 200 W into red: the Tuya socket goes first, then the queue |
-   | `thermostats_dead_switch` | reset; the IR of AC 1 lost ("IR lost"); the stand's loads not allowed (the load stays green); AC 1 heats to 30 °C, the others to 25 °C (capacity 2), so AC 1 starts first: after 3 attempts (about 3 minutes) it is "Not responding" and AC 3 takes its place |
-   | `thermostats_hung_command` | reset; the IR "on" of AC 1 never ends ("IR hangs"); the stand's loads not allowed; AC 1 heats to 30 °C, the others to 25 °C, so AC 1 starts first: past 3 attempts' time (165 s) it is "Not responding", its "off" overtakes the hung "on" |
+   | `thermostats_dead_switch` | reset; the IR of AC 1 lost ("IR lost"); the stand's loads not allowed (the load stays green); AC 1 heats to 30 °C, the others to 25 °C (capacity 2), so AC 1 starts first: after 2 attempts (about 2 minutes) it is "Not responding" and AC 3 takes its place |
+   | `thermostats_hung_command` | reset; the IR "on" of AC 3 never ends ("IR hangs"; AC 3, as AC 1 may be deferred by the dead switch scenario); the stand's loads not allowed; AC 3 heats to 30 °C, the others to 25 °C, so AC 3 starts first: past 2 attempts' time (110 s) it is "Not responding", its "off" overtakes the hung "on" |
+   | `climate_rotation` | reset; the stand's loads not allowed; the three thermostats heat (capacity 2): every minute (the stand thermostats' minimum cycle duration) one air conditioner goes out and the waiting one starts, in the same cycle; the one turned out pauses a minute, so there is no cascade (decision 29) |
    | `thermostats_no_temperature` | reset; the stand's loads not allowed; AC 2 heats to 30 °C, the others to 25 °C, so AC 2 starts first; 90 s later thermometer 2 "No data": after a minute AC 2 is off, its thermostat unavailable, "No temperature data" |
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |

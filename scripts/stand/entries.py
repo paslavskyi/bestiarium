@@ -216,11 +216,11 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         },
     )
     entry_id = result["result"]["entry_id"]
-    # Three attempts (minutes): a dead switch is deferred quickly on the stand
+    # Two attempts (minutes): a dead switch is deferred quickly on the stand
     await ha.flow(
         "options/flow",
         entry_id,
-        {"attempts": 3, "tolerance_seconds": 60, "hysteresis_seconds": 60},
+        {"attempts": 2, "tolerance_seconds": 60, "hysteresis_seconds": 60},
     )
     # The virtual switch of each air conditioner: IR by the stand's scripts,
     # its state by the power of the AC's socket
@@ -262,6 +262,10 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
                 "thermostat_mode": "heating",
                 "cold_tolerance": 0.3,
                 "hot_tolerance": 0.3,
+                # The pause after an "off" and the working time before a
+                # rotation (decision 29): a minute, so that a scenario shows
+                # its result within 4 minutes of its button
+                "min_cycle_duration": {"hours": 0, "minutes": 1, "seconds": 0},
             },
             {},
         )

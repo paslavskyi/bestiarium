@@ -172,20 +172,24 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
     loads_scene_id = "bestiarium_stand_loads_allowed"
     loads_scene = f"scene.{loads_scene_id}"
 
+    # The stand's loads not allowed, their state kept for the reset
+    loads_wait = [
+        {
+            "action": "scene.create",
+            "data": {"scene_id": loads_scene_id, "snapshot_entities": loads},
+        },
+        {"action": "switch.turn_off", "target": {"entity_id": loads}},
+    ]
+
     def faulty_first(ac: int) -> list[dict[str, Any]]:
         """
         Make one air conditioner the first in the queue, the load green.
 
         Its thermostat heats to 30 °C, the others to 25 °C: the largest
-        difference goes first. The stand's loads are not allowed, their state
-        kept for the reset.
+        difference goes first.
         """
         return [
-            {
-                "action": "scene.create",
-                "data": {"scene_id": loads_scene_id, "snapshot_entities": loads},
-            },
-            {"action": "switch.turn_off", "target": {"entity_id": loads}},
+            *loads_wait,
             *heat("heat"),
             {
                 "action": "climate.set_temperature",
@@ -350,9 +354,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:timer-sand-paused",
             "sequence": [
                 reset,
-                # The "on" of the first air conditioner never ends
-                {"action": "switch.turn_on", "target": {"entity_id": ir_hangs[0]}},
-                *faulty_first(1),
+                # The "on" of the third air conditioner never ends (the first
+                # may be deferred by the dead switch scenario)
+                {"action": "switch.turn_on", "target": {"entity_id": ir_hangs[2]}},
+                *faulty_first(3),
             ],
         },
         "thermostats_no_temperature": {
@@ -369,6 +374,11 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "alias": "Стенд: клімат за зонами — старт (далі навантаження кнопками)",
             "icon": "mdi:radiator",
             "sequence": [reset, *heat("heat")],
+        },
+        "climate_rotation": {
+            "alias": "Стенд: клімат — ротація, ємність 2 з трьох",
+            "icon": "mdi:rotate-3d-variant",
+            "sequence": [reset, *loads_wait, *heat("heat")],
         },
         "climate_fit": {
             "alias": "Стенд: клімат — вміщається лише один обігрівач",

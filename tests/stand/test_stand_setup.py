@@ -338,7 +338,7 @@ def test_a_hung_ir_waits_for_its_knob() -> None:
     scripts = scenario_scripts(_Registry())
     assert {
         "action": "switch.turn_on",
-        "target": {"entity_id": "switch.mock_ac_1_ir_hangs"},
+        "target": {"entity_id": "switch.mock_ac_3_ir_hangs"},
     } in scripts["thermostats_hung_command"]["sequence"]
     assert scripts["ir_ac_1_on"]["sequence"][1] == {
         "wait_template": "{{ is_state('switch.mock_ac_1_ir_hangs', 'off') }}"
@@ -362,7 +362,7 @@ def test_a_fault_scenario_shows_its_fault_first() -> None:
     ]
     for name, ac in (
         ("thermostats_dead_switch", 0),
-        ("thermostats_hung_command", 0),
+        ("thermostats_hung_command", 2),
         ("thermostats_no_temperature", 1),
     ):
         sequence = scripts[name]["sequence"]
