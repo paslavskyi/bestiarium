@@ -34,6 +34,7 @@ from custom_components.bestiarium_climate.const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
 )
+from custom_components.bestiarium_climate.control import async_get_thermostat_memory
 from custom_components.bestiarium_climate.devices import (
     expected_power,
     power_cut,
@@ -49,6 +50,8 @@ pytestmark = pytest.mark.usefixtures("enable_custom_integrations")
 
 SWITCH = "switch.floor"
 POWER = "sensor.floor_power"
+POWER_B = "sensor.floor_b_power"
+SWITCH_B = "switch.floor_b"
 RELAY = "switch.ac_relay"
 DELAY = 10
 TOLERANCE = 60
@@ -663,3 +666,103 @@ async def test_the_repairs_of_a_removed_entry_go(
     assert (
         ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_switch_01") is None
     )
+
+
+def _second_switch(**data: Any) -> ConfigSubentryData:
+    return ConfigSubentryData(
+        subentry_id="switch_02",
+        subentry_type=SUBENTRY_TYPE_SWITCH,
+        title="Floor B",
+        unique_id=None,
+        data={**_switch()["data"], "name": "Floor B", "power_entity": POWER_B, **data},
+    )
+
+
+def _second_thermostat() -> ConfigSubentryData:
+    thermostat = _thermostat("Second", ClimateMode.HEATING)
+    return ConfigSubentryData(
+        **{**thermostat, "data": {**thermostat["data"], "target_switch": SWITCH_B}}
+    )
+
+
+async def test_a_reload_during_a_long_sequence_turns_nothing_off(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """D2: A starts a long "on", B heats; the entry reloads: B gets no "off"."""
+    started = asyncio.Event()
+    hass.services.async_register("test", "started", lambda _call: started.set())
+    hass.states.async_set(POWER_B, "1000")
+    hass.states.async_set("sensor.temp", "15")
+    entry = await setup(
+        _switch(
+            heating_action=[
+                {"action": "test.started"},
+                {"delay": {"seconds": 60}},
+                {"action": "test.heat"},
+            ]
+        ),
+        _second_switch(),
+        _thermostat("Heater", ClimateMode.HEATING),
+        _second_thermostat(),
+    )
+    for name in ("climate.heater", "climate.second"):
+        await hass.services.async_call(
+            "climate", "set_hvac_mode", {"entity_id": name, "hvac_mode": "heat"}
+        )
+    await started.wait()
+    # B was on before its thermostat heated: that "off" came at the start
+    offs = list(services["off"])
+    assert hass.states.get(SWITCH_B).state == STATE_ON
+    memory = await async_get_thermostat_memory(hass)
+    assert memory.get("Second")["expected_on"] is True
+
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert services["off"] == offs
+    assert memory.get("Second")["expected_on"] is True
+
+
+async def test_a_short_glitch_of_the_power_relay_commands_nothing(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """D5: the cloud relay of a running AC "off" for a moment: no command."""
+    await _relay_powers_the_switch(hass, on=True)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    hass.states.async_set(POWER, "1000")
+    _later(hass, DELAY + 1)
+    await hass.async_block_till_done()
+    assert _state(hass) == STATE_ON
+
+    hass.states.async_set(RELAY, STATE_OFF)
+    await hass.async_block_till_done()
+    hass.states.async_set(RELAY, STATE_ON)
+    await hass.async_block_till_done()
+
+    assert services["off"] == []
+    assert len(services["heat"]) == 1
+
+
+async def test_a_fix_of_a_gone_switch_removes_its_issue(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """D7: the fix finds its switch removed: it aborts and deletes its issue."""
+    entry = await setup(_switch())
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        "invalid_action_gone",
+        is_fixable=True,
+        severity=ir.IssueSeverity.ERROR,
+        translation_key="invalid_action",
+        data={"entry_id": entry.entry_id, "subentry_id": "gone"},
+    )
+    flow = ActionsRepairFlow({"entry_id": entry.entry_id, "subentry_id": "gone"})
+    flow.hass = hass
+    flow.issue_id = "invalid_action_gone"
+
+    result = await flow.async_step_init()
+
+    assert result["type"] == "abort"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, "invalid_action_gone") is None

@@ -362,8 +362,16 @@ class BalancingCoordinator:
                 # attempt); the other way overtakes it at once ("off" cancels a
                 # running "on" sequence) and counts an attempt
                 if running is (on := control.wanted(now)):
-                    continue
-                control.overtake(now, on=on)
+                    if not control.overdue(now):
+                        continue
+                    # Running past the budget of its attempts: a problem.
+                    # The deferral's "off" overtakes a hung "on".
+                    control.defer_now(now)
+                    if not running:
+                        continue
+                    on = False
+                else:
+                    control.overtake(now, on=on)
             elif (on := control.to_command(now)) is None:
                 continue
             self._sending[control.switch] = on
@@ -371,7 +379,7 @@ class BalancingCoordinator:
                 self._hass, self._async_send(control, on=on), f"switch {control.switch}"
             )
             self._tasks.add(task)
-            task.add_done_callback(self._tasks.discard)
+            task.add_done_callback(self._command_ended)
 
     def _capacity(self) -> int:
         """Read the capacity from its entity, the one source of it."""
@@ -467,7 +475,10 @@ class BalancingCoordinator:
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
             and not self._left_alone(control)
-            and not power_cut(self._hass, control.switch)
+            # The power cut: a heater not held on waits for it, holding no
+            # place; one held on goes off by its 0 W (turned off by another),
+            # so a short glitch of a cloud relay commands nothing
+            and (control.expected_on or not power_cut(self._hass, control.switch))
             and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
         for control in self.controls.values():
@@ -664,6 +675,12 @@ class BalancingCoordinator:
             self._red_timer()
             self._red_timer = None
 
+    def _command_ended(self, task: asyncio.Task[None]) -> None:
+        """Forget the command's task; an unexpected error of it is logged."""
+        self._tasks.discard(task)
+        if not task.cancelled() and (err := task.exception()) is not None:
+            LOGGER.error("%s failed", task.get_name(), exc_info=err)
+
     async def _async_send(self, control: ThermostatControl, *, on: bool) -> None:
         """
         Send a switch what the balancer wants; one switch never stops the others.
@@ -680,7 +697,11 @@ class BalancingCoordinator:
             )
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
-        if self._sending.get(control.switch) is on:
-            del self._sending[control.switch]
-        # What was wanted meanwhile is decided now, not in a minute
-        self.async_request_balance()
+        finally:
+            # Whatever ended it, the switch is free for the next command
+            if self._sending.get(control.switch) is on:
+                del self._sending[control.switch]
+                # The answer is awaited from the end of the command
+                control.command_done(dt_util.utcnow(), on=on)
+            # What was wanted meanwhile is decided now (not once stopped)
+            self.async_request_balance()

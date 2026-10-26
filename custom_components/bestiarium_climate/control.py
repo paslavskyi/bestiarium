@@ -176,6 +176,8 @@ class ThermostatControl:
         )
         # When the switch got its last command: an attempt is one a cycle
         self._last_command: tuple[datetime, bool] | None = None
+        # When the last deferral ended: a command after it ends "Not responding"
+        self._retry_from: datetime | None = None
         self._watching = False
         self._unsubscribe: list[CALLBACK_TYPE] = []
         self._cancel_timer: CALLBACK_TYPE | None = None
@@ -314,9 +316,11 @@ class ThermostatControl:
         if actual is None or self.deferred_until is not None:
             return None
         if actual == wanted:
-            if self._tries or self._unresponsive.raw:
+            answered = self._answered(wanted)
+            if self._tries or (self._unresponsive.raw and answered):
                 self._tries = 0
-                self._unresponsive.set(False, now)  # noqa: FBT003
+                if answered:
+                    self._unresponsive.set(False, now)  # noqa: FBT003
                 self._keep()
                 self._refresh(now)
             return None
@@ -333,6 +337,36 @@ class ThermostatControl:
         self._keep()
         self._refresh(now)
         return wanted
+
+    def _answered(self, wanted: bool) -> bool:  # noqa: FBT001
+        """
+        Return whether the switch carried out a command since its deferral ended.
+
+        "Not responding" ends only so: not when the switch is merely as wanted
+        (a thermostat that needs no heat while the IR is still lost).
+        """
+        return (
+            self._retry_from is not None
+            and self._last_command is not None
+            and self._last_command[1] == wanted
+            and self._last_command[0] >= self._retry_from
+        )
+
+    def overdue(self, now: datetime) -> bool:
+        """Return whether the command under way outlasted the budget of the attempts."""
+        return self._last_command is not None and (
+            now - self._last_command[0] >= ATTEMPT_INTERVAL * self.settings.attempts
+        )
+
+    def defer_now(self, now: datetime) -> None:
+        """Defer the switch now, its command hung: it holds no place meanwhile."""
+        self._last_command = (now, False)
+        self._defer(now)
+
+    def command_done(self, now: datetime, *, on: bool) -> None:
+        """Await the answer from the end of the command, not its start."""
+        if self._last_command is not None and self._last_command[1] is on:
+            self._last_command = (now, on)
 
     def defer_if_exhausted(self, now: datetime) -> None:
         """
@@ -367,6 +401,7 @@ class ThermostatControl:
     def _end_deferral(self, now: datetime) -> None:
         if self.deferred_until is not None and now >= self.deferred_until:
             self.deferred_until = None
+            self._retry_from = now
             self._keep()
 
     def _keep(self) -> None:

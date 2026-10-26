@@ -900,3 +900,109 @@ async def test_no_command_after_an_unload_during_a_slow_one(floors: Floors) -> N
     await floors.tick(2 * MINUTE)
 
     assert floors.calls[calls:] == []
+
+
+def _minutes(floors: Floors, seconds: int) -> None:
+    """Let time pass without waiting for the commands under way."""
+    floors.freezer.tick(timedelta(seconds=seconds))
+    async_fire_time_changed(floors.hass)
+
+
+async def test_an_unexpected_error_frees_the_switch(
+    floors: Floors, caplog: pytest.LogCaptureFixture
+) -> None:
+    """D1: a command that raises (not a HomeAssistantError) is tried again, counted."""
+    broken = True
+
+    async def breaks() -> None:
+        if broken:
+            msg = "the cloud client broke"
+            raise RuntimeError(msg)
+
+    floors.before["floor_1"] = breaks
+    await floors.setup()
+    assert "the cloud client broke" in caplog.text
+
+    await floors.tick(MINUTE)
+
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    assert floors.calls.count(("turn_on", "floor_1")) == 2
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 2
+
+    broken = False
+    await floors.tick(MINUTE)
+    assert "floor_1" in floors.on()
+
+
+async def test_a_command_that_never_ends_is_a_problem(floors: Floors) -> None:
+    """D3: an "on" that never ends: past the attempts' budget, deferred, then "off"."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def hangs() -> None:
+        if ("turn_off", "floor_1") not in floors.calls:
+            on_started.set()
+            await released.wait()
+
+    floors.before["floor_1"] = hangs
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 3})
+    for _ in range(4):
+        _minutes(floors, MINUTE)
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+    assert floors.state("floor_1") == "unresponsive"
+    assert ("turn_off", "floor_1") in floors.calls
+    released.set()
+    await setup
+
+
+async def test_the_answer_is_awaited_from_the_end_of_the_command(
+    floors: Floors,
+) -> None:
+    """D4: an "on" of 70 s, the switch on 10 s after it: one command, one attempt."""
+    released, on_started = asyncio.Event(), asyncio.Event()
+
+    async def seventy_seconds() -> None:
+        on_started.set()
+        await released.wait()
+
+    floors.before["floor_1"] = seventy_seconds
+    floors.stuck.add("floor_1")
+    setup = floors.hass.async_create_task(floors.setup())
+    await on_started.wait()
+    _minutes(floors, 70)
+    await asyncio.sleep(0)
+    released.set()
+    await setup
+    await floors.tick(10, step=10)
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    assert floors.calls.count(("turn_on", "floor_1")) == 1
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
+
+    floors.hass.states.async_set("switch.floor_1", STATE_ON)
+    await floors.tick(MINUTE)
+    assert floors.calls.count(("turn_on", "floor_1")) == 1
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
+
+
+async def test_not_responding_ends_only_with_a_command_carried_out(
+    floors: Floors,
+) -> None:
+    """D6: the deferral over, no heat needed: still "Not responding"; then a command."""
+    floors.stuck.add("floor_1")
+    await floors.setup()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
+    await floors.tick(4 * MINUTE)
+    assert floors.state("floor_1") == "unresponsive"
+
+    await _hvac(floors, "floor_1", "off")
+    await floors.tick(70 * MINUTE)  # the deferral (1 hour) is over
+    assert floors.state("floor_1") == "unresponsive"
+
+    floors.stuck.clear()
+    await _hvac(floors, "floor_1", "heat")
+    await floors.tick(5 * MINUTE)
+    assert "floor_1" in floors.on()
+    assert floors.state("floor_1") == "normal"

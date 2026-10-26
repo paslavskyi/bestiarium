@@ -5,8 +5,8 @@ One relay lives in one integration (the owner's rule, DEV-008 review 18): a
 thermostat's switch is never a device relay. A virtual switch's power,
 though, is often a device: the relay that powers an air conditioner, whose
 power sensor the virtual switch reads. Its expected power is the heater's
-power, and while its relay is off (the load protection cut it) the heater
-cannot start.
+power, and while its relay is off (the load protection cut it) a heater not
+held on leaves the rotation until the power is back.
 """
 
 from __future__ import annotations

@@ -146,9 +146,11 @@ async def async_unload_entry(
     """Unload a config entry."""
     LOGGER.debug("Unloading Bestiarium Climate entry %s", entry.entry_id)
 
-    # The platforms first: no timer is set on a stopped coordinator, and no
-    # two coordinators control the same switches across a reload
+    # The coordinator first: unloading a virtual switch ends its running
+    # sequence, and a cycle after it would turn off the others while the
+    # thermostats go. Stopped, it decides nothing and sets no timer.
+    hass.data[DOMAIN][entry.entry_id].stop()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id).stop()
+        hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok

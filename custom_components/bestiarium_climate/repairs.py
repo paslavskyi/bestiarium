@@ -47,14 +47,11 @@ async def async_create_fix_flow(
         flow = ThermostatSwitchRepairFlow(data or {})
     else:
         flow = ActionsRepairFlow(data or {})
-    flow.issue_id = issue_id
     return flow
 
 
 class _GoneRepairFlow(RepairsFlow):
     """A fix whose switch or thermostat may be gone: then its issue goes too."""
-
-    issue_id = ""
 
     def _gone(self, reason: str) -> FlowResult:
         ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
