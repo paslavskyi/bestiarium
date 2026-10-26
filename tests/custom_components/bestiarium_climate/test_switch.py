@@ -469,7 +469,7 @@ async def _heat(hass: HomeAssistant) -> None:
 async def test_no_start_while_the_power_is_cut(
     hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
 ) -> None:
-    """Review 18: the device powering the AC is off: no start, no attempt; back: start."""
+    """Decision 28: the device powering the AC is off: "No power", no command; back."""
     await _relay_powers_the_switch(hass, on=False)
     await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
     await _heat(hass)
@@ -477,12 +477,15 @@ async def test_no_start_while_the_power_is_cut(
     await hass.async_block_till_done()
 
     assert services["heat"] == []
-    assert _control_state(hass).state == "normal"
+    state = _control_state(hass)
+    assert state.state == "no_power"
+    assert state.attributes["failed_attempts"] == 0
 
     hass.states.async_set(RELAY, STATE_ON)
     _later(hass, 4 * 60)
     await hass.async_block_till_done()
     assert len(services["heat"]) == 1
+    assert _control_state(hass).state == "normal"
 
 
 async def test_a_power_cut_is_no_failed_attempt(
@@ -505,7 +508,7 @@ async def test_a_power_cut_is_no_failed_attempt(
         await hass.async_block_till_done()
 
     state = _control_state(hass)
-    assert state.state == "normal"
+    assert state.state == "no_power"
     assert state.attributes["failed_attempts"] == 0
     assert len(services["heat"]) == 1
 
@@ -789,7 +792,7 @@ async def test_a_start_cut_by_the_power_is_no_attempt(
 
     state = _control_state(hass)
     assert len(services["heat"]) == 1
-    assert state.state == "normal"
+    assert state.state == "no_power"
     assert state.attributes["failed_attempts"] == 0
 
 
@@ -822,5 +825,38 @@ async def test_a_heater_kept_on_without_power_after_a_restart(
 
     state = _control_state(hass)
     assert services["heat"] == []
-    assert state.state == "normal"
+    assert state.state == "no_power"
     assert state.attributes["failed_attempts"] == 0
+
+
+async def test_the_power_back_waits_for_the_pause_after_the_off(
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """Decision 29: the AC's power cut, back a minute later: it starts after the pause."""
+
+    async def minutes(count: int) -> None:
+        for _ in range(count):
+            freezer.tick(timedelta(minutes=1))
+            async_fire_time_changed(hass)
+            await hass.async_block_till_done()
+
+    await _relay_powers_the_switch(hass, on=True)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    hass.states.async_set(POWER, "1000")  # the AC runs
+    await minutes(1)
+    assert _state(hass) == STATE_ON
+
+    hass.states.async_set(RELAY, STATE_OFF)
+    hass.states.async_set(POWER, "0")
+    await minutes(2)  # its switch off by its 0 W
+    assert _state(hass) == STATE_OFF
+    hass.states.async_set(RELAY, STATE_ON)
+    await minutes(2)
+    assert len(services["heat"]) == 1  # in its pause
+
+    await minutes(3)
+    assert len(services["heat"]) > 1  # started again after its pause

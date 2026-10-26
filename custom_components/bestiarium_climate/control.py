@@ -63,6 +63,9 @@ if TYPE_CHECKING:
 GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 # One attempt a balancing cycle; a little less, as the timers jitter
 ATTEMPT_INTERVAL = timedelta(seconds=BALANCING_INTERVAL_SECONDS - 5)
+# The pause after a heater turned off, when its thermostat sets no minimum
+# cycle duration (decision 29: the compressor's protection)
+DEFAULT_PAUSE = timedelta(minutes=5)
 
 
 class _MemoryStore(Store[dict[str, dict[str, Any]]]):
@@ -218,6 +221,13 @@ class ThermostatControl:
         )
         self._switch_gone = _Condition()
         self._no_temperature = _Condition()
+        self._no_power = _Condition()
+        # When the switch last turned off: a start waits for the pause after it
+        self.off_at: datetime | None = (
+            _time(kept["off_at"]) if kept.get("off_at") else None
+        )
+        # The pause after it: the thermostat's minimum cycle duration
+        self.pause = DEFAULT_PAUSE
         # "Not responding" lasts across a restart until a command is carried out
         unresponsive = kept.get("unresponsive", False)
         self._unresponsive = _Condition(raw=unresponsive, confirmed=unresponsive)
@@ -341,6 +351,18 @@ class ThermostatControl:
     def wanted(self, now: datetime) -> bool:
         """Return the state the switch should have now."""
         return self.expected_on and self.in_rotation(now)
+
+    def paused_until(self, now: datetime) -> datetime | None:
+        """Return the end of the pause after the switch turned off, while it lasts."""
+        if self.off_at is None or now >= self.off_at + self.pause:
+            return None
+        return self.off_at + self.pause
+
+    def set_power(self, *, cut: bool, now: datetime) -> None:
+        """Show whether the device powering the heater is off (no fault)."""
+        if cut != self._no_power.raw:
+            self._no_power.set(cut, now)
+            self._refresh(now)
 
     def next_command(self, now: datetime) -> bool | None:
         """
@@ -511,6 +533,7 @@ class ThermostatControl:
             expected_on=self.expected_on,
             expected_changed_at=self.expected_changed_at.isoformat(),
             series={_direction(on): n for on, n in self._series.items()},
+            off_at=self.off_at.isoformat() if self.off_at else None,
             unresponsive=self._unresponsive.raw,
             deferred_until=self.deferred_until.isoformat()
             if self.deferred_until
@@ -537,6 +560,15 @@ class ThermostatControl:
         new = event.data["new_state"]
         if event.data["entity_id"] == self.switch:
             self._switch_gone.set(_gone(new), now)
+            old = event.data["old_state"]
+            if (
+                old is not None
+                and old.state == STATE_ON
+                and new is not None
+                and new.state == STATE_OFF
+            ):
+                self.off_at = now
+                self._keep()
         else:
             self._no_temperature.set(_no_temperature(new), now)
         self._refresh(now)
@@ -546,15 +578,17 @@ class ThermostatControl:
         settings = self.settings
         tolerance = timedelta(seconds=settings.tolerance_seconds)
         hysteresis = timedelta(seconds=settings.hysteresis_seconds)
+        # Enter and leave of each; no power is no fault: it leaves at once
         conditions = {
-            ControlState.SWITCH_UNAVAILABLE: (self._switch_gone, tolerance),
-            ControlState.UNRESPONSIVE: (self._unresponsive, timedelta()),
-            ControlState.NO_TEMPERATURE: (self._no_temperature, tolerance),
+            ControlState.SWITCH_UNAVAILABLE: (self._switch_gone, tolerance, hysteresis),
+            ControlState.UNRESPONSIVE: (self._unresponsive, timedelta(), hysteresis),
+            ControlState.NO_TEMPERATURE: (self._no_temperature, tolerance, hysteresis),
+            ControlState.NO_POWER: (self._no_power, tolerance, timedelta()),
         }
-        for condition, enter in conditions.values():
-            condition.settle(now, enter, hysteresis)
+        for condition, enter, leave in conditions.values():
+            condition.settle(now, enter, leave)
         state = next(
-            (state for state, (c, _) in conditions.items() if c.confirmed),
+            (state for state, (c, _, _) in conditions.items() if c.confirmed),
             ControlState.NORMAL,
         )
         if state is not self.state:
@@ -562,6 +596,8 @@ class ThermostatControl:
                 LOGGER.info(
                     "%s: control state back to normal (was %s)", self.name, self.state
                 )
+            elif state is ControlState.NO_POWER:
+                LOGGER.info("%s: control state %s", self.name, state)
             else:
                 LOGGER.warning("%s: control state %s", self.name, state)
             self.state = state
@@ -570,9 +606,12 @@ class ThermostatControl:
         )
         changes = [
             when
-            for condition, enter in conditions.values()
-            if (when := condition.next_change(enter, hysteresis))
+            for condition, enter, leave in conditions.values()
+            if (when := condition.next_change(enter, leave))
         ]
+        # The pause's end is shown: refresh then
+        if (until := self.paused_until(now)) is not None:
+            changes.append(until)
         if self._cancel_timer:
             self._cancel_timer()
             self._cancel_timer = None
@@ -593,6 +632,7 @@ class ThermostatControl:
         return {
             "failed_attempts": max(self._failed(on, now) for on in (True, False)),
             "next_attempt": self.deferred_until,
+            "pause_until": self.paused_until(now),
         }
 
 

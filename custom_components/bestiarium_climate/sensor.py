@@ -46,7 +46,9 @@ class ControlStateSensor(SensorEntity):
     _attr_translation_key = "control_state"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _unrecorded_attributes = frozenset({"failed_attempts", "next_attempt"})
+    _unrecorded_attributes = frozenset(
+        {"failed_attempts", "next_attempt", "pause_until"}
+    )
 
     def __init__(self, control: ThermostatControl) -> None:
         """Show the control of one thermostat."""

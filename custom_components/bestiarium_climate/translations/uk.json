@@ -47,11 +47,15 @@
           "switch_unavailable": "Вимикач недоступний",
           "unresponsive": "Не відгукується",
           "no_temperature": "Немає даних температури",
+          "no_power": "Без живлення",
           "normal": "Норма"
         },
         "state_attributes": {
           "failed_attempts": {
             "name": "Невдалі спроби"
+          },
+          "pause_until": {
+            "name": "Пауза до"
           },
           "next_attempt": {
             "name": "Наступна спроба"

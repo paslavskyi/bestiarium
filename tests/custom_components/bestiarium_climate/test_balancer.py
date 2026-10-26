@@ -257,16 +257,14 @@ async def test_dead_switch_frees_its_place(
     floors: Floors, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A switch that does not respond is deferred; the third heater takes its place."""
+    floors.stuck.add("floor_1")
     await floors.setup()
-    await floors.tick(MINUTE)
-    first, second = sorted(floors.on())
-    floors.hass.states.async_set(f"switch.{first}", STATE_OFF)
-    floors.stuck.add(first)
+    assert floors.on() == {"floor_2"}
 
     await floors.tick(10 * MINUTE)
 
-    assert floors.state(first) == "unresponsive"
-    assert floors.on() == {second, *(set(FLOORS) - {first, second})}
+    assert floors.state("floor_1") == "unresponsive"
+    assert floors.on() == {"floor_2", "floor_3"}
     assert caplog.text.count("control state unresponsive") == 1
 
 
@@ -418,8 +416,8 @@ async def test_memory_forgets_a_removed_thermostat(
     }
 
 
-async def test_a_new_decision_is_sent_at_once(floors: Floors) -> None:
-    """Off and back to heat within a minute: the switch is turned on at once."""
+async def test_back_to_heat_waits_for_the_pause(floors: Floors) -> None:
+    """Decision 29: off and back to heat within a minute: on after the pause (5 min)."""
     await floors.setup(capacity=3)
     assert floors.on() == set(FLOORS)
 
@@ -431,8 +429,15 @@ async def test_a_new_decision_is_sent_at_once(floors: Floors) -> None:
             blocking=True,
         )
         await floors.hass.async_block_till_done()
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
+    assert "floor_1" not in floors.on()
+    assert floors.hass.states.get(sensor).attributes["pause_until"] is not None
 
+    await floors.tick(4 * MINUTE)
+    assert "floor_1" not in floors.on()
+    await floors.tick(MINUTE)
     assert "floor_1" in floors.on()
+    assert floors.state("floor_1") == "normal"
 
 
 async def test_unavailable_as_soon_as_confirmed(floors: Floors) -> None:
@@ -494,15 +499,14 @@ async def test_yellow_keeps_the_heating_and_starts_none(floors: Floors) -> None:
     assert floors.on() == {"floor_2", "floor_3"}
 
 
-async def test_yellow_rotates_out_without_starting(floors: Floors) -> None:
-    """Yellow: after the minimum working time one goes out; the next waits."""
+async def test_yellow_rotates_none_out(floors: Floors) -> None:
+    """Decision 29: in yellow none starts, so none goes out for the rotation."""
     await floors.setup(zones=True)
     floors.zone("yellow")
 
     await floors.tick(11 * MINUTE)
 
-    assert len(floors.on()) < 2
-    assert "floor_3" not in floors.on()
+    assert floors.on() == {"floor_1", "floor_2"}
     assert ("turn_on", "floor_3") not in floors.calls
 
 
@@ -717,9 +721,11 @@ async def test_a_protection_off_is_a_new_start_that_must_fit(floors: Floors) -> 
     assert ("turn_on", "floor_1") not in floors.calls[calls:]
     assert floors.state("floor_1") == "normal"
 
+    # It fits now, in its pause after the protection's "off" (decision 29):
+    # the next heater takes the place
     floors.load(1000)
     await floors.tick(MINUTE, step=10)
-    assert floors.on() == {"floor_1"}
+    assert floors.on() == {"floor_2"}
 
 
 async def test_a_stuck_switch_does_not_close_the_starts(floors: Floors) -> None:
@@ -1245,3 +1251,54 @@ async def test_the_old_memory_reads_as_series(
     assert "tries" not in memory.get("floor_1")
     assert memory.get("floor_2")["series"] == {"off": 0}
     assert memory.get("floor_2")["unresponsive"] is True
+
+
+def _rotation(floors: Floors, since: int) -> list[tuple[str, str]]:
+    return floors.calls[since:]
+
+
+async def test_a_rotation_is_one_off_and_one_on(floors: Floors) -> None:
+    """Decision 29: capacity 2, A and B past their time, C waits: one swap, then none."""
+    await floors.setup(min_working_minutes=1)
+    assert floors.on() == {"floor_1", "floor_2"}
+    since = len(floors.calls)
+
+    await floors.tick(2 * MINUTE)
+    swap = _rotation(floors, since)
+    assert sorted(service for service, _ in swap) == ["turn_off", "turn_on"]
+    assert ("turn_on", "floor_3") in swap
+
+    since = len(floors.calls)
+    await floors.tick(3 * MINUTE)  # the one turned out is in its pause
+    assert _rotation(floors, since) == []
+
+
+async def test_no_heater_goes_out_when_none_takes_its_place(floors: Floors) -> None:
+    """Decision 29: past its time, but the waiting ones are in their pause: it heats."""
+    await floors.setup(capacity=1, min_working_minutes=1)
+    assert floors.on() == {"floor_1"}
+    # The waiting ones were on and turned off a moment ago: in their pause
+    for floor in ("floor_2", "floor_3"):
+        floors.hass.states.async_set(f"switch.{floor}", STATE_ON)
+        floors.hass.states.async_set(f"switch.{floor}", STATE_OFF)
+
+    await floors.tick(3 * MINUTE)
+
+    assert ("turn_off", "floor_1") not in floors.calls
+    assert floors.on() == {"floor_1"}
+
+
+async def test_a_heater_off_in_red_waits_for_its_pause(floors: Floors) -> None:
+    """Decision 29: off in red, green 30 s later: it waits its pause, another starts."""
+    await floors.setup(capacity=1, zones=True)
+    assert floors.on() == {"floor_1"}
+
+    floors.zone("red")
+    await floors.tick(5, step=5)
+    assert "floor_1" not in floors.on()
+    floors.zone("green")
+    await floors.tick(30, step=10)
+    assert floors.on() == {"floor_2"}
+
+    await floors.tick(4 * MINUTE, step=10)
+    assert floors.calls.count(("turn_on", "floor_1")) == 1

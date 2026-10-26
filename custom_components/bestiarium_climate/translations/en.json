@@ -47,11 +47,15 @@
           "switch_unavailable": "Switch unavailable",
           "unresponsive": "Not responding",
           "no_temperature": "No temperature data",
+          "no_power": "No power",
           "normal": "Normal"
         },
         "state_attributes": {
           "failed_attempts": {
             "name": "Failed attempts"
+          },
+          "pause_until": {
+            "name": "Pause until"
           },
           "next_attempt": {
             "name": "Next attempt"

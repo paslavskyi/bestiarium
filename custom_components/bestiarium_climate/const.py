@@ -153,6 +153,8 @@ class ControlState(StrEnum):
     SWITCH_UNAVAILABLE = "switch_unavailable"
     UNRESPONSIVE = "unresponsive"
     NO_TEMPERATURE = "no_temperature"
+    # The device that powers the heater is off: no fault (decision 28)
+    NO_POWER = "no_power"
     NORMAL = "normal"
 
 
