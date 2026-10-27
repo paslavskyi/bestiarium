@@ -10,7 +10,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.recorder.models import StatisticMeanType
 from homeassistant.components.recorder.statistics import async_import_statistics
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
@@ -150,7 +150,7 @@ class TestStorage:
         unsubscribe = async_dispatcher_connect(
             hass,
             SIGNAL_EXPECTED_POWER_CHANGED.format(entry.entry_id),
-            lambda: calls.append(None),
+            callback(lambda: calls.append(None)),
         )
         memory.add_run(entry.entry_id, _run(1500))
         memory.set_imported(entry.entry_id, [])

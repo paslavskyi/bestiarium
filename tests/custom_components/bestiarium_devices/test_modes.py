@@ -213,7 +213,9 @@ async def test_the_current_mode_renamed_stays_current(
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "edit_1"})
     result = await flow.async_configure(result["flow_id"], {"name": "Turbo"})
     applied: list[dict] = []
-    hass.bus.async_listen(EVENT_MODE_APPLIED, lambda event: applied.append(event.data))
+    hass.bus.async_listen(
+        EVENT_MODE_APPLIED, callback(lambda event: applied.append(event.data))
+    )
     relays.calls.clear()
     result = await flow.async_configure(result["flow_id"], {"next_step_id": "complete"})
     await hass.async_block_till_done()

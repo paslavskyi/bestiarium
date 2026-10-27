@@ -1,5 +1,5 @@
 colorlog
-homeassistant==2026.10.2
+homeassistant==2026.10.4
 pytest
-pytest-homeassistant-custom-component==0.13.373
+pytest-homeassistant-custom-component==0.13.375
 ruff>=0.14.10,<0.15.0
