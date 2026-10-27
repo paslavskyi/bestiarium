@@ -50,8 +50,11 @@ picks the Home Assistant mechanism; the table maps each kind of problem to it.
   `bestiarium_devices_overload_first_queue` / `_second_queue` / `_cleared`; the
   owner's automations notify the family. Since DEV-007 the balancer's events
   are also readable in the logbook.
-- **Failed switch in climate:** `bestiarium_climate_switch_failed` /
-  `_switch_recovered` events; to be reviewed against this document in DEV-008.
+- **Climate (DEV-008 stage B):** each thermostat has a "Control state"
+  (switch unavailable, not responding, no temperature data, normal); a
+  thermostat without temperature is unavailable and leaves the rotation. The
+  repeated `switch_failed` / `_switch_recovered` / `capacity_exhausted`
+  events are gone.
 - **Wrong configuration (DEV-008):** a device's relay or power sensor gone,
   the zones' power sensor gone, no load zones at all: Repairs issues, checked
   after HA has started, deleted when fixed; "Fix" shows the fields of the

@@ -48,11 +48,7 @@ async def test_config_flow_create_entry(hass: HomeAssistant) -> None:
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {
-            "name": "Eco",
-            "description": "Energy saving",
-            "icon": "mdi:leaf",
-        },
+        {"name": "Eco"},
     )
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "user"
@@ -84,9 +80,7 @@ async def test_config_flow_create_entry(hass: HomeAssistant) -> None:
 
     entries = hass.config_entries.async_entries(DOMAIN)
     assert len(entries) == 1
-    assert entries[0].data["options"] == [
-        {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"}
-    ]
+    assert entries[0].data["options"] == [{"name": "Eco"}]
     assert entries[0].data[CONF_AC_LOAD_LIMITS] == {
         CONF_AC_POWER_SENSOR: "sensor.ac_power",
         CONF_AC_LOAD_LIMIT_W: 3500,
@@ -135,9 +129,7 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
         domain=DOMAIN,
         unique_id="bestiarium_mode",
         data={
-            "options": [
-                {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"}
-            ],
+            "options": [{"name": "Eco"}],
             CONF_AC_LOAD_LIMITS: {
                 CONF_AC_POWER_SENSOR: "sensor.ac_power",
                 CONF_AC_LOAD_LIMIT_W: 3000,
@@ -166,11 +158,7 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
-        {
-            "name": "Boost",
-            "description": "High priority",
-            "icon": "mdi:flash",
-        },
+        {"name": "Boost"},
     )
     assert result["type"] == FlowResultType.MENU
     assert result["step_id"] == "reconfigure"
@@ -205,10 +193,7 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
 
     updated_entry = hass.config_entries.async_get_entry(entry.entry_id)
     assert updated_entry is not None
-    assert updated_entry.data["options"] == [
-        {"name": "Eco", "description": "Energy saving", "icon": "mdi:leaf"},
-        {"name": "Boost", "description": "High priority", "icon": "mdi:flash"},
-    ]
+    assert updated_entry.data["options"] == [{"name": "Eco"}, {"name": "Boost"}]
     assert updated_entry.data[CONF_AC_LOAD_LIMITS] == {
         CONF_AC_POWER_SENSOR: "sensor.ac_power",
         CONF_AC_LOAD_LIMIT_W: 3200,
@@ -227,7 +212,7 @@ async def test_reconfigure_message_from_integration_translations(
     entry = MockConfigEntry(
         domain=DOMAIN,
         unique_id="bestiarium_mode",
-        data={"options": [{"name": "Eco", "icon": "mdi:leaf"}]},
+        data={"options": [{"name": "Eco"}]},
     )
     entry.add_to_hass(hass)
 

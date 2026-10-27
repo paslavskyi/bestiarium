@@ -61,6 +61,7 @@ async def test_capacity_number_restore_fallback_to_config(hass: HomeAssistant) -
     """Test when no restored state, value comes from config entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
+        minor_version=2,
         data={
             CONF_CAPACITY: 7,
             CONF_MIN_WORKING_TIME: {"hours": 0, "minutes": 20, "seconds": 0},

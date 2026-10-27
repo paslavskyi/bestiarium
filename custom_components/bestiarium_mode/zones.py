@@ -27,6 +27,8 @@ from .const import (
     CONF_AC_ZONE_HYSTERESIS_PERCENT,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DEFAULT_POWER_TOLERANCE_SECONDS,
+    DEFAULT_RED_ZONE_PERCENT,
+    DEFAULT_YELLOW_ZONE_PERCENT,
     DEFAULT_ZONE_HYSTERESIS_PERCENT,
     EVENT_LOAD_LIMIT_CHANGED,
     LOGGER,
@@ -81,9 +83,11 @@ class ZoneConfig:
         return cls(
             power_sensor_id=limits[CONF_AC_POWER_SENSOR],
             yellow_threshold=limit_w
-            * limits.get(CONF_AC_YELLOW_ZONE_PERCENT, 75)
+            * limits.get(CONF_AC_YELLOW_ZONE_PERCENT, DEFAULT_YELLOW_ZONE_PERCENT)
             / 100,
-            red_threshold=limit_w * limits.get(CONF_AC_RED_ZONE_PERCENT, 90) / 100,
+            red_threshold=limit_w
+            * limits.get(CONF_AC_RED_ZONE_PERCENT, DEFAULT_RED_ZONE_PERCENT)
+            / 100,
             limit_w=limit_w,
             margin_w=limit_w
             * limits.get(

@@ -14,7 +14,6 @@ DOMAIN = "bestiarium_mock"
 GRID_MAX_POWER_W = 5000
 GRID_RANDOM_MIN_W = 40
 GRID_RANDOM_MAX_W = 100
-GRID_ALARM_THRESHOLD_SECONDS = 10
 GRID_UPDATE_INTERVAL_SECONDS = 5
 
 
@@ -85,6 +84,9 @@ class MockDeviceSpec:
     power_min_w: int | None = None
     power_max_w: int | None = None
     profile: FaultProfile = FaultProfile.RELIABLE
+    # An air conditioner run by IR: a switch on its socket loses the IR,
+    # independent of the socket's fault profile (the relay of its power)
+    has_ir: bool = False
 
     @property
     def has_variable_power(self) -> bool:
@@ -141,6 +143,18 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     MockDeviceSpec(device_id="floor_heating_3", power_w=1200),
     # Free on the stand: the boiler is re-pointed to it (SmartThings to Matter)
     MockDeviceSpec(device_id="matter_socket", power_w=2000),
+    # The power of three air conditioners: 5 W on standby; the stand's IR
+    # scripts set 1200 W when one runs (review 18: as in the owner's home)
+    *(
+        MockDeviceSpec(
+            device_id=f"ac_{number}",
+            power_w=5,
+            power_min_w=5,
+            power_max_w=1200,
+            has_ir=True,
+        )
+        for number in range(1, 4)
+    ),
 )
 
 # Thermometer specifications (passive temperature sensors)
@@ -156,3 +170,18 @@ MOCK_GRID = MockDeviceSpec(
     device_id="grid",
     power_w=GRID_MAX_POWER_W,
 )
+
+
+class ReadingProfile(StrEnum):
+    """How a sensor of the stand (thermometer, grid) misbehaves."""
+
+    RELIABLE = "reliable"
+    UNSTABLE = "unstable"  # short dropouts
+    NO_DATA = "no_data"  # unavailable until the profile changes
+    FROZEN = "frozen"  # the value no longer changes
+
+
+# The dropouts of an unstable reading
+READING_DROPOUTS_PER_HOUR = 6
+READING_DROPOUT_MIN_S = 10
+READING_DROPOUT_MAX_S = 40

@@ -34,7 +34,12 @@ async def async_setup_entry(
 
 
 class CapacityNumber(NumberEntity, RestoreEntity):
-    """Number entity for simultaneous device capacity (0-100)."""
+    """
+    How many thermostats may work at once (0-100): the one source of it.
+
+    A power automation changes it; the entry's form gives only its initial
+    value. It is operated, so it has no entity category.
+    """
 
     _attr_has_entity_name = True
     _attr_translation_key = "capacity"
@@ -62,10 +67,10 @@ class CapacityNumber(NumberEntity, RestoreEntity):
         )
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set the capacity value and trigger rebalancing."""
+        """Set the capacity and share it again at once."""
         self._attr_native_value = value
         self.async_write_ha_state()
-        # T5 will hook balancer to react to capacity changes
+        self._hass.data[DOMAIN][self._entry.entry_id].async_request_balance()
 
     async def async_added_to_hass(self) -> None:
         """Restore state when added to hass; fallback to config entry."""

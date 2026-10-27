@@ -4,7 +4,11 @@
 
 import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.core import HomeAssistant, State
+from pytest_homeassistant_custom_component.common import (
+    mock_restore_cache_with_extra_data,
+)
 
 from custom_components.bestiarium_climate.const import DOMAIN
 
@@ -105,11 +109,11 @@ async def test_thermostat_hvac_action_idle_when_temp_met(
     assert state.attributes.get("hvac_action") == HVACAction.IDLE
 
 
-async def test_thermostat_extra_attributes(
+async def test_thermostat_has_no_internal_attributes(
     hass: HomeAssistant,
     climate_entry_with_thermostat,
 ) -> None:
-    """Test extra state attributes (expected_switch_state, switch_state_change_tries, etc.)."""
+    """The balancer's internals are in a Store, not in the climate's attributes."""
     hass.states.async_set(
         "sensor.temp",
         "20",
@@ -120,12 +124,17 @@ async def test_thermostat_extra_attributes(
     await hass.config_entries.async_setup(climate_entry_with_thermostat.entry_id)
     await hass.async_block_till_done()
 
-    state = hass.states.async_all("climate")[0]
-    attrs = state.attributes
-    assert "expected_switch_state" in attrs
-    assert "switch_state_change_tries" in attrs
-    assert "switch_not_responding" in attrs
-    assert "expected_switch_state_changed_at" in attrs
+    attrs = hass.states.async_all("climate")[0].attributes
+    assert (
+        not {
+            "expected_switch_state",
+            "switch_state_change_tries",
+            "switch_not_responding",
+            "expected_switch_state_changed_at",
+            "recovery_time",
+        }
+        & attrs.keys()
+    )
 
 
 async def test_thermostat_set_hvac_mode(
@@ -154,3 +163,59 @@ async def test_thermostat_set_hvac_mode(
     state = hass.states.get(state.entity_id)
     assert state.state == HVACMode.OFF
     assert state.attributes.get("hvac_action") == HVACAction.OFF
+
+
+async def test_target_before_a_preset_survives_a_restart(
+    hass: HomeAssistant, climate_entry_with_thermostat
+) -> None:
+    """The target to go back to after a preset is kept across a reload (audit)."""
+    climate_entry_with_thermostat.subentries["thermo_01"].data["eco_temp"] = 16.0
+    hass.states.async_set("sensor.temp", "20")
+    hass.states.async_set("switch.room", "off")
+    await hass.config_entries.async_setup(climate_entry_with_thermostat.entry_id)
+    await hass.async_block_till_done()
+    entity_id = hass.states.async_all("climate")[0].entity_id
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": entity_id, "temperature": 22},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": entity_id, "preset_mode": "eco"},
+        blocking=True,
+    )
+
+    await hass.config_entries.async_reload(climate_entry_with_thermostat.entry_id)
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        "climate",
+        "set_preset_mode",
+        {"entity_id": entity_id, "preset_mode": "none"},
+        blocking=True,
+    )
+
+    assert hass.states.get(entity_id).attributes["temperature"] == 22
+
+
+async def test_mode_and_target_survive_a_restart_without_temperature(
+    hass: HomeAssistant, climate_entry_with_thermostat
+) -> None:
+    """Unavailable at shutdown (no temperature): heat and 23 °C come back."""
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("climate.room_thermostat", STATE_UNAVAILABLE),
+                {"hvac_mode": "heat", "temperature": 23.0, "preset_mode": None},
+            )
+        ],
+    )
+    await hass.config_entries.async_setup(climate_entry_with_thermostat.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("climate.room_thermostat")
+    assert state.state == "heat"
+    assert state.attributes["temperature"] == 23.0

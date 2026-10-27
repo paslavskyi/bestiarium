@@ -85,7 +85,9 @@
       "invalid_switch": "Invalid switch entity selected",
       "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
       "name_required": "Device name is required",
-      "required": "This field is required"
+      "required": "This field is required",
+      "switch_taken": "This switch is already controlled by another Bestiarium device",
+      "switch_of_thermostat": "This switch is the switch of a Bestiarium Climate thermostat: one relay lives in one integration"
     },
     "abort": {
       "not_implemented": "Configuration flow not yet implemented",
@@ -111,15 +113,6 @@
           },
           "runs": {
             "name": "Runs"
-          },
-          "manual_power_w": {
-            "name": "Estimated power"
-          },
-          "manual_power_note": {
-            "name": "Note",
-            "state": {
-              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
-            }
           }
         }
       },
@@ -137,15 +130,6 @@
           },
           "runs": {
             "name": "Runs"
-          },
-          "manual_power_w": {
-            "name": "Estimated power"
-          },
-          "manual_power_note": {
-            "name": "Note",
-            "state": {
-              "counts_until_real_runs": "The estimated power counts until 3 real runs of the device are seen"
-            }
           }
         }
       },
@@ -373,13 +357,19 @@
           "no_power_sensor": "Selected device has no power sensor. Use 'Create virtual device' instead.",
           "invalid_switch": "Invalid switch entity selected",
           "invalid_power_sensor": "Power sensor must have device_class=power and unit=W",
-          "required": "This field is required"
+          "required": "This field is required",
+          "switch_taken": "This switch is already controlled by another Bestiarium device",
+          "switch_of_thermostat": "This switch is the switch of a Bestiarium Climate thermostat: one relay lives in one integration"
         }
       }
     },
     "no_load_zones": {
       "title": "Balancing waits for the load zones",
       "description": "Bestiarium Devices does not turn devices on or off: Bestiarium Mode has no load zones. Set its AC load limits (Settings → Devices & services → Bestiarium Mode → Reconfigure → Configure AC load limits). Balancing starts as soon as the zones appear, without a restart."
+    },
+    "no_mode_select": {
+      "title": "Balancing has no mode select",
+      "description": "Bestiarium Mode has no mode select (Bestiarium Mode is not set up, or its select is removed or disabled). Each device works with its own default priority until the select is back; modes do not apply."
     }
   }
 }

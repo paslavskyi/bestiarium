@@ -28,7 +28,6 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_ESTIMATED_POWER,
     CONF_LOAD_PRIORITIES,
-    CONF_MODE_OPTIONS_SNAPSHOT,
     CONF_OVERLOAD_FIRST_QUEUE,
     CONF_POWER_SENSOR_ENTITY_ID,
     CONF_RESET_POWER_MEMORY,
@@ -50,6 +49,8 @@ from .helpers import (
     build_priority_form_key,
     build_priority_number_selector,
     extract_priorities_from_user_input,
+    switch_taken,
+    thermostat_of_switch,
     validate_power_sensor,
 )
 from .power_memory import async_get_power_memory
@@ -198,6 +199,7 @@ class RelaySteps:
     """
 
     hass: HomeAssistant
+    _entry_id: str | None  # the entry being changed: its own switch is not taken
     _device_type: str | None
     _device_id: str | None
     _switch_entity_id: str | None
@@ -223,6 +225,21 @@ class RelaySteps:
         self._power_sensor_entity_id = _keep_or_only(
             self._power_sensor_entity_id, power_sensors
         )
+        if len(switches) == 1 and (error := self._switch_error(switches[0])):
+            return error
+        return None
+
+    def _switch_error(self, switch: str) -> str | None:
+        """
+        Return why the switch cannot be this device's relay, or None.
+
+        Another device entry controls it, or it is the switch of a Bestiarium
+        Climate thermostat (one relay lives in one integration).
+        """
+        if switch_taken(self.hass, switch, self._entry_id) is not None:
+            return "switch_taken"
+        if thermostat_of_switch(self.hass, switch) is not None:
+            return "switch_of_thermostat"
         return None
 
     async def _async_entities_of_device(self) -> FlowResult:
@@ -254,7 +271,7 @@ class RelaySteps:
             errors=errors,
         )
 
-    async def async_step_select_entities(
+    async def async_step_select_entities(  # noqa: PLR0912
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
@@ -273,6 +290,8 @@ class RelaySteps:
                     errors[CONF_SWITCH_ENTITY_ID] = "required"
                 elif switch_entity_id not in self._switches:
                     errors[CONF_SWITCH_ENTITY_ID] = "invalid_switch"
+                elif error := self._switch_error(switch_entity_id):
+                    errors[CONF_SWITCH_ENTITY_ID] = error
                 else:
                     self._switch_entity_id = switch_entity_id
 
@@ -362,7 +381,7 @@ class BestiariumDevicesFlowHandler(
     """Config flow for Bestiarium Devices."""
 
     VERSION = 1
-    MINOR_VERSION = 3
+    MINOR_VERSION = 4
 
     @staticmethod
     @callback
@@ -375,6 +394,7 @@ class BestiariumDevicesFlowHandler(
     def __init__(self) -> None:
         """Initialize the config flow."""
         super().__init__()
+        self._entry_id: str | None = None
         self._reset_power_memory = False
         self._device_type: str | None = None
         self._device_id: str | None = None
@@ -430,6 +450,8 @@ class BestiariumDevicesFlowHandler(
 
             if not switch_entity_id:
                 errors[CONF_SWITCH_ENTITY_ID] = "required"
+            elif error := self._switch_error(switch_entity_id):
+                errors[CONF_SWITCH_ENTITY_ID] = error
 
             if not power_sensor_entity_id:
                 errors[CONF_POWER_SENSOR_ENTITY_ID] = "required"
@@ -617,7 +639,6 @@ class BestiariumDevicesFlowHandler(
             CONF_DEVICE_TYPE: self._device_type,
             **self._relay_data(),
             CONF_LOAD_PRIORITIES: self._load_priorities,
-            CONF_MODE_OPTIONS_SNAPSHOT: list(self._load_priorities.keys()),
             CONF_OVERLOAD_FIRST_QUEUE: self._overload_first_queue,
             CONF_THERMOSTAT_DRIVEN: self._thermostat_driven,
         }
@@ -633,6 +654,7 @@ class BestiariumDevicesFlowHandler(
     ) -> config_entries.ConfigFlowResult:
         """Handle reconfiguration of an existing config entry."""
         entry = self._get_reconfigure_entry()
+        self._entry_id = entry.entry_id
 
         # Load existing data
         self._device_type = entry.data.get(CONF_DEVICE_TYPE)

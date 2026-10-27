@@ -9,9 +9,8 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
 )
 from homeassistant.const import EntityCategory
-from homeassistant.helpers.device_registry import DeviceInfo
 
-from .const import DOMAIN, LOGGER, MOCK_GRID
+from .const import DOMAIN, LOGGER
 from .entity import MockSocketEntity
 
 if TYPE_CHECKING:
@@ -36,11 +35,6 @@ async def async_setup_entry(
         for socket in coordinator.sockets.values()
     ]
 
-    # Grid alarm sensor
-    alarm_sensor = MockGridAlarmSensor(entry)
-    coordinator.register_grid_alarm_sensor(alarm_sensor)
-    entities.append(alarm_sensor)
-
     async_add_entities(entities)
 
 
@@ -60,31 +54,3 @@ class MockDeviceStateSensor(MockSocketEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Return whether the load draws power; it stays known during a dropout."""
         return self._socket.power > 0
-
-
-class MockGridAlarmSensor(BinarySensorEntity):
-    """Binary sensor for grid overload alarm."""
-
-    _attr_has_entity_name = True
-    _attr_translation_key = "grid_alarm"
-    _attr_device_class = BinarySensorDeviceClass.PROBLEM
-    _attr_icon = "mdi:flash-alert"
-
-    def __init__(self, entry: BestiariumMockConfigEntry) -> None:
-        """Initialize the grid alarm sensor."""
-        super().__init__()
-        self._entry = entry
-        self._attr_is_on: bool = False
-
-        # Entity attributes
-        self._attr_unique_id = f"mock_{MOCK_GRID.device_id}_alarm"
-
-        # Device info for grid
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"mock_{MOCK_GRID.device_id}")},
-        )
-
-    def set_alarm(self, *, is_alarm: bool) -> None:
-        """Set the alarm state (called by coordinator)."""
-        self._attr_is_on = is_alarm
-        self.async_write_ha_state()

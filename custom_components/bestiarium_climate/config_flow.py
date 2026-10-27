@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import fields
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from homeassistant.config_entries import (
@@ -10,10 +11,14 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
@@ -23,6 +28,7 @@ from .const import (
     CONF_CAPACITY,
     CONF_COLD_TOLERANCE,
     CONF_COOLING_ACTION,
+    CONF_HEATER_POWER,
     CONF_HEATING_ACTION,
     CONF_HOT_TOLERANCE,
     CONF_MAX_TEMP,
@@ -31,16 +37,21 @@ from .const import (
     CONF_MIN_TEMP,
     CONF_MIN_WORKING_TIME,
     CONF_OFF_ACTION,
+    CONF_POWER_DELAY,
     CONF_POWER_ENTITY,
+    CONF_POWER_HYSTERESIS,
+    CONF_POWER_TOLERANCE,
     CONF_PRESETS,
     CONF_RECOVERY_TIMEOUT,
-    CONF_SWITCH_MODE,
     CONF_SWITCH_NAME,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
     CONF_THERMOSTAT_MODE,
     CONF_THERMOSTAT_NAME,
     DEFAULT_CAPACITY,
+    DEFAULT_POWER_DELAY_SECONDS,
+    DEFAULT_POWER_HYSTERESIS_PERCENT,
+    DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_TOLERANCE,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
@@ -51,7 +62,20 @@ from .const import (
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
+    ControlSettings,
 )
+from .devices import device_of_relay
+from .switch import (
+    ACTION_OF_MODE,
+    ACTIONS,
+    async_validate_actions,
+    thermostats_of,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from homeassistant.core import HomeAssistant
 
 
 def _timedelta_to_dict(td: dict[str, int] | None) -> dict[str, int]:
@@ -74,10 +98,70 @@ def _dict_to_timedelta(data: dict[str, int]) -> dict[str, int]:
     }
 
 
+def actions_schema(saved: Mapping[str, Any]) -> dict[vol.Marker, Any]:
+    """
+    Return the action fields of a virtual switch.
+
+    Heating and cooling are suggested, not defaults: one cleared in the form goes.
+    """
+    return {
+        **{
+            vol.Optional(
+                key, description={"suggested_value": saved.get(key)}
+            ): selector.ActionSelector()
+            for key in (CONF_HEATING_ACTION, CONF_COOLING_ACTION)
+        },
+        vol.Required(CONF_OFF_ACTION, default=saved.get(CONF_OFF_ACTION)): (
+            selector.ActionSelector()
+        ),
+    }
+
+
+def switch_error(
+    hass: HomeAssistant, switch: str, mode: ClimateMode, *, besides: str | None
+) -> str | None:
+    """
+    Return why the switch cannot serve a thermostat of the mode, or None.
+
+    One switch, one thermostat (any switch); one relay, one integration (not
+    a Bestiarium Devices relay); a virtual switch needs the action of the
+    thermostat's mode.
+    """
+    if thermostats_of(hass, switch, besides=besides):
+        return "switch_taken"
+    if device_of_relay(hass, switch):
+        return "switch_is_device"
+    entity = er.async_get(hass).async_get(switch)
+    if entity is None or entity.platform != DOMAIN:
+        return None
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        subentry = entry.subentries.get(entity.unique_id)
+        if subentry and not subentry.data.get(ACTION_OF_MODE[mode]):
+            return "switch_has_no_action"
+    return None
+
+
+async def async_action_errors(
+    hass: HomeAssistant, user_input: dict[str, Any]
+) -> dict[str, str]:
+    """Return the errors of the actions: heating or cooling, each valid as a script."""
+    errors: dict[str, str] = {}
+    if not (user_input.get(CONF_HEATING_ACTION) or user_input.get(CONF_COOLING_ACTION)):
+        errors["base"] = "heating_or_cooling_required"
+    for key in ACTIONS:
+        if user_input.get(key):
+            try:
+                await async_validate_actions(hass, user_input[key])
+            except (vol.Invalid, HomeAssistantError):
+                errors[key] = "invalid_action"
+    return errors
+
+
 class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
     """Main config flow for Bestiarium Climate."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self,
@@ -112,7 +196,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(
                         CONF_CAPACITY,
-                        default=self._get_default_capacity(),
+                        default=DEFAULT_CAPACITY,
                     ): selector.NumberSelector(
                         selector.NumberSelectorConfig(
                             min=CAPACITY_MIN,
@@ -134,14 +218,6 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    def _get_default_capacity(self) -> int:
-        """Get default capacity for form (reconfigure or initial)."""
-        if self.source == SOURCE_RECONFIGURE:
-            entry = self._get_reconfigure_entry()
-            if entry and isinstance(entry.data.get(CONF_CAPACITY), (int, float)):
-                return int(entry.data[CONF_CAPACITY])
-        return DEFAULT_CAPACITY
-
     def _get_default_min_working_time(self) -> dict[str, int]:
         """Get default min working time for form."""
         if self.source == SOURCE_RECONFIGURE:
@@ -162,70 +238,53 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Handle reconfiguration of the main entry."""
+        """
+        Change the entry's times; the capacity is its entity's.
+
+        The capacity in the form is only the initial value: a power
+        automation changes the entity, so the form would not be the source.
+        """
+        entry = self._get_reconfigure_entry()
         if user_input is not None:
-            capacity = user_input.get(CONF_CAPACITY, DEFAULT_CAPACITY)
-            if not isinstance(capacity, (int, float)):
-                try:
-                    capacity = int(capacity)
-                except (TypeError, ValueError):
-                    return self.async_show_form(
-                        step_id="reconfigure",
-                        data_schema=self._reconfigure_schema(),
-                        errors={CONF_CAPACITY: "invalid_capacity"},
-                    )
-            if not (CAPACITY_MIN <= capacity <= CAPACITY_MAX):
-                return self.async_show_form(
-                    step_id="reconfigure",
-                    data_schema=self._reconfigure_schema(),
-                    errors={CONF_CAPACITY: "invalid_capacity"},
-                )
-
-            entry = self._get_reconfigure_entry()
-            data = dict(entry.data)
-            data[CONF_CAPACITY] = int(capacity)
-            data[CONF_MIN_WORKING_TIME] = _dict_to_timedelta(
-                user_input.get(CONF_MIN_WORKING_TIME) or {},
-            )
-            data[CONF_RECOVERY_TIMEOUT] = _dict_to_timedelta(
-                user_input.get(CONF_RECOVERY_TIMEOUT) or {},
-            )
             return self.async_update_and_abort(
-                entry, data_updates=data, reason="reconfigure_successful"
+                entry,
+                data_updates={
+                    CONF_MIN_WORKING_TIME: _dict_to_timedelta(
+                        user_input.get(CONF_MIN_WORKING_TIME) or {}
+                    ),
+                    CONF_RECOVERY_TIMEOUT: _dict_to_timedelta(
+                        user_input.get(CONF_RECOVERY_TIMEOUT) or {}
+                    ),
+                },
+                reason="reconfigure_successful",
             )
-
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self._reconfigure_schema(),
-            errors={},
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_MIN_WORKING_TIME,
+                        default=_timedelta_to_dict(
+                            entry.data.get(CONF_MIN_WORKING_TIME)
+                        ),
+                    ): selector.DurationSelector(),
+                    vol.Required(
+                        CONF_RECOVERY_TIMEOUT,
+                        default=_timedelta_to_dict(
+                            entry.data.get(CONF_RECOVERY_TIMEOUT)
+                        ),
+                    ): selector.DurationSelector(),
+                },
+            ),
         )
 
-    def _reconfigure_schema(self) -> vol.Schema:
-        """Build schema for reconfigure step."""
-        entry = self._get_reconfigure_entry()
-        return vol.Schema(
-            {
-                vol.Required(
-                    CONF_CAPACITY,
-                    default=entry.data.get(CONF_CAPACITY, DEFAULT_CAPACITY),
-                ): selector.NumberSelector(
-                    selector.NumberSelectorConfig(
-                        min=CAPACITY_MIN,
-                        max=CAPACITY_MAX,
-                        step=CAPACITY_STEP,
-                        mode=selector.NumberSelectorMode.BOX,
-                    ),
-                ),
-                vol.Required(
-                    CONF_MIN_WORKING_TIME,
-                    default=_timedelta_to_dict(entry.data.get(CONF_MIN_WORKING_TIME)),
-                ): selector.DurationSelector(),
-                vol.Required(
-                    CONF_RECOVERY_TIMEOUT,
-                    default=_timedelta_to_dict(entry.data.get(CONF_RECOVERY_TIMEOUT)),
-                ): selector.DurationSelector(),
-            },
-        )
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: ConfigEntry,  # noqa: ARG004
+    ) -> ControlOptionsFlow:
+        """Return the form of how the balancer controls the switches."""
+        return ControlOptionsFlow()
 
     @classmethod
     @callback
@@ -243,25 +302,22 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
 class SwitchSubentryFlowHandler(ConfigSubentryFlow):
     """Subentry flow for virtual switch."""
 
-    async def async_step_user(  # noqa: PLR0912
+    async def async_step_user(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> SubentryFlowResult:
         """Handle adding or editing a switch subentry."""
         errors: dict[str, str] = {}
+        subentry = self._get_reconfigure_subentry() if self.source != "user" else None
 
         if user_input is not None:
             name = (user_input.get(CONF_SWITCH_NAME) or "").strip()
             if not name:
                 errors[CONF_SWITCH_NAME] = "name_required"
 
-            mode = user_input.get(CONF_SWITCH_MODE)
-            if mode == ClimateMode.HEATING and not user_input.get(CONF_HEATING_ACTION):
-                errors[CONF_HEATING_ACTION] = "required"
-            elif mode == ClimateMode.COOLING and not user_input.get(
-                CONF_COOLING_ACTION
-            ):
-                errors[CONF_COOLING_ACTION] = "required"
+            errors.update(await async_action_errors(self.hass, user_input))
+            if subentry:
+                errors.update(self._actions_needed(subentry, user_input))
 
             if not user_input.get(CONF_OFF_ACTION):
                 errors[CONF_OFF_ACTION] = "required"
@@ -279,30 +335,20 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     errors[CONF_MIN_POWER] = "invalid_min_power"
 
             if not errors:
-                # Reuse existing subentry data when reconfiguring to keep both actions
-                subentry = (
-                    self._get_reconfigure_subentry() if self.source != "user" else None
-                )
-                data: dict[str, Any] = dict(subentry.data) if subentry else {}
-                data.update(
-                    {
-                        CONF_SWITCH_NAME: name,
-                        CONF_SWITCH_MODE: mode,
-                        CONF_OFF_ACTION: user_input[CONF_OFF_ACTION],
-                        CONF_POWER_ENTITY: user_input[CONF_POWER_ENTITY],
-                        CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
-                    }
-                )
-                # Always store both actions when provided so neither is lost
-                if user_input.get(CONF_HEATING_ACTION) is not None:
-                    data[CONF_HEATING_ACTION] = user_input[CONF_HEATING_ACTION]
-                if user_input.get(CONF_COOLING_ACTION) is not None:
-                    data[CONF_COOLING_ACTION] = user_input[CONF_COOLING_ACTION]
+                data: dict[str, Any] = {
+                    CONF_SWITCH_NAME: name,
+                    CONF_POWER_ENTITY: user_input[CONF_POWER_ENTITY],
+                    CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
+                    CONF_POWER_HYSTERESIS: int(user_input[CONF_POWER_HYSTERESIS]),
+                    CONF_POWER_DELAY: int(user_input[CONF_POWER_DELAY]),
+                    CONF_POWER_TOLERANCE: int(user_input[CONF_POWER_TOLERANCE]),
+                }
+                for key in ACTIONS:
+                    if user_input.get(key):
+                        data[key] = user_input[key]
 
-                if self.source == "user":
+                if subentry is None:
                     return self.async_create_entry(title=name, data=data)
-
-                subentry = self._get_reconfigure_subentry()
                 return self.async_update_and_abort(
                     self._get_entry(),
                     subentry,
@@ -311,19 +357,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     reason="reconfigure_successful",
                 )
 
-        subentry = self._get_reconfigure_subentry() if self.source != "user" else None
-        default_mode = (
-            subentry.data.get(CONF_SWITCH_MODE, ClimateMode.HEATING)
-            if subentry
-            else ClimateMode.HEATING
-        )
-
-        # Defaults for reconfigure (action fields need default to show saved value)
-        off_default = subentry.data.get(CONF_OFF_ACTION) if subentry else None
-        heat_default = subentry.data.get(CONF_HEATING_ACTION) if subentry else None
-        cool_default = subentry.data.get(CONF_COOLING_ACTION) if subentry else None
-
-        # Order: name, mode, power_entity, min_power, heating, cooling, off_action
+        saved = subentry.data if subentry else {}
         schema_dict: dict[vol.Marker, Any] = {
             vol.Required(
                 CONF_SWITCH_NAME,
@@ -332,24 +366,8 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                 selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT),
             ),
             vol.Required(
-                CONF_SWITCH_MODE,
-                default=default_mode,
-            ): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[
-                        selector.SelectOptionDict(
-                            value=ClimateMode.HEATING, label="Heating"
-                        ),
-                        selector.SelectOptionDict(
-                            value=ClimateMode.COOLING, label="Cooling"
-                        ),
-                    ],
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                ),
-            ),
-            vol.Required(
                 CONF_POWER_ENTITY,
-                default=subentry.data.get(CONF_POWER_ENTITY) if subentry else None,
+                default=saved.get(CONF_POWER_ENTITY),
             ): selector.EntitySelector(
                 selector.EntitySelectorConfig(
                     domain=DOMAIN_SENSOR,
@@ -358,7 +376,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             ),
             vol.Required(
                 CONF_MIN_POWER,
-                default=subentry.data.get(CONF_MIN_POWER, 0.0) if subentry else 0.0,
+                default=saved.get(CONF_MIN_POWER, 0.0),
             ): selector.NumberSelector(
                 selector.NumberSelectorConfig(
                     min=0,
@@ -366,15 +384,35 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     mode=selector.NumberSelectorMode.BOX,
                 ),
             ),
-            vol.Optional(CONF_HEATING_ACTION, default=heat_default): (
-                selector.ActionSelector()
+            vol.Required(
+                CONF_POWER_TOLERANCE,
+                default=saved.get(
+                    CONF_POWER_TOLERANCE, DEFAULT_POWER_TOLERANCE_SECONDS
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
             ),
-            vol.Optional(CONF_COOLING_ACTION, default=cool_default): (
-                selector.ActionSelector()
+            vol.Required(
+                CONF_POWER_HYSTERESIS,
+                default=saved.get(
+                    CONF_POWER_HYSTERESIS, DEFAULT_POWER_HYSTERESIS_PERCENT
+                ),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=90, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
             ),
-            vol.Required(CONF_OFF_ACTION, default=off_default): (
-                selector.ActionSelector()
+            vol.Required(
+                CONF_POWER_DELAY,
+                default=saved.get(CONF_POWER_DELAY, DEFAULT_POWER_DELAY_SECONDS),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+                ),
             ),
+            **actions_schema(saved),
         }
 
         return self.async_show_form(
@@ -382,6 +420,24 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
             data_schema=vol.Schema(schema_dict),
             errors=errors,
         )
+
+    def _actions_needed(
+        self, subentry: ConfigSubentry, user_input: dict[str, Any]
+    ) -> dict[str, str]:
+        """Return an error for an action a thermostat of this switch needs."""
+        switch = er.async_get(self.hass).async_get_entity_id(
+            DOMAIN_SWITCH, DOMAIN, subentry.subentry_id
+        )
+        if switch is None:
+            return {}
+        return {
+            ACTION_OF_MODE[mode]: "needed_by_thermostat"
+            for mode in {
+                ClimateMode(t.data.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
+                for t in thermostats_of(self.hass, switch)
+            }
+            if not user_input.get(ACTION_OF_MODE[mode])
+        }
 
     async def async_step_reconfigure(
         self,
@@ -398,11 +454,25 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
         """Initialize the flow."""
         super().__init__()
         self._options: dict[str, Any] = {}
+        # The Bestiarium device whose relay the chosen switch is, for the error
+        self._device_name = ""
 
     @property
     def _is_new(self) -> bool:
         """True if creating a new subentry."""
         return self.source == "user"
+
+    def _switch_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
+        """Return an error if the switch cannot serve this thermostat."""
+        device = device_of_relay(self.hass, user_input[CONF_TARGET_SWITCH])
+        self._device_name = device.title if device else ""
+        mode = ClimateMode(user_input.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING))
+        besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
+        if error := switch_error(
+            self.hass, user_input[CONF_TARGET_SWITCH], mode, besides=besides
+        ):
+            return {CONF_TARGET_SWITCH: error}
+        return {}
 
     async def async_step_user(
         self,
@@ -436,8 +506,12 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 errors[CONF_TEMPERATURE_SENSOR] = "required"
             if not user_input.get(CONF_TARGET_SWITCH):
                 errors[CONF_TARGET_SWITCH] = "required"
+            else:
+                errors.update(self._switch_errors(user_input))
 
             if not errors:
+                # An optional field cleared in the form goes
+                self._options.pop(CONF_HEATER_POWER, None)
                 self._options.update(user_input)
                 return await self.async_step_presets()
 
@@ -566,6 +640,21 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             opt_fields[vol.Optional(CONF_MAX_TEMP, default=max_temp_default)] = temp_sel
         else:
             opt_fields[vol.Optional(CONF_MAX_TEMP)] = temp_sel
+        # Empty: the expected power of its Bestiarium device, else a large heater
+        opt_fields[
+            vol.Optional(
+                CONF_HEATER_POWER,
+                description={"suggested_value": self._options.get(CONF_HEATER_POWER)},
+            )
+        ] = selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=1,
+                max=20000,
+                step=1,
+                unit_of_measurement="W",
+                mode=selector.NumberSelectorMode.BOX,
+            )
+        )
 
         schema = schema.extend(opt_fields)
 
@@ -573,6 +662,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             step_id="basic",
             data_schema=schema,
             errors=errors,
+            description_placeholders={"device": self._device_name},
         )
 
     async def async_step_presets(
@@ -625,4 +715,42 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             step_id="presets",
             data_schema=vol.Schema(schema_dict),
             errors={},
+        )
+
+
+class ControlOptionsFlow(OptionsFlow):
+    """
+    How the balancer controls the thermostats' switches.
+
+    Algorithm parameters live in the entry's options, not in entities
+    (docs/concepts/settings-vs-entities.md); one set for all thermostats of
+    the entry.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show and store the control settings."""
+        if user_input is not None:
+            return self.async_create_entry(
+                data={key: int(value) for key, value in user_input.items()}
+            )
+        settings = ControlSettings.of(self.config_entry)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        setting.name, default=getattr(settings, setting.name)
+                    ): selector.NumberSelector(
+                        selector.NumberSelectorConfig(
+                            min=setting.metadata["min"],
+                            max=setting.metadata["max"],
+                            step=1,
+                            mode=selector.NumberSelectorMode.BOX,
+                        )
+                    )
+                    for setting in fields(ControlSettings)
+                }
+            ),
         )

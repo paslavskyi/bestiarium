@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .layout import DEVICES, MOCK, TOKEN_ENV
+from .layout import CLIMATE, DEVICES, MOCK, THERMOSTATS, TOKEN_ENV
 
 if TYPE_CHECKING:
     import aiohttp
@@ -116,6 +116,25 @@ class Registry:
 
     devices: list[dict[str, Any]]
     entities: list[dict[str, Any]]
+
+    def stand_climate(self) -> list[dict[str, Any]]:
+        """
+        Return the entities of the stand's climate entry, none of another one.
+
+        The stand's entry is the one whose devices are the stand thermostats.
+        """
+        names = {name for name, _, _ in THERMOSTATS}
+        entry_ids = {
+            entry_id
+            for device in self.devices
+            if device.get("name") in names
+            for entry_id in device["config_entries"]
+        }
+        return [
+            e
+            for e in self.entities
+            if e["platform"] == CLIMATE and e["config_entry_id"] in entry_ids
+        ]
 
     def mock_device(self, mock_id: str) -> dict[str, Any]:
         """Return the device of a test socket or thermometer."""

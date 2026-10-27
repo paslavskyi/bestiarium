@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bestiarium Mock Devices",
-        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring with an overload alarm)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
+        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
       }
     },
     "abort": {
@@ -15,6 +15,12 @@
     "switch": {
       "device_switch": {
         "name": "Switch"
+      },
+      "ir_lost": {
+        "name": "IR lost"
+      },
+      "ir_hangs": {
+        "name": "IR hangs"
       }
     },
     "sensor": {
@@ -31,9 +37,6 @@
     "binary_sensor": {
       "state": {
         "name": "State"
-      },
-      "grid_alarm": {
-        "name": "Grid Overload Alarm"
       }
     },
     "number": {
@@ -75,6 +78,15 @@
           "stuck_state": "Stuck state",
           "unresponsive": "Unresponsive",
           "custom": "Custom"
+        }
+      },
+      "reading_profile": {
+        "name": "Fault profile",
+        "state": {
+          "reliable": "Reliable",
+          "unstable": "Unstable",
+          "no_data": "No data",
+          "frozen": "Frozen"
         }
       }
     }
@@ -138,6 +150,15 @@
     },
     "matter_socket": {
       "name": "Matter socket (free)"
+    },
+    "ac_1": {
+      "name": "Mock AC 1 Power"
+    },
+    "ac_2": {
+      "name": "Mock AC 2 Power"
+    },
+    "ac_3": {
+      "name": "Mock AC 3 Power"
     }
   }
 }

@@ -75,6 +75,7 @@ async def async_setup_entry(
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
+    _remove_grid_alarm(hass)
     # Forward to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -84,6 +85,15 @@ async def async_setup_entry(
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
 
     return True
+
+
+def _remove_grid_alarm(hass: HomeAssistant) -> None:
+    """Remove the grid's overload alarm, gone in DEV-008 stage B (an orphan)."""
+    registry = er.async_get(hass)
+    if entity_id := registry.async_get_entity_id(
+        "binary_sensor", DOMAIN, f"mock_{MOCK_GRID.device_id}_alarm"
+    ):
+        registry.async_remove(entity_id)
 
 
 async def async_unload_entry(

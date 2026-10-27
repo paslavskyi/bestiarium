@@ -18,6 +18,8 @@ from .layout import (
     MODES,
     RED_PERCENT,
     RETIRED_TEST_DEVICES,
+    RETIRED_THERMOSTATS,
+    SCRIPT_PREFIX,
     STAND_DEVICES,
     TEST_ENTITY_ID,
     THERMOSTATS,
@@ -112,7 +114,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         missing = [m for m in MODES if m not in select["attributes"]["options"]]
         added: list[dict[str, Any]] = []
         for mode in missing:
-            added += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+            added += [{"next_step_id": "add"}, {"name": mode}]
         await ha.reconfigure(
             entries[0],
             *added,
@@ -124,7 +126,7 @@ async def ensure_mode(ha: HomeAssistant, reg: Registry) -> None:
         return
     steps: list[dict[str, Any]] = []
     for mode in MODES:
-        steps += [{"next_step_id": "add"}, {"name": mode, "icon": "mdi:home"}]
+        steps += [{"next_step_id": "add"}, {"name": mode}]
     steps += [
         {"next_step_id": "configure_ac_load_limits"},
         {
@@ -183,30 +185,71 @@ async def recreate_devices(ha: HomeAssistant, reg: Registry) -> None:
         print(f"  added {DEVICES}: {device.mock_id} (priority {device.priority})")
 
 
-async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
+async def remove_stand_climate(ha: HomeAssistant) -> None:
     """
-    Replace the stand's Bestiarium Climate entry and its thermostats.
+    Remove the stand's Bestiarium Climate entry; others are kept.
 
-    The stand's entry is the one with the stand thermostats; others are kept.
+    The stand's entry is the one with the stand thermostats. It goes before
+    the devices are made again: one relay lives in one integration, and an
+    old thermostat on a floor relay would refuse its device.
     """
-    stand_thermostats = {name for name, _, _ in THERMOSTATS}
+    stand_thermostats = {name for name, _, _ in THERMOSTATS} | RETIRED_THERMOSTATS
     for entry in await ha.entries(CLIMATE):
         subentries = await ha.ws(
             "config_entries/subentries/list", entry_id=entry["entry_id"]
         )
         if stand_thermostats & {subentry["title"] for subentry in subentries}:
             await ha.remove_entry(entry)
+
+
+async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
+    """Make the stand's Bestiarium Climate entry: air conditioners and thermostats."""
     result = await ha.flow(
         "flow",
         CLIMATE,
         {
             "capacity": 2,
-            "min_working_time": {"hours": 0, "minutes": 10, "seconds": 0},
-            "recovery_timeout": {"hours": 1, "minutes": 0, "seconds": 0},
+            # Three minutes: a rotation shows on the stand in minutes
+            "min_working_time": {"hours": 0, "minutes": 3, "seconds": 0},
+            # Five minutes: a deferred switch is tried again within the run
+            "recovery_timeout": {"hours": 0, "minutes": 5, "seconds": 0},
         },
     )
     entry_id = result["result"]["entry_id"]
-    for name, thermometer, socket in THERMOSTATS:
+    # Two attempts (minutes): a dead switch is deferred quickly on the stand
+    await ha.flow(
+        "options/flow",
+        entry_id,
+        {"attempts": 2, "tolerance_seconds": 60, "hysteresis_seconds": 60},
+    )
+    # The virtual switch of each air conditioner: IR by the stand's scripts,
+    # its state by the power of the AC's socket
+    for name, _thermometer, socket in THERMOSTATS:
+        await ha.flow(
+            "subentries/flow",
+            [entry_id, "switch"],
+            {
+                "name": f"{name} IR",
+                "power_entity": reg.mock("sensor", f"mock_{socket}_power"),
+                "min_power": 100,
+                "power_tolerance_seconds": 60,
+                "power_hysteresis_percent": 20,
+                "power_delay_seconds": 10,
+                "heating_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_on"}],
+                "off_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_off"}],
+            },
+        )
+    subentries = {
+        subentry["title"]: subentry["subentry_id"]
+        for subentry in await ha.ws("config_entries/subentries/list", entry_id=entry_id)
+    }
+    entities = await ha.ws("config/entity_registry/list")
+    for name, thermometer, _socket in THERMOSTATS:
+        switch = next(
+            e["entity_id"]
+            for e in entities
+            if e["platform"] == CLIMATE and e["unique_id"] == subentries[f"{name} IR"]
+        )
         await ha.flow(
             "subentries/flow",
             [entry_id, "thermostat"],
@@ -215,11 +258,15 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
                 "temperature_sensor": reg.mock(
                     "sensor", f"mock_{thermometer}_temperature"
                 ),
-                "target_switch": reg.mock("switch", f"mock_{socket}"),
+                "target_switch": switch,
                 "thermostat_mode": "heating",
                 "cold_tolerance": 0.3,
                 "hot_tolerance": 0.3,
+                # The pause after an "off" and the working time before a
+                # rotation (decision 29): a minute, so that a scenario shows
+                # its result within 4 minutes of its button
+                "min_cycle_duration": {"hours": 0, "minutes": 1, "seconds": 0},
             },
             {},
         )
-        print(f"  added {CLIMATE} thermostat: {name}")
+        print(f"  added {CLIMATE} thermostat: {name} on {switch}")

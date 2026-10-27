@@ -151,7 +151,9 @@ class Strategies:
         if await self._async_command(entry, direction):
             self._fire_switched(entry, direction, strategy, priority)
 
-    async def async_apply_mode(self) -> None:
+    async def async_apply_mode(
+        self, *, restart: bool = False, only: str | None = None
+    ) -> None:
         """
         Apply mode-specific priorities (turn off/on devices based on priority).
 
@@ -159,17 +161,30 @@ class Strategies:
         too. A device that is on and should be off gets the mode's duty: its
         turn-off is repeated like any balancer command until it is off
         (async_mode_duties).
+
+        After a restart of HA the mode is applied again (the owner's choice:
+        restarts are rare), and to a device entry reloaded after the start
+        (`only`); only the
+        devices that are not off (on, or still unknown) get a turn-off and
+        the duty, only the always-on ones that are off a turn-on, and the
+        event tells the commands that went through, so the family can turn on
+        what it needs.
         """
         devices_turned_off: list[str] = []
         devices_turned_on: list[str] = []
         now = dt_util.utcnow()
 
         for entry, control, state in self._devices():
+            if only is not None and entry.entry_id != only:
+                continue
             device_id = get_device_id_from_entry(entry)
             device_name = get_device_name_from_entry(entry)
             priority = get_current_priority(self._hass, entry)
             if priority != LOAD_PRIORITY_OFF:
                 control.end_mode_off()
+            is_on = state is not None and state.state == STATE_ON
+            # A cloud relay may still be unknown at the start: it gets the duty
+            maybe_on = state is None or state.state != STATE_OFF
 
             if priority == LOAD_PRIORITY_OFF:
                 LOGGER.debug(
@@ -177,12 +192,14 @@ class Strategies:
                     device_name,
                     device_id,
                 )
-                if state is not None and state.state == STATE_ON:
+                if maybe_on:
                     control.start_mode_off()
                     control.command_sent(
                         Direction.TURN_OFF, now, step_s=RED_INTERVAL_SECONDS, red=False
                     )
-                if await self._async_command(entry, Direction.TURN_OFF):
+                if (maybe_on or not restart) and await self._async_command(
+                    entry, Direction.TURN_OFF
+                ):
                     devices_turned_off.append(device_id)
             elif priority == LOAD_PRIORITY_ALWAYS_ON and balancer_may_turn_on(entry):
                 LOGGER.debug(
@@ -190,10 +207,12 @@ class Strategies:
                     device_name,
                     device_id,
                 )
-                if await self._async_command(entry, Direction.TURN_ON):
+                if (not is_on or not restart) and await self._async_command(
+                    entry, Direction.TURN_ON
+                ):
                     devices_turned_on.append(device_id)
 
-        if devices_turned_off or devices_turned_on:
+        if devices_turned_off or (devices_turned_on and not restart):
             mode_state = get_mode_state(self._hass)
             mode = mode_state.state if mode_state else ""
             self._hass.bus.async_fire(
@@ -202,6 +221,7 @@ class Strategies:
                     mode=mode,
                     devices_turned_off=devices_turned_off,
                     devices_turned_on=devices_turned_on,
+                    reason="restart" if restart else "selected",
                 ),
             )
 

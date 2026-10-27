@@ -10,7 +10,12 @@ device in HA. The entry keeps what it learned; the response time starts anew.
 from datetime import timedelta
 
 import pytest
-from homeassistant.config_entries import SOURCE_RECONFIGURE, ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    ConfigEntryDisabler,
+    ConfigEntryState,
+    ConfigSubentryData,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
@@ -310,3 +315,61 @@ async def test_virtual_device_reset_and_same_switch(
 
     assert (await async_get_response_memory(hass)).longest(lamp.entry_id) == 9.0
     assert (await async_get_power_memory(hass)).records(lamp.entry_id) == []
+
+
+async def test_a_switch_controlled_by_another_device_is_refused(
+    hass: HomeAssistant, lamp: MockConfigEntry
+) -> None:
+    """Review 06 debt: one relay, one Bestiarium device; its own switch is fine."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Second lamp",
+            CONF_SWITCH_ENTITY_ID: "switch.lamp",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.lamp_power",
+        },
+    )
+    assert result["errors"] == {CONF_SWITCH_ENTITY_ID: "switch_taken"}
+
+    await _reconfigure_virtual(hass, lamp, "switch.lamp", reset=False)
+    assert lamp.data[CONF_SWITCH_ENTITY_ID] == "switch.lamp"
+
+
+@pytest.mark.usefixtures("enable_custom_integrations", "lamp")
+async def test_a_thermostat_switch_is_no_device_relay(hass: HomeAssistant) -> None:
+    """Review 18: one relay lives in one integration: refused for a device."""
+    MockConfigEntry(
+        domain="bestiarium_climate",
+        disabled_by=ConfigEntryDisabler.USER,
+        subentries_data=[
+            ConfigSubentryData(
+                subentry_id="room",
+                subentry_type="thermostat",
+                title="Room",
+                unique_id=None,
+                data={"target_switch": "switch.lamp_matter"},
+            )
+        ],
+    ).add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": "user"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "create_virtual"}
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_DEVICE_NAME: "Heater",
+            CONF_SWITCH_ENTITY_ID: "switch.lamp_matter",
+            CONF_POWER_SENSOR_ENTITY_ID: "sensor.lamp_power",
+        },
+    )
+
+    assert result["errors"] == {CONF_SWITCH_ENTITY_ID: "switch_of_thermostat"}

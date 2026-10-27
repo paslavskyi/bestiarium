@@ -48,7 +48,6 @@ def _owner_entry(device_id: str, **data: object) -> MockConfigEntry:
             CONF_SWITCH_ENTITY_ID: RELAY,
             CONF_POWER_SENSOR_ENTITY_ID: POWER_SENSOR,
             CONF_LOAD_PRIORITIES: {CONF_DEFAULT_PRIORITY: 9000, "Grid off": 0},
-            CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY, "Grid off"],
             CONF_OVERLOAD_FIRST_QUEUE: True,
             CONF_THERMOSTAT_DRIVEN: True,
             **data,
@@ -87,7 +86,7 @@ def mode_entry(hass: HomeAssistant) -> None:
     MockConfigEntry(
         domain=DOMAIN_BESTIARIUM_MODE,
         unique_id="bestiarium_mode",
-        data={"options": [{"name": "Grid off", "icon": "mdi:home"}]},
+        data={"options": [{"name": "Grid off"}]},
     ).add_to_hass(hass)
 
 
@@ -102,7 +101,7 @@ async def test_composite_device_id_moves_to_the_relay_device(
     options_before = dict(entry.options)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 3  # noqa: PLR2004
+    assert entry.minor_version == 4  # noqa: PLR2004
     assert entry.data == {**data_before, CONF_DEVICE_ID: relay_device_id}
     assert entry.options == options_before
     allowed = er.async_get(hass).async_get(
@@ -185,7 +184,7 @@ async def test_valid_device_id_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 3  # noqa: PLR2004
+    assert entry.minor_version == 4  # noqa: PLR2004
     assert entry.data == data_before
 
 
@@ -210,7 +209,7 @@ async def test_virtual_device_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 3  # noqa: PLR2004
+    assert entry.minor_version == 4  # noqa: PLR2004
     assert entry.data == data_before
 
 
@@ -224,7 +223,7 @@ async def test_entry_without_relay_is_left_alone(
     data_before = dict(entry.data)
     await _setup(hass, entry)
 
-    assert entry.minor_version == 3  # noqa: PLR2004
+    assert entry.minor_version == 4  # noqa: PLR2004
     assert entry.data == data_before
     assert _bestiarium_warnings(caplog) == []
 
@@ -233,7 +232,7 @@ async def test_entry_without_relay_is_left_alone(
 async def test_relay_device_taken_by_another_entry(
     hass: HomeAssistant, hass_storage: dict, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """The relay's device already used by another entry: keep data, warn by name."""
+    """The relay is controlled by another entry: keep data, warn by name."""
     relay_device_id = await async_load_split_device(hass, hass_storage)
     other = _owner_entry(relay_device_id, **{CONF_DEVICE_NAME: "Other floor"})
     await _setup(hass, other)
@@ -242,7 +241,7 @@ async def test_relay_device_taken_by_another_entry(
     caplog.clear()
     await _setup(hass, entry)
 
-    assert entry.minor_version == 3  # noqa: PLR2004
+    assert entry.minor_version == 4  # noqa: PLR2004
     assert entry.data == data_before
     warnings = _bestiarium_warnings(caplog)
     assert len(warnings) == 1
@@ -260,3 +259,18 @@ async def test_migration_does_not_add_devices(
     await _setup(hass, _owner_entry(COMPOSITE_ID))
 
     assert len(list(dr.async_get(hass).devices)) == devices_before
+
+
+async def test_mode_options_snapshot_goes(hass: HomeAssistant) -> None:
+    """1.4: the snapshot nobody read is removed, the priorities stay."""
+    entry = _owner_entry(
+        "any", **{CONF_MODE_OPTIONS_SNAPSHOT: [CONF_DEFAULT_PRIORITY, "Grid off"]}
+    )
+    await _setup(hass, entry)
+
+    assert entry.minor_version == 4  # noqa: PLR2004
+    assert CONF_MODE_OPTIONS_SNAPSHOT not in entry.data
+    assert entry.data[CONF_LOAD_PRIORITIES] == {
+        CONF_DEFAULT_PRIORITY: 9000,
+        "Grid off": 0,
+    }

@@ -128,6 +128,7 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
     def __init__(self, entry: ConfigEntry) -> None:
         """Fix the given device entry."""
         self._entry = entry
+        self._entry_id = entry.entry_id
         self._device_type = entry.data[CONF_DEVICE_TYPE]
         self._device_id = entry.data.get(CONF_DEVICE_ID)
         self._switch_entity_id = entry.data[CONF_SWITCH_ENTITY_ID]
@@ -151,7 +152,9 @@ class MissingEntityFixFlow(RelaySteps, RepairsFlow):
         errors: dict[str, str] = {}
         if user_input is not None:
             power = user_input[CONF_POWER_SENSOR_ENTITY_ID]
-            if error := validate_power_sensor(self.hass, power):
+            if error := self._switch_error(user_input[CONF_SWITCH_ENTITY_ID]):
+                errors[CONF_SWITCH_ENTITY_ID] = error
+            elif error := validate_power_sensor(self.hass, power):
                 errors[CONF_POWER_SENSOR_ENTITY_ID] = error
             else:
                 self._switch_entity_id = user_input[CONF_SWITCH_ENTITY_ID]

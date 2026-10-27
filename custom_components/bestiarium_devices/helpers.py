@@ -4,20 +4,23 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import selector
 
 from .const import (
+    CLIMATE_TARGET_SWITCH,
     CONF_ALLOWED,
     CONF_DEFAULT_PRIORITY,
     CONF_DEVICE_ID,
     CONF_DEVICE_NAME,
     CONF_DEVICE_TYPE,
     CONF_LOAD_PRIORITIES,
+    CONF_SWITCH_ENTITY_ID,
     CONF_THERMOSTAT_DRIVEN,
     DEVICE_CLASS_POWER,
     DEVICE_TYPE_VIRTUAL,
+    DOMAIN,
+    DOMAIN_BESTIARIUM_CLIMATE,
     DOMAIN_BESTIARIUM_MODE,
     LOAD_PRIORITY_DEFAULT,
     LOAD_PRIORITY_MAX,
@@ -166,11 +169,44 @@ def build_priority_form_key(mode_name: str) -> str:
 
 def get_current_priority(hass: HomeAssistant, entry: ConfigEntry) -> int:
     """Get the device's effective priority for the selected mode."""
-    mode_state = get_mode_state(hass)
-    if not mode_state or mode_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
-        return LOAD_PRIORITY_DEFAULT
-
     priorities = entry.data.get(CONF_LOAD_PRIORITIES, {})
-    if mode_state.state in priorities:
+    mode_state = get_mode_state(hass)
+    if mode_state and mode_state.state in priorities:
         return priorities[mode_state.state]
+    # No mode (yet, or its select is gone): the device's own default priority
     return priorities.get(CONF_DEFAULT_PRIORITY, LOAD_PRIORITY_DEFAULT)
+
+
+def thermostat_of_switch(hass: HomeAssistant, switch: str) -> str | None:
+    """
+    Return the name of the Bestiarium Climate thermostat whose switch it is.
+
+    One relay lives in one integration (the owner's rule, DEV-008 review 18).
+    """
+    return next(
+        (
+            subentry.title
+            for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_CLIMATE)
+            for subentry in entry.subentries.values()
+            if subentry.data.get(CLIMATE_TARGET_SWITCH) == switch
+        ),
+        None,
+    )
+
+
+def switch_taken(hass: HomeAssistant, switch: str, entry_id: str | None) -> str | None:
+    """
+    Return the name of another device entry that controls the switch.
+
+    Two entries on one relay would fight over it; two entries on one device
+    (a two-channel relay) are fine.
+    """
+    return next(
+        (
+            get_device_name_from_entry(other)
+            for other in hass.config_entries.async_entries(DOMAIN)
+            if other.entry_id != entry_id
+            and other.data.get(CONF_SWITCH_ENTITY_ID) == switch
+        ),
+        None,
+    )

@@ -17,7 +17,14 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_devices.const import DOMAIN as DEVICES
 from custom_components.bestiarium_mock.const import DOMAIN as MOCK
-from scripts.stand.layout import DASHBOARD, SCRIPT_PREFIX, STAND_DEVICES, THERMOSTATS
+from scripts.stand.ha import Registry
+from scripts.stand.layout import (
+    CLIMATE,
+    DASHBOARD,
+    SCRIPT_PREFIX,
+    STAND_DEVICES,
+    THERMOSTATS,
+)
 from scripts.stand.scenarios import scenario_scripts
 from scripts.stand_setup import setup_stand
 
@@ -51,7 +58,7 @@ FOREIGN_AUTOMATION = {
     ],
 }
 MODE_ON_OLD_GRID_ID = {
-    "options": [{"name": "Grid on", "icon": "mdi:home"}],
+    "options": [{"name": "Grid on"}],
     "ac_load_limits": {
         "ac_power_sensor": "sensor.mock_grid_grid_power",
         "ac_load_limit_w": 5000,
@@ -132,7 +139,8 @@ async def test_stand_setup_is_repeatable(
     ]
     climate = hass.config_entries.async_entries("bestiarium_climate")
     assert len(climate) == 1
-    assert len(climate[0].subentries) == len(THERMOSTATS)
+    # Each thermostat runs an air conditioner through its own virtual switch
+    assert len(climate[0].subentries) == 2 * len(THERMOSTATS)
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -250,24 +258,128 @@ async def test_broken_automation_is_removed(
     assert "old_mock_click" not in (tmp_path / "automations.yaml").read_text()
 
 
+class _Registry:
+    """The stand's registry with every mock entity named by its unique_id."""
+
+    entities: list = []  # noqa: RUF012
+
+    def mock(self, domain: str, unique_id: str) -> str:
+        return f"{domain}.{unique_id}"
+
+    def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
+        return f"{domain}.{unique_id}"
+
+    def stand_climate(self) -> list:
+        return [
+            *({"entity_id": f"climate.stand_ac_{n}"} for n in (1, 2, 3)),
+            {"entity_id": "number.stand_capacity"},
+        ]
+
+    def mock_device(self, mock_id: str) -> dict:
+        return {"id": mock_id}
+
+    def control(self, device_id: str, key: str) -> str:
+        return f"switch.{device_id}_{key}"
+
+
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
-
-    class _Registry:
-        def mock(self, domain: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
-        def entity_id(self, domain: str, _platform: str, unique_id: str) -> str:
-            return f"{domain}.{unique_id}"
-
     reset = scenario_scripts(_Registry())["reset"]["sequence"]
-    switched = {
-        step["action"]: step["target"]["entity_id"]
-        for step in reset
-        if step.get("action", "").startswith("switch.")
-    }
-    assert set(switched["switch.turn_on"]) == {
+    switched: dict[str, set[str]] = {}
+    for step in reset:
+        if step.get("action", "").startswith("switch."):
+            switched.setdefault(step["action"], set()).update(
+                step["target"]["entity_id"]
+            )
+    sockets = {e for e in switched["switch.turn_on"] if e.startswith("switch.mock_")}
+    assert sockets == {
         "switch.mock_cooker",
         "switch.mock_fridge",
+        *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
+
+
+def test_stand_climate_is_only_the_stand_entry() -> None:
+    """The reset and the dashboard touch the stand's climate entry, no other."""
+    reg = Registry(
+        devices=[
+            {"name": THERMOSTATS[0][0], "config_entries": ["stand"]},
+            {"name": "Living room", "config_entries": ["home"]},
+        ],
+        entities=[
+            {"platform": CLIMATE, "config_entry_id": "stand", "entity_id": "climate.a"},
+            {"platform": CLIMATE, "config_entry_id": "home", "entity_id": "climate.b"},
+        ],
+    )
+
+    assert [e["entity_id"] for e in reg.stand_climate()] == ["climate.a"]
+
+
+def test_a_dead_ir_leaves_the_power_working() -> None:
+    """Review 20, C7: the dead IR is its own knob, not the AC socket's profile."""
+    scripts = scenario_scripts(_Registry())
+    dead = scripts["thermostats_dead_switch"]["sequence"]
+    assert {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.mock_ac_1_ir_lost"},
+    } in dead
+    assert all(
+        step.get("target", {}).get("entity_id") != "select.mock_ac_1_fault_profile"
+        for step in dead
+    )
+    assert scripts["ir_ac_1_on"]["sequence"][0] == {
+        "condition": "state",
+        "entity_id": "switch.mock_ac_1_ir_lost",
+        "state": "off",
+    }
+
+
+def test_a_hung_ir_waits_for_its_knob() -> None:
+    """Review 22, D3: the "on" of a hung IR does not end while its knob is on."""
+    scripts = scenario_scripts(_Registry())
+    assert {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.mock_ac_3_ir_hangs"},
+    } in scripts["thermostats_hung_command"]["sequence"]
+    assert scripts["ir_ac_1_on"]["sequence"][1] == {
+        "wait_template": "{{ is_state('switch.mock_ac_1_ir_hangs', 'off') }}"
+    }
+    assert all(
+        "wait_template" not in step for step in scripts["ir_ac_1_off"]["sequence"]
+    )
+
+
+def test_a_fault_scenario_shows_its_fault_first() -> None:
+    """Review 24, E7: the faulty AC's room the coldest, the stand's loads waiting."""
+    scripts = scenario_scripts(_Registry())
+    loads = [
+        "switch.commode_socket_allowed",
+        "switch.bedside_socket_allowed",
+        "switch.boiler_allowed",
+        "switch.slow_cloud_socket_allowed",
+        "switch.tuya_socket_allowed",
+        "switch.night_light_allowed",
+        "switch.dead_socket_allowed",
+    ]
+    for name, ac in (
+        ("thermostats_dead_switch", 1),
+        ("thermostats_hung_command", 3),
+        ("thermostats_no_temperature", 2),
+    ):
+        sequence = scripts[name]["sequence"]
+        assert {"action": "switch.turn_off", "target": {"entity_id": loads}} in sequence
+        rooms = {
+            s["target"]["entity_id"]: s["data"]["value"]
+            for s in sequence
+            if s.get("action") == "number.set_value"
+            and "thermo" in s["target"]["entity_id"]
+        }
+        assert rooms == {
+            f"number.mock_thermo_{n}_mock_temperature": 15 if n == ac else 21
+            for n in (1, 2, 3)
+        }
+    # Review 30, F1: the reset allows them again, a restart of HA in between too
+    reset = scripts["reset"]["sequence"]
+    assert {"action": "switch.turn_on", "target": {"entity_id": loads}} in reset
+    assert not [s for s in reset if s.get("action", "").startswith("scene.")]
