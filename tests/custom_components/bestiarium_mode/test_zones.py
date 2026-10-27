@@ -13,7 +13,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.components.repairs import repairs_flow_manager
 from homeassistant.const import STATE_UNAVAILABLE
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.setup import async_setup_component
@@ -65,7 +65,7 @@ class Grid:
         async_dispatcher_connect(
             self.hass,
             SIGNAL_ZONE_CHANGED.format(self.entry.entry_id),
-            lambda: self.zones.append(self.zone),
+            callback(lambda: self.zones.append(self.zone)),
         )
 
     @property

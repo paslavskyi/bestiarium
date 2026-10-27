@@ -1211,6 +1211,7 @@ class TestEventFiring:
         hass.states.async_set("switch.test", STATE_OFF)
         events: list = []
 
+        @callback
         def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
@@ -1257,6 +1258,7 @@ class TestEventFiring:
         hass.states.async_set("switch.low", STATE_ON)
         events: list = []
 
+        @callback
         def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
@@ -1318,6 +1320,7 @@ class TestEventFiring:
 
         events: list = []
 
+        @callback
         def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
@@ -1394,6 +1397,7 @@ class TestEventFiring:
 
         events: list = []
 
+        @callback
         def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 
@@ -1463,6 +1467,7 @@ class TestEventFiring:
 
         events: list = []
 
+        @callback
         def record(event: Event) -> None:
             events.append({"event_type": event.event_type, "data": dict(event.data)})
 

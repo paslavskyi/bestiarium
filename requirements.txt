@@ -170,7 +170,7 @@ hass-nabucasa==2.7.0
     # via homeassistant
 home-assistant-bluetooth==2.0.0
     # via homeassistant
-homeassistant==2026.10.2
+homeassistant==2026.10.4
     # via
     #   -r requirements.in
     #   pytest-homeassistant-custom-component
@@ -356,7 +356,7 @@ pytest-freezer==0.4.9
     # via pytest-homeassistant-custom-component
 pytest-github-actions-annotate-failures==0.4.2
     # via pytest-homeassistant-custom-component
-pytest-homeassistant-custom-component==0.13.373
+pytest-homeassistant-custom-component==0.13.375
     # via -r requirements.in
 pytest-picked==0.5.1
     # via pytest-homeassistant-custom-component
@@ -469,7 +469,7 @@ usb-devices==0.5.1
     # via
     #   bluetooth-adapters
     #   bluetooth-auto-recovery
-uv==0.12.23
+uv==0.13.5
     # via homeassistant
 voluptuous==0.16.0
     # via
