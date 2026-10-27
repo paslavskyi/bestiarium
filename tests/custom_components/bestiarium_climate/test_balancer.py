@@ -1618,25 +1618,67 @@ async def test_a_switch_turned_on_unwanted_is_turned_off_at_once(
     assert ("turn_off", "floor_3") in floors.calls
 
 
-async def test_a_moment_off_of_a_running_switch_turns_nothing_off(
+async def _glitch(floors: Floors, floor: str) -> None:
+    """Show a running switch off for a second, a cycle within it, then on again."""
+    floors.hass.states.async_set(f"switch.{floor}", STATE_OFF)
+    await floors.hass.async_block_till_done()
+    floors.freezer.tick(timedelta(seconds=1))
+    floors.hass.data[DOMAIN][floors.entry.entry_id].async_request_balance()
+    floors.hass.states.async_set(f"switch.{floor}", STATE_ON)
+    await floors.hass.async_block_till_done()
+
+
+async def test_a_moment_off_of_a_running_switch_gets_no_command(
     floors: Floors,
 ) -> None:
-    """I1: a running switch off for a second, then on: no "off", the same heaters."""
+    """I1, J1: a running switch off for a second, then on: no command, the same heaters."""
     await floors.setup()
     await floors.tick(MINUTE)
     assert floors.on() == {"floor_1", "floor_2"}
+    calls = len(floors.calls)
+
+    await _glitch(floors, "floor_1")
+    await floors.tick(MINUTE)
+
+    assert not [call for call in floors.calls[calls:] if call[1] == "floor_1"]
+    assert floors.on() == {"floor_1", "floor_2"}
+
+
+async def test_a_moment_off_in_yellow_turns_nothing_off(floors: Floors) -> None:
+    """J2: in yellow a cycle within a second's "off" still reads it heating."""
+    await floors.setup(zones=True)
+    assert floors.on() == {"floor_1", "floor_2"}
+    floors.zone("yellow")
+    await floors.tick(10, step=10)
+    calls = len(floors.calls)
+
+    await _glitch(floors, "floor_1")
+    await floors.tick(MINUTE, step=10)
+
+    assert not [call for call in floors.calls[calls:] if call[1] == "floor_1"]
+    assert floors.on() == {"floor_1", "floor_2"}
+
+
+async def test_a_heater_a_person_turns_off_waits_for_its_pause(
+    floors: Floors,
+) -> None:
+    """J1: off by a person mid-interval: its place goes on at the tolerance's end, no "on"."""
+    await floors.setup()
+    await floors.tick(MINUTE)
+    await floors.tick(30, step=30)  # between two periodic cycles
+    assert floors.on() == {"floor_1", "floor_2"}
+    calls = len(floors.calls)
 
     floors.hass.states.async_set("switch.floor_1", STATE_OFF)
     await floors.hass.async_block_till_done()
-    floors.freezer.tick(timedelta(seconds=1))
-    # A cycle within the glitch (the periodic one) turns nothing off either
-    floors.hass.data[DOMAIN][floors.entry.entry_id].async_request_balance()
-    floors.hass.states.async_set("switch.floor_1", STATE_ON)
-    await floors.hass.async_block_till_done()
-    await floors.tick(MINUTE)
+    await floors.tick(50, step=10)
+    assert floors.calls[calls:] == []  # not confirmed yet: no command
 
-    assert ("turn_off", "floor_1") not in floors.calls
-    assert floors.on() == {"floor_1", "floor_2"}
+    await floors.tick(10, step=10)  # the tolerance over
+    assert floors.calls[calls:] == [("turn_on", "floor_3")]
+
+    await floors.tick(4 * MINUTE - 10, step=10)  # to the end of its pause
+    assert ("turn_on", "floor_1") not in floors.calls[calls:]
 
 
 async def test_a_waiting_heater_starts_the_step_after_it_fits(
@@ -1684,6 +1726,5 @@ async def test_a_second_attempt_in_yellow_is_turned_off(floors: Floors) -> None:
     assert floors.calls.count(("turn_on", "floor_1")) == 2
 
     floors.zone("yellow")
-    await floors.tick(10, step=10)
-    control = floors.hass.data[DOMAIN][floors.entry.entry_id].controls["floor_1"]
-    assert not control.expected_on
+    await floors.tick(3 * MINUTE, step=10)
+    assert floors.calls.count(("turn_on", "floor_1")) == 2  # no third attempt

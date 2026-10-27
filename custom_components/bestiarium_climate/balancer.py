@@ -181,19 +181,17 @@ class BalancingCoordinator:
                 )
             )
         self._follow_zones()
-        # Decide at once when a power relay changes (the rotation changes)
-        # and when a switch turns on (a virtual switch showing its "on" late,
-        # a person: it may not be wanted). A switch's "off" waits for the
-        # cycle: a moment's glitch turns nothing off. Changes of the state
-        # only, not of its attributes.
+        # Decide at once when a power relay or a switch changes its state,
+        # not its attributes: the rotation changes, a virtual switch shows
+        # its "on" late, a person turns one on or off (an "off" by another
+        # gets no command until the tolerance confirms it)
         switches = [c.switch for c in self.controls.values()]
         self._unsubscribe.append(
             async_track_state_change_event(
-                self._hass, power_relays(self._hass, switches), self._on_changed
+                self._hass,
+                [*power_relays(self._hass, switches), *switches],
+                self._on_changed,
             )
-        )
-        self._unsubscribe.append(
-            async_track_state_change_event(self._hass, switches, self._on_switch_on)
         )
         self._unsubscribe.append(
             self._hass.bus.async_listen(
@@ -339,16 +337,6 @@ class BalancingCoordinator:
             self.async_request_balance()
 
     @callback
-    def _on_switch_on(self, event: Event[EventStateChangedData]) -> None:
-        old, new = event.data["old_state"], event.data["new_state"]
-        if (
-            new is not None
-            and new.state == STATE_ON
-            and (old and old.state) != STATE_ON
-        ):
-            self.async_request_balance()
-
-    @callback
     def async_request_balance(self, _now: datetime | None = None) -> None:
         """
         Run a cycle now; asked for during one, it runs once more after it.
@@ -489,6 +477,9 @@ class BalancingCoordinator:
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
         for subentry_id, control in self.controls.items():
             control.defer_if_exhausted(now)
+            # Decide again the moment an "off" by another is confirmed
+            if (confirmed_at := control.off_confirmed_at(now)) is not None:
+                self._start_again(confirmed_at - now)
             if not control.heating(now) and power_cut(self._hass, control.switch):
                 control.lost_power(now)
                 cut.add(control)
@@ -570,7 +561,7 @@ class BalancingCoordinator:
             for pair in ranked:
                 self._turn(pair, on=False, now=now, deficit=False)
             return
-        arranged, freed = self._arranged(ranked, capacity, zone, now)
+        arranged, unfit = self._arranged(ranked, capacity, zone, now)
         for _thermostat, control in ranked:
             # Decide again the moment a pause ends
             if not control.expected_on and (until := control.paused_until(now)):
@@ -590,12 +581,15 @@ class BalancingCoordinator:
         ]
         for pair in out:
             self._turn(pair, on=False, now=now, deficit=deficit)
+        # While one does not fit, the next step decides again
+        if unfit:
+            self._start_again(timedelta(seconds=START_STEP_SECONDS))
         for pair in ranked:
             control = pair[1]
             if (
                 control.subentry_id in arranged
                 and not control.expected_on
-                and self._start(control, now, zone, freed[control.subentry_id])
+                and self._start(now, zone)
             ):
                 self._turn(pair, on=True, now=now, deficit=deficit)
 
@@ -605,18 +599,16 @@ class BalancingCoordinator:
         capacity: int,
         zone: Zone,
         now: datetime,
-    ) -> tuple[set[str], dict[str, float]]:
+    ) -> tuple[set[str], bool]:
         """
-        Return who should heat, and the power each new one frees by its place.
-
-        A waiting one that does not fit holds no place.
+        Return who should heat, and whether a waiting one does not fit.
 
         The owner's decision (SRC-140): a waiting heater that does not fit
         even with the power of the running one it would replace freed (load
         minus that one's measured power plus its own over the red threshold;
         an unknown load or threshold does not fit) takes no place, as one in
         its pause: the running one goes on heating. Without load limits all
-        fit. While one does not fit, the next step decides again.
+        fit.
         """
         heaters = {
             control.subentry_id: Heater(
@@ -649,30 +641,22 @@ class BalancingCoordinator:
                 for place, control in enumerate(new)
             }
             if zone is Zone.NONE:
-                return arranged, freed
+                return arranged, False
             if (
                 no_fit := next(
                     (c for c in new if not self._fits(c, freed[c.subentry_id])),
                     None,
                 )
             ) is None:
-                if unfit:
-                    self._start_again(timedelta(seconds=START_STEP_SECONDS))
-                return arranged, freed
+                return arranged, bool(unfit)
             unfit.add(no_fit.subentry_id)
 
-    def _start(
-        self,
-        control: ThermostatControl,
-        now: datetime,
-        zone: Zone,
-        freed: float,
-    ) -> bool:
-        """Return whether an arranged heater starts now: one at a time, if it fits."""
+    def _start(self, now: datetime, zone: Zone) -> bool:
+        """Return whether an arranged heater (it fits) starts now: one at a time."""
         if not self._gate_open:
             self._start_again(timedelta(seconds=START_STEP_SECONDS))
             return False
-        on = self._may_start(control, now, zone, freed)
+        on = self._may_start(now, zone)
         self._gate_open = not on
         return on
 
@@ -701,15 +685,9 @@ class BalancingCoordinator:
                 },
             )
 
-    def _may_start(
-        self,
-        control: ThermostatControl,
-        now: datetime,
-        zone: Zone,
-        freed: float,
-    ) -> bool:
+    def _may_start(self, now: datetime, zone: Zone) -> bool:
         """
-        Return whether a heater may start now: one at a time, if it fits.
+        Return whether a heater that fits may start now: one at a time.
 
         The next start waits a step, so that the load shows the last one.
         Without load limits (no zone) only the capacity counts.
@@ -719,9 +697,6 @@ class BalancingCoordinator:
             return True
         if self._started_at is not None and now - self._started_at < step:
             self._start_again(step - (now - self._started_at))
-            return False
-        if not self._fits(control, freed):
-            self._start_again(step)
             return False
         self._started_at = now
         self._start_again(step)
@@ -754,7 +729,7 @@ class BalancingCoordinator:
         return True
 
     def _start_again(self, delay: timedelta) -> None:
-        """Run a cycle after a delay (the start step, a pause), the earliest one."""
+        """Run a cycle after a delay (a step, a pause, a tolerance): the earliest."""
         due = dt_util.utcnow() + delay
         if self._start_timer is not None and self._start_due is not None:
             if self._start_due <= due:

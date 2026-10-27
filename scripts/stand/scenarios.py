@@ -198,6 +198,14 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         ]
 
     ir_hangs = [reg.mock("switch", f"mock_{ac}_ir_hangs") for _, _, ac in THERMOSTATS]
+    # The power knob of the first air conditioner that runs, or ''
+    ac_powers = [
+        reg.mock("number", f"mock_{ac}_mock_power") for _, _, ac in THERMOSTATS
+    ]
+    running_ac = (
+        f"{{{{ {ac_powers} | select('is_state', '{float(AC_RUNNING_W)}')"
+        " | first | default('') }}"
+    )
     irs = {
         f"ir_{ac}_{command}": {
             "alias": f"Стенд: ІЧ {name} — {label}",
@@ -378,6 +386,27 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:scale-balance",
             # 2300 W: one heater fits under the red threshold, two do not
             "sequence": [reset, grid_at(2300, 0), *heat("heat")],
+        },
+        "climate_switch_glitch": {
+            "alias": "Стенд: клімат — збій вимикача працюючого кондиціонера",
+            "icon": "mdi:flash-alert",
+            # In the zone as it is: the first running air conditioner draws
+            # its standby for 15 s, its switch shows "off" for a moment
+            "sequence": [
+                {"variables": {"ac": running_ac}},
+                {"condition": "template", "value_template": "{{ ac != '' }}"},
+                {
+                    "action": "number.set_value",
+                    "target": {"entity_id": "{{ ac }}"},
+                    "data": {"value": AC_STANDBY_W},
+                },
+                wait(15),
+                {
+                    "action": "number.set_value",
+                    "target": {"entity_id": "{{ ac }}"},
+                    "data": {"value": AC_RUNNING_W},
+                },
+            ],
         },
         "climate_margin": {
             "alias": "Стенд: клімат — з'явився запас (2300 Вт з обігрівачем)",

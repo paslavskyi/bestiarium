@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -61,6 +62,18 @@ GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 # The pause after a heater turned off, when its thermostat sets no minimum
 # cycle duration (decision 29: the compressor's protection)
 DEFAULT_PAUSE = timedelta(minutes=5)
+
+
+class Reading(StrEnum):
+    """What the balancer reads from a thermostat's switch (DEC-014, rule 1)."""
+
+    ON = "on"
+    # Told on and not on yet: the start's first command waits for its answer
+    STARTING = "starting"
+    # Wanted on, turned off by another for less than the tolerance: a glitch
+    # so far
+    OFF_UNCONFIRMED = "off_unconfirmed"
+    OFF = "off"
 
 
 class _MemoryStore(Store[dict[str, dict[str, Any]]]):
@@ -251,73 +264,106 @@ class ThermostatControl:
             or self.deferred_until is not None
         )
 
-    def switch_is_on(self) -> bool | None:
-        """Return the switch's state; None while it is gone."""
+    def reading(self, now: datetime) -> Reading | None:
+        """
+        Return what the switch reads now; None while it is gone.
+
+        A start under way is starting: the start's first command (the only
+        "on" since the balancer wanted it on) waits for its answer, as any
+        command, and the switch has not changed since. A switch that changed
+        since (on, then turned off by the load protection) is no start under
+        way, nor is one that did not take its first attempt.
+
+        A switch wanted on that another turned off after its last "on" (a
+        person, the load protection, the switch itself) is off only once
+        that lasted the tolerance (DEC-014, rule 1); until then it gets no
+        command and heats, for the arrangement and the zones alike.
+        """
         state = self._hass.states.get(self.switch)
-        return None if _gone(state) else state.state == STATE_ON
+        if _gone(state):
+            return None
+        if state.state == STATE_ON:
+            return Reading.ON
+        if self.expected_on:
+            start = self._commands.start
+            if (
+                start is not None
+                and start.waiting(now)
+                and state.last_changed <= start.sent_at
+            ):
+                return Reading.STARTING
+            off = self._turned_off_at()
+            if off is not None and now - off < self._tolerance:
+                return Reading.OFF_UNCONFIRMED
+        return Reading.OFF
+
+    def switch_is_on(self, now: datetime) -> bool | None:
+        """Return whether the switch is on; None while it is gone."""
+        reading = self.reading(now)
+        return None if reading is None else reading is Reading.ON
 
     def heating(self, now: datetime) -> bool:
         """
-        Return whether the switch is wanted on and is on, or was just told to.
+        Return whether the switch is wanted on and heats.
 
-        A start under way (its answer not in yet) is heating: a zone that the
-        start itself moves to yellow does not cancel it.
+        A start under way heats (a zone that the start itself moves to yellow
+        does not cancel it), and so does an "off" not confirmed yet.
         """
-        return self.expected_on and bool(self.switch_is_on() or self.starting(now))
+        return self.expected_on and self.reading(now) not in (None, Reading.OFF)
 
     def starting(self, now: datetime) -> bool:
-        """
-        Return whether a start is under way: told on, not on, unchanged since.
-
-        The start's first command (the only "on" since the balancer wanted
-        it on) waits for its answer, as any command: while it runs and its
-        window after its end. A switch that changed since the command (on,
-        then turned off by the load protection) is no start under way, nor
-        is one that did not take its first attempt: it holds no other start
-        back.
-        """
-        if not self.expected_on:
-            return False
-        command = self._commands.start
-        if command is None or not command.waiting(now):
-            return False
-        state = self._hass.states.get(self.switch)
-        return (
-            state is not None
-            and state.state != STATE_ON
-            and state.last_changed <= command.sent_at
-        )
+        """Return whether a start is under way: told on, not on, unchanged since."""
+        return self.reading(now) is Reading.STARTING
 
     def turned_off_by_another(self, now: datetime) -> bool:
         """
-        Return whether the switch, wanted on, was turned off after the last command.
+        Return whether the switch, wanted on, was turned off after its last "on".
 
-        The load protection of the devices (or a person) did it: no failed
-        attempt; a new start has to fit again. An "off" shorter than the
-        tolerance is a glitch (DEC-014, rule 1): the heater goes on.
+        The load protection of the devices (or a person) did it, for at least
+        the tolerance: no failed attempt; a new start waits for the pause
+        from that "off" and has to fit again.
         """
-        command = self._commands.latest()
-        if not (self.expected_on and command is not None and command.on):
-            return False
+        return self.reading(now) is Reading.OFF and self._turned_off_at() is not None
+
+    def off_confirmed_at(self, now: datetime) -> datetime | None:
+        """Return when an "off" not confirmed yet is confirmed, while it is not."""
+        off = self._turned_off_at()
+        if off is None or self.reading(now) is not Reading.OFF_UNCONFIRMED:
+            return None
+        return off + self._tolerance
+
+    def _turned_off_at(self) -> datetime | None:
+        """Return when another turned the switch, wanted on, off after its last "on"."""
         state = self._hass.states.get(self.switch)
-        return (
-            state is not None
+        command = self._commands.latest()
+        if (
+            self.expected_on
+            and command is not None
+            and command.on
+            and state is not None
             and state.state == STATE_OFF
             and state.last_changed > command.sent_at
-            and now - state.last_changed
-            >= timedelta(seconds=self.settings.tolerance_seconds)
-        )
+        ):
+            return state.last_changed
+        return None
+
+    @property
+    def _tolerance(self) -> timedelta:
+        return timedelta(seconds=self.settings.tolerance_seconds)
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
         """
         Set what the balancer wants the switch to be; the series go on.
 
-        Wanted off while its switch is on, or its start sent (cut short: the
+        Wanted off while it heats, or its start sent (cut short: the
         compressor may have begun), the heater pauses from now, before its
-        switch shows it (a virtual switch shows its power a delay later).
+        switch shows it (a virtual switch shows its power a delay later);
+        turned off by another, from that "off".
         """
         if on != self.expected_on:
-            if not on and (self.switch_is_on() or self._commands.start_sent):
+            if not on and self.turned_off_by_another(now):
+                self.off_at = self._turned_off_at()
+            elif not on and (self.heating(now) or self._commands.start_sent):
                 self.off_at = now
             if on:
                 self._commands.new_start()
@@ -349,16 +395,19 @@ class ThermostatControl:
         a toggling IR code is never sent twice. One the other way overtakes
         the running one at once. A deferral sends its "off" once, by the same
         rule: not while an "off" runs or is in its window, even one the
-        deferral closed. Then nothing until it ends.
+        deferral closed. Then nothing until it ends. An "off" by another not
+        confirmed yet gets no command either way (a switch deferred is wanted
+        off: none of its "off"s is by another).
         """
         self._observe(now)
-        actual = self.switch_is_on()
-        if actual is None:
+        reading = self.reading(now)
+        if reading in (None, Reading.OFF_UNCONFIRMED):
             return None
         if self.deferred_until is not None:
             if self._off_owed and not self._commands.in_flight(now, on=False):
                 return False
             return None
+        actual = reading is Reading.ON
         wanted = self.wanted(now)
         if self._commands.waiting(now, on=wanted):
             return None
@@ -399,7 +448,7 @@ class ThermostatControl:
         to another thermostat in this cycle.
         """
         self._observe(now)
-        actual = self.switch_is_on()
+        actual = self.switch_is_on(now)
         if actual is None or self.deferred_until is not None:
             return
         attempts = self.settings.attempts
@@ -418,7 +467,7 @@ class ThermostatControl:
         Only the switch's answer ends a series, never a new wanted state; an
         answer to a command sent out of a deferral ends "Not responding".
         """
-        actual = self.switch_is_on()
+        actual = self.switch_is_on(now)
         if actual is None:
             return
         before = self._commands.kept
@@ -503,11 +552,11 @@ class ThermostatControl:
         if event.data["entity_id"] == self.switch:
             self._switch_gone.set(_gone(new), now)
             old = event.data["old_state"]
+            # An "off" by another pauses once confirmed (set_expected)
             if (
                 old is not None
                 and old.state == STATE_ON
-                and new is not None
-                and new.state == STATE_OFF
+                and self.reading(now) is Reading.OFF
             ):
                 self.off_at = now
                 self._keep()

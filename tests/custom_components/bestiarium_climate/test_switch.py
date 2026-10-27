@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import timedelta
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
@@ -492,7 +493,10 @@ async def test_no_start_while_the_power_is_cut(
 
 
 async def test_a_power_cut_is_no_failed_attempt(
-    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    freezer: FrozenDateTimeFactory,
 ) -> None:
     """Review 18: the AC heats, its power is cut (0 W): no attempt, no "unresponsive"."""
     await _relay_powers_the_switch(hass, on=True)
@@ -500,14 +504,16 @@ async def test_a_power_cut_is_no_failed_attempt(
     await _heat(hass)
     assert len(services["heat"]) == 1
     hass.states.async_set(POWER, "1000")  # the AC runs
-    _later(hass, DELAY + 1)
+    freezer.tick(timedelta(seconds=DELAY + 1))
+    async_fire_time_changed(hass)
     await hass.async_block_till_done()
     assert _state(hass) == STATE_ON
 
     hass.states.async_set(RELAY, STATE_OFF)
     hass.states.async_set(POWER, "0")
-    for minute in range(1, 11):
-        _later(hass, minute * 60)
+    for _ in range(10):
+        freezer.tick(timedelta(minutes=1))
+        async_fire_time_changed(hass)
         await hass.async_block_till_done()
 
     state = _control_state(hass)
@@ -870,6 +876,64 @@ async def test_the_power_back_waits_for_the_pause_after_the_off(
     assert len(services["heat"]) == starts + 1
 
 
+async def test_a_power_glitch_shorter_than_the_tolerance_waits_for_the_pause(
+    hass: HomeAssistant,
+    setup: Setup,
+    services: dict[str, list[ServiceCall]],
+    freezer: FrozenDateTimeFactory,
+) -> None:
+    """J1: the AC's power cut and back within the tolerance: no command until the pause ends."""
+
+    async def seconds(count: int) -> None:
+        for _ in range(count // 10):
+            freezer.tick(timedelta(seconds=10))
+            async_fire_time_changed(hass)
+            await hass.async_block_till_done()
+
+    await _relay_powers_the_switch(hass, on=True)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    hass.states.async_set(POWER, "1000")  # the AC runs
+    await seconds(60)
+    assert _state(hass) == STATE_ON
+    starts, offs = len(services["heat"]), len(services["off"])
+
+    hass.states.async_set(RELAY, STATE_OFF)
+    hass.states.async_set(POWER, "0")  # the AC does not start by itself again
+    off_at = None
+    while off_at is None:  # its switch off by its 0 W
+        await seconds(10)
+        if _state(hass) == STATE_OFF:
+            off_at = dt_util.utcnow()
+    await seconds(20)
+    hass.states.async_set(RELAY, STATE_ON)  # back within the tolerance
+    while dt_util.utcnow() < off_at + timedelta(minutes=5) - timedelta(seconds=10):
+        await seconds(10)
+        assert len(services["heat"]) == starts  # in its pause, no "on"
+    assert len(services["off"]) == offs  # and no "off"
+    await seconds(80)  # the pause over, the next cycle
+    assert len(services["heat"]) == starts + 1
+
+
+async def test_a_change_of_attributes_runs_no_cycle(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """I6, J6: the attributes of the switch or its relay change: no cycle."""
+    await _relay_powers_the_switch(hass, on=True)
+    entry = await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    with patch.object(coordinator, "_cycle", wraps=coordinator._cycle) as cycle:
+        switch = hass.states.get(SWITCH)
+        hass.states.async_set(SWITCH, switch.state, {"note": "changed"})
+        hass.states.async_set(RELAY, STATE_ON, {"note": "changed"})
+        await hass.async_block_till_done()
+        assert cycle.call_count == 0
+
+        hass.states.async_set(RELAY, STATE_OFF)  # its state: a cycle
+        await hass.async_block_till_done()
+        assert cycle.call_count == 1
+
+
 async def test_no_power_is_no_fault(
     hass: HomeAssistant,
     setup: Setup,
@@ -1004,20 +1068,34 @@ async def test_ha_refuses_a_sequence_already_on_the_script_stack(
     assert "Disallowed recursion detected" in caplog.text
 
 
-async def test_a_cycle_run_inside_a_sequence_refuses_no_other_switch(
+async def test_a_cycle_run_inside_a_sequence_carries_no_script_stack(
     hass: HomeAssistant,
     setup: Setup,
-    services: dict[str, list[ServiceCall]],
     freezer: FrozenDateTimeFactory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """I5, I7 (H8): A's sequence runs the cycle while B's "off" is on the stack."""
+    """I5, J6: A's "off" turns B's thermostat off: B's "off" runs on its own stack."""
+    stacks: list[list[str]] = []
+
+    @callback
+    def record(_call: ServiceCall) -> None:
+        stacks.append(list(script_stack_cv.get() or []))
+
+    hass.services.async_register("test", "stack", record)
     hass.states.async_set(POWER, "1000")
     hass.states.async_set(POWER_B, "1000")
     hass.states.async_set("sensor.temp", "15")
     await setup(
-        _switch(),
-        _second_switch(off_action=[{"action": "test.cool"}]),
+        _switch(
+            off_action=[
+                {
+                    "action": "climate.set_hvac_mode",
+                    "target": {"entity_id": "climate.second"},
+                    "data": {"hvac_mode": "off"},
+                }
+            ]
+        ),
+        _second_switch(off_action=[{"action": "test.stack"}]),
         _thermostat("Heater", ClimateMode.HEATING),
         _second_thermostat(),
         power="1000",
@@ -1030,25 +1108,17 @@ async def test_a_cycle_run_inside_a_sequence_refuses_no_other_switch(
     freezer.tick(timedelta(minutes=2))  # the windows of the first commands over
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
-    cools = len(services["cool"])
+    stacks.clear()
 
-    # As in A's sequence (its stack shared), B's "off" already on the stack
-    switch_b = hass.data["entity_components"]["switch"].get_entity(SWITCH_B)
-    stack = [
-        "bestiarium_climate.Floor off_action",
-        switch_b._scripts["off_action"].unique_id,
-    ]
-    token = script_stack_cv.set(stack)
-    try:
-        await hass.services.async_call(
-            "climate",
-            "set_hvac_mode",
-            {"entity_id": "climate.second", "hvac_mode": "off"},
-            blocking=True,
-        )
-    finally:
-        script_stack_cv.reset(token)
+    # A's "off" sequence turns B's thermostat off: its cycle sends B "off"
+    await hass.services.async_call(
+        "climate",
+        "set_hvac_mode",
+        {"entity_id": "climate.heater", "hvac_mode": "off"},
+        blocking=True,
+    )
     await hass.async_block_till_done()
 
-    assert len(services["cool"]) == cools + 1  # B's "off" sequence ran
+    switch_b = hass.data["entity_components"]["switch"].get_entity(SWITCH_B)
+    assert stacks == [[switch_b._scripts["off_action"].unique_id]]
     assert "Disallowed recursion detected" not in caplog.text
