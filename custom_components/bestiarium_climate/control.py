@@ -358,9 +358,10 @@ class ThermostatControl:
         Wanted off while it heats, or its start sent (cut short: the
         compressor may have begun), the heater pauses from now, before its
         switch shows it (a virtual switch shows its power a delay later);
-        turned off by another, from that "off".
+        turned off by another, from that "off". A new pause is shown.
         """
         if on != self.expected_on:
+            off_at = self.off_at
             if not on and self.turned_off_by_another(now):
                 self.off_at = self._turned_off_at()
             elif not on and (self.heating(now) or self._commands.start_sent):
@@ -369,6 +370,8 @@ class ThermostatControl:
                 self._commands.new_start()
             self.expected_on, self.expected_changed_at = on, now
             self._keep()
+            if self.off_at != off_at:
+                self._refresh(now)
 
     def wanted(self, now: datetime) -> bool:
         """Return the state the switch should have now."""

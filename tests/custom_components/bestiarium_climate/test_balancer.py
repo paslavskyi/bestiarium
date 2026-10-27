@@ -1669,16 +1669,26 @@ async def test_a_heater_a_person_turns_off_waits_for_its_pause(
     assert floors.on() == {"floor_1", "floor_2"}
     calls = len(floors.calls)
 
+    sensor = floors.entity_id("sensor", "floor_1_control_state")
     floors.hass.states.async_set("switch.floor_1", STATE_OFF)
+    off = dt_util.utcnow()
     await floors.hass.async_block_till_done()
     await floors.tick(50, step=10)
     assert floors.calls[calls:] == []  # not confirmed yet: no command
+    assert floors.hass.states.get(sensor).attributes["pause_until"] is None
 
     await floors.tick(10, step=10)  # the tolerance over
     assert floors.calls[calls:] == [("turn_on", "floor_3")]
+    # K2: its pause from that "off" is shown
+    pause_until = off + timedelta(minutes=5)
+    assert floors.hass.states.get(sensor).attributes["pause_until"] == pause_until
 
     await floors.tick(4 * MINUTE - 10, step=10)  # to the end of its pause
     assert ("turn_on", "floor_1") not in floors.calls[calls:]
+    assert floors.hass.states.get(sensor).attributes["pause_until"] == pause_until
+
+    await floors.tick(10, step=10)  # its pause over: shown no more
+    assert floors.hass.states.get(sensor).attributes["pause_until"] is None
 
 
 async def test_a_waiting_heater_starts_the_step_after_it_fits(

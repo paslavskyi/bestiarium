@@ -900,11 +900,12 @@ async def test_a_power_glitch_shorter_than_the_tolerance_waits_for_the_pause(
 
     hass.states.async_set(RELAY, STATE_OFF)
     hass.states.async_set(POWER, "0")  # the AC does not start by itself again
-    off_at = None
-    while off_at is None:  # its switch off by its 0 W
+    for _ in range(12):  # its switch off by its 0 W, within 2 minutes
         await seconds(10)
         if _state(hass) == STATE_OFF:
-            off_at = dt_util.utcnow()
+            break
+    assert _state(hass) == STATE_OFF
+    off_at = dt_util.utcnow()
     await seconds(20)
     hass.states.async_set(RELAY, STATE_ON)  # back within the tolerance
     while dt_util.utcnow() < off_at + timedelta(minutes=5) - timedelta(seconds=10):
