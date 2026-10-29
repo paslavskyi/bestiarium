@@ -433,16 +433,28 @@ class ThermostatControl:
             return None if latest.on is wanted else wanted
         return None if actual is wanted else wanted
 
-    def send(self, on: bool, now: datetime) -> SwitchCommand:  # noqa: FBT001
+    def send(
+        self,
+        on: bool,  # noqa: FBT001
+        now: datetime,
+        *,
+        counted: bool = True,
+        target: str | None = None,
+    ) -> SwitchCommand:
         """
         Count a command sent now; the deferral's "off" is owed no more.
 
-        An "off" to a switch that is on is an attempt of the stepwise "off".
+        An "off" counted to a switch that is on is an attempt of the stepwise
+        "off"; a command to a deferred switch counts in no series. Not counted:
+        the "off" outside the attempts and the cut of the socket (command.py).
         """
-        if not on and self.reading(now) is Reading.ON:
+        if counted and target is None and not on and self.reading(now) is Reading.ON:
             self._stepwise.attempt(now)
-        command = self._commands.send(on, now, deferral=self.deferred_until is not None)
-        if command.deferral:
+        deferred = self.deferred_until is not None
+        command = self._commands.send(
+            on, now, counted=counted and not deferred, target=target
+        )
+        if deferred and target is None:
             self._off_owed = False
         self._keep()
         self._refresh(now)
@@ -516,7 +528,7 @@ class ThermostatControl:
         state = self._hass.states.get(self.switch)
         if (
             command is not None
-            and not command.deferral
+            and command.counted
             and self.deferred_until is None
             and state is not None
             and state.last_changed >= command.sent_at

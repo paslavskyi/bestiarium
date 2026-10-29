@@ -42,6 +42,31 @@ if TYPE_CHECKING:
     from homeassistant.data_entry_flow import FlowResult
 
 
+def set_issue(  # noqa: PLR0913
+    hass: HomeAssistant,
+    issue_id: str,
+    key: str,
+    active: bool,  # noqa: FBT001
+    *,
+    placeholders: dict[str, str],
+    data: dict[str, str],
+) -> None:
+    """Create a fixable warning while active; delete it once not."""
+    if not active:
+        ir.async_delete_issue(hass, DOMAIN, issue_id)
+        return
+    ir.async_create_issue(
+        hass,
+        DOMAIN,
+        issue_id,
+        is_fixable=True,
+        severity=ir.IssueSeverity.WARNING,
+        translation_key=key,
+        translation_placeholders=placeholders,
+        data=data,
+    )
+
+
 async def async_create_fix_flow(
     hass: HomeAssistant,  # noqa: ARG001
     issue_id: str,

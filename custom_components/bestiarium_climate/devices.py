@@ -54,6 +54,16 @@ def power_entity(hass: HomeAssistant, switch: str) -> str | None:
     return found[1].data.get(CONF_POWER_ENTITY) if found else None
 
 
+def switch_power(hass: HomeAssistant, switch: str) -> float | None:
+    """Return what a virtual switch's power sensor reads, if it has one."""
+    entity_id = power_entity(hass, switch)
+    state = hass.states.get(entity_id) if entity_id else None
+    try:
+        return float(state.state) if state else None
+    except ValueError:
+        return None
+
+
 def power_socket(hass: HomeAssistant, switch: str) -> str | None:
     """Return the socket of a virtual switch of Climate, if it has one."""
     found = virtual_switch(hass, switch)

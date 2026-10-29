@@ -37,9 +37,6 @@ from .const import (
     DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
-    EVENT_POWER_CUT,
-    EVENT_SWITCH_OUT_OF_CONTROL,
-    ISSUE_SOCKET_GONE,
     ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
     LARGE_HEATER_POWER_W,
@@ -52,8 +49,7 @@ from .const import (
     SUBENTRY_TYPE_THERMOSTAT,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
-    PowerCutData,
-    SwitchOutOfControlData,
+    DeviceRotatedData,
     Zone,
 )
 from .control import DEFAULT_PAUSE, ThermostatControl, async_get_thermostat_memory
@@ -62,18 +58,16 @@ from .devices import (
     expected_power,
     power_cut,
     power_device,
-    power_entity,
     power_relays,
+    switch_power,
 )
-from .stepwise import Step
-from .switch import virtual_switch
+from .repairs import set_issue
+from .stepwise_actions import StepwiseActions
 from .util import duration_dict_to_timedelta
 from .zone_rules import Candidate, ZoneInput, arrange_zone
 
 if TYPE_CHECKING:
     import asyncio
-    from collections.abc import Coroutine
-    from typing import Any
 
     from homeassistant.core import CALLBACK_TYPE, EventStateChangedData, HomeAssistant
 
@@ -154,10 +148,7 @@ class BalancingCoordinator:
         self._start_due: datetime | None = None
         # The zone of the last cycle: the entry to red or overload acts once
         self._last_zone: Zone | None = None
-        # The commands outside the controls: the "off"s of the entry to red
-        # and the sockets cut
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._gone_sockets: set[str] = set()
+        self._actions = StepwiseActions(hass, self._send)
 
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
@@ -221,8 +212,6 @@ class BalancingCoordinator:
         self._stopped = True
         for control in self.controls.values():
             control.cancel_commands()
-        for task in self._tasks:
-            task.cancel()
         while self._unsubscribe:
             self._unsubscribe.pop()()
         if self._zone_unsubscribe is not None:
@@ -280,7 +269,8 @@ class BalancingCoordinator:
             )
         self._shared, self._relays = shared, relays
         for control in self.controls.values():
-            self._issue(
+            set_issue(
+                self._hass,
                 f"{ISSUE_SWITCH_SHARED}_{control.switch}",
                 ISSUE_SWITCH_SHARED,
                 control.switch in shared,
@@ -288,7 +278,8 @@ class BalancingCoordinator:
                 data={"switch": control.switch},
             )
             device = device_of_relay(self._hass, control.switch)
-            self._issue(
+            set_issue(
+                self._hass,
                 f"{ISSUE_SWITCH_IS_DEVICE}_{control.subentry_id}",
                 ISSUE_SWITCH_IS_DEVICE,
                 device is not None,
@@ -302,29 +293,6 @@ class BalancingCoordinator:
                     "subentry_id": control.subentry_id,
                 },
             )
-
-    def _issue(
-        self,
-        issue_id: str,
-        key: str,
-        active: bool,  # noqa: FBT001
-        *,
-        placeholders: dict[str, str],
-        data: dict[str, str],
-    ) -> None:
-        if not active:
-            ir.async_delete_issue(self._hass, DOMAIN, issue_id)
-            return
-        ir.async_create_issue(
-            self._hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=True,
-            severity=ir.IssueSeverity.WARNING,
-            translation_key=key,
-            translation_placeholders=placeholders,
-            data=data,
-        )
 
     def _left_alone(self, control: ThermostatControl) -> bool:
         """Return whether the switch is shared or a device relay: no command."""
@@ -379,13 +347,15 @@ class BalancingCoordinator:
     def _cycle(self, now: datetime) -> None:
         """Allocate the capacity by the zone, then send the switches."""
         self._report_shared_switches()
-        self._report_gone_sockets()
+        self._actions.report_gone_sockets(self.controls.values())
         zone = self._zone()
         for control in self.controls.values():
             control.shedding = zone in SHEDDING_ZONES
         self._allocate(self._thermostats(), now, zone)
         if zone in SHEDDING_ZONES and self._last_zone not in SHEDDING_ZONES:
-            self._shed(now)
+            self._actions.shed(
+                (c for c in self.controls.values() if not self._left_alone(c)), now
+            )
         # The pause and no data end no entry: one zone sensor turns off
         # before the next turns on, and data lost in red is still red
         if zone not in (Zone.PAUSE, Zone.NO_DATA):
@@ -394,127 +364,34 @@ class BalancingCoordinator:
             if self._left_alone(control):
                 continue
             if (on := control.next_command(now)) is not None:
-                command = control.send(on, now)
-                command.task = self._entry.async_create_task(
-                    self._hass,
-                    self._async_send(control, on=on),
-                    f"switch {control.switch}",
-                )
-                command.task.add_done_callback(
-                    partial(self._command_ended, control, command)
-                )
-            self._next_off_step(control, now)
+                self._send(control, on, now)
+            if (due := self._actions.take_step(control, now)) is not None:
+                self._start_again(due - now)
 
-    def _shed(self, now: datetime) -> None:
+    def _send(
+        self,
+        control: ThermostatControl,
+        on: bool,  # noqa: FBT001
+        now: datetime,
+        *,
+        counted: bool = True,
+        target: str | None = None,
+    ) -> None:
         """
-        Turn off what runs unwanted at the entry to red or overload, once.
+        Send a switch, or its socket, a command: the one path of all of them.
 
-        A stepwise "off" under way makes its next attempt now; any other switch
-        that reads off (its power sensor may be late), or is on with no
-        attempt left, gets an "off" outside the attempts: no attempt, no
-        answer awaited, no change of the control state (FR-029).
+        A cycle never waits for it: each command is its own task, whose end
+        the control notes (command.py).
         """
-        for control in self.controls.values():
-            if self._left_alone(control) or control.force_off_attempt(now):
-                continue
-            if control.blind_off(now):
-                self._run(self._async_send(control, on=False), control.switch)
-
-    def _next_off_step(self, control: ThermostatControl, now: datetime) -> None:
-        """Take the step of the stepwise "off" due now; decide again at the next."""
-        step = control.off_step(now)
-        if step is Step.REPORT:
-            LOGGER.info(
-                "%s: %s still runs after %s attempts to turn it off",
-                control.name,
-                control.switch,
-                control.off_attempts,
-            )
-            self._hass.bus.async_fire(
-                EVENT_SWITCH_OUT_OF_CONTROL,
-                SwitchOutOfControlData(
-                    thermostat=self._thermostat_id(control),
-                    switch_entity_id=control.switch,
-                    power=self._power(control),
-                    attempts=control.off_attempts,
-                ),
-            )
-            control.reported(now)
-        elif step is Step.CUT and (socket := control.socket) is not None:
-            control.cut(now)
-            self._run(self._async_cut(control, socket), socket)
-        if (due := control.off_step_at()) is not None and due > now:
-            self._start_again(due - now)
-
-    def _run(self, coroutine: Coroutine[Any, Any, None], name: str) -> None:
-        task = self._entry.async_create_task(self._hass, coroutine, f"switch {name}")
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
-
-    async def _async_cut(self, control: ThermostatControl, socket: str) -> None:
-        """Cut the socket of a switch that does not turn off; never turn it on."""
-        try:
-            await self._hass.services.async_call(
-                "switch", "turn_off", {"entity_id": socket}, blocking=True
-            )
-        except HomeAssistantError as err:
-            LOGGER.warning("%s: socket %s refused: %s", control.name, socket, err)
-            return
-        LOGGER.info(
-            "%s: cut the power of %s at %s", control.name, control.switch, socket
+        command = control.send(on, now, counted=counted, target=target)
+        command.task = self._entry.async_create_task(
+            self._hass,
+            self._async_send(control, on=on)
+            if target is None
+            else self._actions.async_cut(control, target),
+            f"switch {target or control.switch}",
         )
-        self._hass.bus.async_fire(
-            EVENT_POWER_CUT,
-            PowerCutData(
-                thermostat=self._thermostat_id(control),
-                switch_entity_id=control.switch,
-                socket_entity_id=socket,
-            ),
-        )
-
-    def _thermostat_id(self, control: ThermostatControl) -> str | None:
-        return er.async_get(self._hass).async_get_entity_id(
-            "climate", DOMAIN, control.subentry_id
-        )
-
-    def _power(self, control: ThermostatControl) -> float | None:
-        """Return what the virtual switch's power sensor reads, if it has one."""
-        entity_id = power_entity(self._hass, control.switch)
-        state = self._hass.states.get(entity_id) if entity_id else None
-        try:
-            return float(state.state) if state else None
-        except ValueError:
-            return None
-
-    def _report_gone_sockets(self) -> None:
-        """
-        Report a socket that is gone from HA, as a Repairs issue of its switch.
-
-        Checked once HA has started; until fixed, the stepwise "off" of that
-        switch only reports.
-        """
-        if not self._hass.is_running:
-            return
-        gone = {
-            socket
-            for control in self.controls.values()
-            if (socket := control.socket) is not None
-            and self._hass.states.get(socket) is None
-        }
-        if gone == self._gone_sockets:
-            return
-        self._gone_sockets = gone
-        for control in self.controls.values():
-            if (found := virtual_switch(self._hass, control.switch)) is None:
-                continue
-            entry, subentry = found
-            self._issue(
-                f"{ISSUE_SOCKET_GONE}_{subentry.subentry_id}",
-                ISSUE_SOCKET_GONE,
-                control.socket in gone,
-                placeholders={"switch": subentry.title, "socket": control.socket or ""},
-                data={"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
-            )
+        command.task.add_done_callback(partial(self._command_ended, control, command))
 
     def _capacity(self) -> int:
         """Read the capacity from its entity, the one source of it."""
@@ -723,12 +600,12 @@ class BalancingCoordinator:
             if arrangement.rotated and (on or control.subentry_id in arrangement.freed):
                 self._hass.bus.async_fire(
                     EVENT_DEVICE_ROTATED_IN if on else EVENT_DEVICE_ROTATED_OUT,
-                    {
-                        "thermostat": thermostat.entity_id,
-                        "switch_entity_id": control.switch,
-                        "working_time_coefficient": round(coefficient, 2),
-                        "temperature_diff": round(thermostat.temperature_diff, 2),
-                    },
+                    DeviceRotatedData(
+                        thermostat=thermostat.entity_id,
+                        switch_entity_id=control.switch,
+                        working_time_coefficient=round(coefficient, 2),
+                        temperature_diff=round(thermostat.temperature_diff, 2),
+                    ),
                 )
         if arrangement.retry_in is not None:
             self._start_again(arrangement.retry_in)
@@ -771,7 +648,7 @@ class BalancingCoordinator:
         A running air conditioner idling draws less than its expected power,
         and frees only that; a switch without a power sensor, the expected.
         """
-        power = self._power(control)
+        power = switch_power(self._hass, control.switch)
         return self._heater_power(control)[0] if power is None else power
 
     def _load_and_red_threshold(self) -> tuple[float, float] | None:

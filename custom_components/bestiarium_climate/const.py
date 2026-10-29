@@ -152,6 +152,15 @@ class SwitchOutOfControlData(TypedDict):
     attempts: int
 
 
+class DeviceRotatedData(TypedDict):
+    """The payload of EVENT_DEVICE_ROTATED_IN and EVENT_DEVICE_ROTATED_OUT."""
+
+    thermostat: str
+    switch_entity_id: str
+    working_time_coefficient: float
+    temperature_diff: float
+
+
 class PowerCutData(TypedDict):
     """The payload of EVENT_POWER_CUT."""
 
