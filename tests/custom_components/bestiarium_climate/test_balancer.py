@@ -36,6 +36,7 @@ from custom_components.bestiarium_climate.const import (
     START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
+    Zone,
 )
 
 from custom_components.bestiarium_climate.control import (
@@ -641,7 +642,7 @@ async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> No
         {"temperature_sensor": "sensor.t", "target_switch": "switch.floor_1"},
     )
     hass.states.async_set("switch.floor_1", STATE_OFF)
-    control = ThermostatControl(hass, entry, subentry, memory)
+    control = ThermostatControl(hass, entry, subentry, memory, zone=lambda: Zone.NONE)
 
     now = dt_util.utcnow()
     assert control.next_command(now) is True

@@ -45,6 +45,7 @@ from .const import (
     MODE_AC_POWER_SENSOR,
     MODE_RED_THRESHOLD,
     SENSOR_ZONES,
+    SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     SUBENTRY_TYPE_THERMOSTAT,
     ZONE_SENSOR_UNIQUE_ID,
@@ -74,9 +75,6 @@ if TYPE_CHECKING:
     from .climate import VirtualThermostat
     from .command import SwitchCommand
     from .data import BestiariumClimateConfigEntry
-
-# The zones whose entry turns off at once what runs unwanted (FR-029)
-SHEDDING_ZONES = (Zone.RED, Zone.OVERLOAD)
 
 
 def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[str]:
@@ -162,7 +160,7 @@ class BalancingCoordinator:
         )
         self.controls = {
             subentry.subentry_id: ThermostatControl(
-                self._hass, self._entry, subentry, memory
+                self._hass, self._entry, subentry, memory, zone=self._zone
             )
             for subentry in self._entry.subentries.values()
             if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
@@ -349,8 +347,6 @@ class BalancingCoordinator:
         self._report_shared_switches()
         self._actions.report_gone_sockets(self.controls.values())
         zone = self._zone()
-        for control in self.controls.values():
-            control.shedding = zone in SHEDDING_ZONES
         self._allocate(self._thermostats(), now, zone)
         if zone in SHEDDING_ZONES and self._last_zone not in SHEDDING_ZONES:
             self._actions.shed(

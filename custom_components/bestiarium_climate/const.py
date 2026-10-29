@@ -184,6 +184,11 @@ class Zone(StrEnum):
 SENSOR_ZONES = (Zone.OVERLOAD, Zone.RED, Zone.YELLOW, Zone.GREEN)
 
 
+# The zones whose entry turns off at once what runs unwanted (FR-029), and in
+# which the steps of the stepwise "off" go a cycle apart at most
+SHEDDING_ZONES = (Zone.RED, Zone.OVERLOAD)
+
+
 class ControlState(StrEnum):
     """The control state of a thermostat, the most important problem first."""
 

@@ -38,18 +38,22 @@ from .const import (
     DOMAIN,
     LOGGER,
     SAVE_DELAY_SECONDS,
+    SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     STORAGE_KEY,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
     ControlSettings,
     ControlState,
+    Zone,
 )
 from .devices import power_socket
 from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from homeassistant.config_entries import ConfigSubentry
     from homeassistant.core import (
         CALLBACK_TYPE,
@@ -181,6 +185,8 @@ class ThermostatControl:
         entry: BestiariumClimateConfigEntry,
         subentry: ConfigSubentry,
         memory: ThermostatMemory,
+        *,
+        zone: Callable[[], Zone],
     ) -> None:
         """Follow the thermostat's switch and sensor; call async_start."""
         self._hass = hass
@@ -204,8 +210,8 @@ class ThermostatControl:
         self._no_power = _Condition()
         self._stepwise = StepwiseOff()
         self._not_turning_off = _Condition()
-        # In red or overload the steps go a cycle apart at most (the balancer)
-        self.shedding = False
+        # The load zone, read where the balancer reads it
+        self._zone = zone
         # The socket of its virtual switch: a change of it reloads the entry
         self.socket: str | None = None
         # When the heater was last wanted off or its switch turned off: a
@@ -555,7 +561,9 @@ class ThermostatControl:
     def _off_interval(self) -> timedelta:
         """Return the step: a cycle at most in red or overload (DEC-014, hard limit)."""
         interval = timedelta(seconds=self.settings.off_interval_seconds)
-        return min(interval, ATTEMPT_INTERVAL) if self.shedding else interval
+        if self._zone() in SHEDDING_ZONES:
+            return min(interval, ATTEMPT_INTERVAL)
+        return interval
 
     def _off_next(self) -> tuple[Step, datetime | None] | None:
         return self._stepwise.next(
