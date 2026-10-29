@@ -117,9 +117,9 @@ class _Arranging:
     ranked: list[Candidate]
     state: ZoneInput
     retries: list[timedelta] = field(default_factory=list)
-    started_at: datetime | None = None
+    started_at: datetime | None = field(init=False)
     # In green whether a start may go in this cycle (one at a time)
-    gate_open: bool = True
+    gate_open: bool = field(init=False)
 
     def __post_init__(self) -> None:
         """Start from the last start; in green a start waits for the one under way."""
@@ -135,7 +135,7 @@ class _Arranging:
         if zone is Zone.OVERLOAD:
             # Not in the devices' emergency queue: climate turns off all at
             # once; no rotation, so no rotation events
-            return self._result(frozenset(), {c.key for c in ranked}, rotated=False)
+            return self._result(set(), {c.key for c in ranked}, rotated=False)
         arranged, unfit = self._arranged()
         for c in ranked:
             # Decide again the moment a pause ends
@@ -160,7 +160,7 @@ class _Arranging:
         return self._result(heaters, freed, rotated=deficit)
 
     def _result(
-        self, heaters: set[str] | frozenset[str], freed: set[str], *, rotated: bool
+        self, heaters: set[str], freed: set[str], *, rotated: bool
     ) -> Arrangement:
         return Arrangement(
             heaters=frozenset(heaters),

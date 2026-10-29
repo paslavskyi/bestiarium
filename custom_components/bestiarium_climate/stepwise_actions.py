@@ -9,7 +9,7 @@ gone. Every command goes the balancer's one path (`send`): none is counted.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -29,7 +29,7 @@ from .stepwise import Step
 from .switch import virtual_switch
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Collection, Iterable
     from datetime import datetime
 
     from homeassistant.core import HomeAssistant
@@ -37,26 +37,11 @@ if TYPE_CHECKING:
     from .control import ThermostatControl
 
 
-class Send(Protocol):
-    """The balancer's one path of the commands."""
-
-    def __call__(
-        self,
-        control: ThermostatControl,
-        on: bool,  # noqa: FBT001
-        now: datetime,
-        *,
-        counted: bool = True,
-        target: str | None = None,
-    ) -> None:
-        """Send the switch, or its socket, a command."""
-
-
 class StepwiseActions:
     """The actions of the stepwise "off" of one climate entry."""
 
-    def __init__(self, hass: HomeAssistant, send: Send) -> None:
-        """Send by the balancer's path."""
+    def __init__(self, hass: HomeAssistant, send: Callable[..., None]) -> None:
+        """Send by the balancer's one path of the commands (its _send)."""
         self._hass = hass
         self._send = send
         self._gone_sockets: set[str] = set()
@@ -123,7 +108,7 @@ class StepwiseActions:
             ),
         )
 
-    def report_gone_sockets(self, controls: Iterable[ThermostatControl]) -> None:
+    def report_gone_sockets(self, controls: Collection[ThermostatControl]) -> None:
         """
         Report a socket that is gone from HA, as a Repairs issue of its switch.
 
@@ -132,7 +117,6 @@ class StepwiseActions:
         """
         if not self._hass.is_running:
             return
-        controls = list(controls)
         gone = {
             socket
             for control in controls

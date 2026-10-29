@@ -14,7 +14,7 @@ in no series nor in the stepwise "off", and its answer ends no "Not
 responding"; one to the switch still holds its window like any other, so a
 toggling IR code never goes twice. One to the socket (its `target`) is none
 of the switch's commands: only its task is kept, to be cancelled when the
-entry unloads. Every command to a switch or its socket is one of these.
+entry unloads. Every command to a switch or its socket is a SwitchCommand.
 """
 
 from __future__ import annotations
