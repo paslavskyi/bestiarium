@@ -1805,7 +1805,24 @@ async def test_the_entry_to_red_makes_the_next_attempt_now(floors: Floors) -> No
     floors.zone("red")
     await floors.hass.async_block_till_done()
     assert _offs(floors, first, since) == 2
-    await floors.tick(4 * MINUTE)
-    assert _offs(floors, first, since) == 2
+    # Review 06, R2: in red the next a cycle later, not 5 minutes
     await floors.tick(MINUTE)
     assert _offs(floors, first, since) == 3
+
+
+async def test_in_red_an_off_not_taken_is_repeated_a_cycle_later(
+    floors: Floors,
+) -> None:
+    """Review 06, R2: the red step's "off" not taken: again in about 55 s."""
+    await floors.setup(zones=True)
+    floors.stuck.update(FLOORS)
+    since = len(floors.calls)
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    offs = {floor for service, floor in floors.calls[since:] if service == "turn_off"}
+    (first,) = offs & floors.on()
+
+    await floors.tick(50, step=5)
+    assert _offs(floors, first, since) == 1
+    await floors.tick(15, step=5)
+    assert _offs(floors, first, since) == 2

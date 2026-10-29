@@ -80,10 +80,12 @@ difference, not changed in DEV-008).
 For the direction "off" the thermostats' control has, since DEV-010 (the
 owner, SRC-169), a **stepwise "off"** instead of a series: a device that runs
 while it is wanted off gets an "off" every 5 minutes, 3 in all, then an event,
-then its socket is cut; it never makes the thermostat "not responding". Unlike
-a series it ends also when the device is wanted on again, and starts from the
-first "off" the next time; the control state "Does not turn off" enters after
-the tolerance and leaves after the hysteresis.
+then its socket is cut; it never makes the thermostat "not responding". In
+red and overload its steps go a cycle apart (the hard limit). Unlike a series
+it ends also when the device is wanted on again, and the device off ends it
+only after a whole step off (an idling air conditioner dips and runs on); the
+next time it starts from the first "off". The control state "Does not turn off"
+enters after the tolerance and leaves after the hysteresis.
 
 The load zones of `bestiarium_mode` (DEV-008, [../bestiarium_mode.md](../bestiarium_mode.md#zones)):
 up at once, down only below the threshold minus a margin (3 % of the limit),

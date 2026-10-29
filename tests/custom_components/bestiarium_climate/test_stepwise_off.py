@@ -273,14 +273,19 @@ async def test_an_off_taken_at_once_shows_nothing(
 
 
 async def test_it_ends_when_the_device_stops(home: Home) -> None:
-    """The AC stops between the attempts: the end; on again: from the first "off"."""
+    """
+    The AC stops for a whole step: the end; on again: from the first "off".
+
+    No step goes while it is off.
+    """
     await home.setup()
     await home.first_off()
     await home.tick(5 * MINUTE)
     assert len(home.offs) == 2
 
     home.hass.states.async_set(POWER, "0")
-    await home.tick(3 * MINUTE)
+    await home.tick(8 * MINUTE)
+    assert len(home.offs) == 2
     assert home.control_state == "normal"
 
     home.hass.states.async_set(POWER, RUNNING)  # a person with the remote
@@ -362,7 +367,7 @@ async def test_turned_on_around_the_pause(home: Home) -> None:
     assert home.control.deferred_until == deferred_until
 
     home.hass.states.async_set(POWER, "0")
-    await home.tick(3 * MINUTE)
+    await home.tick(8 * MINUTE)
     assert home.control_state == "unresponsive"
 
 
@@ -448,3 +453,26 @@ async def test_a_socket_gone_is_a_repair(hass: HomeAssistant, home: Home) -> Non
 
     assert entry.subentries["ac"].data["power_socket"] == SOCKET
     assert ir.async_get(hass).async_get_issue(DOMAIN, "socket_gone_ac") is None
+
+
+async def test_an_idle_dip_does_not_start_it_again(home: Home) -> None:
+    """
+    Review 06, R1: an AC at its setpoint draws 30 W for 90 s, then runs on.
+
+    The attempts go on counting; the event comes on time; the state holds.
+    """
+    await home.setup()
+    await home.first_off()
+    await home.tick(2 * MINUTE)
+    assert home.control_state == "not_turning_off"
+
+    home.hass.states.async_set(POWER, "30")
+    await home.tick(90)
+    assert home.control_state == "not_turning_off"
+    home.hass.states.async_set(POWER, RUNNING)
+    await home.tick(2 * MINUTE + 40)
+    assert len(home.offs) == 2
+    await home.tick(10 * MINUTE)
+
+    assert len(home.offs) == 3
+    assert len(home.of(EVENT_SWITCH_OUT_OF_CONTROL)) == 1

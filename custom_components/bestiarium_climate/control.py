@@ -204,6 +204,10 @@ class ThermostatControl:
         self._no_power = _Condition()
         self._stepwise = StepwiseOff()
         self._not_turning_off = _Condition()
+        # In red or overload the steps go a cycle apart at most (the balancer)
+        self.shedding = False
+        # The socket of its virtual switch: a change of it reloads the entry
+        self.socket: str | None = None
         # When the heater was last wanted off or its switch turned off: a
         # start waits for the pause after it
         self.off_at: datetime | None = (
@@ -232,6 +236,7 @@ class ThermostatControl:
     @callback
     def async_start(self) -> None:
         """Follow the switch and the sensor; their availability once HA started."""
+        self.socket = power_socket(self._hass, self.switch)
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
@@ -483,12 +488,25 @@ class ThermostatControl:
 
         Only the switch's answer ends a series, never a new wanted state; an
         answer to a command sent out of a deferral ends "Not responding". The
-        stepwise "off" ends with the switch off, or wanted on again.
+        stepwise "off" ends with the switch wanted on again, or off for a whole
+        step: an air conditioner idling at its setpoint draws little for a
+        minute or two and runs on (review 06, R1). Off after its socket was
+        cut, it ends at once: the power back is a new chain.
         """
         actual = self.switch_is_on(now)
         if actual is None:
             return
-        if self._stepwise.active and not (actual and not self.wanted(now)):
+        if self._stepwise.active and (
+            self.wanted(now)
+            or (
+                not actual
+                and (
+                    self._stepwise.cut
+                    or now - self._hass.states.get(self.switch).last_changed
+                    >= timedelta(seconds=self.settings.off_interval_seconds)
+                )
+            )
+        ):
             self._stepwise = StepwiseOff()
             self._refresh(now)
         before = self._commands.kept
@@ -523,7 +541,9 @@ class ThermostatControl:
 
     @property
     def _off_interval(self) -> timedelta:
-        return timedelta(seconds=self.settings.off_interval_seconds)
+        """Return the step: a cycle at most in red or overload (DEC-014, hard limit)."""
+        interval = timedelta(seconds=self.settings.off_interval_seconds)
+        return min(interval, ATTEMPT_INTERVAL) if self.shedding else interval
 
     def _off_next(self) -> tuple[Step, datetime | None] | None:
         return self._stepwise.next(
@@ -536,28 +556,21 @@ class ThermostatControl:
         """
         Return the step of the stepwise "off" due now, or None.
 
-        An attempt due at once (the first, or one the red zone asks for) waits
-        while an "off" runs; a later one cuts it short.
+        Only while the switch is on: one off for a moment waits. An attempt
+        due at once (the first, or one the red zone asks for) waits while an
+        "off" runs; a later one cuts it short.
         """
-        if (step := self._off_next()) is None:
+        if self.reading(now) is not Reading.ON or (step := self._off_next()) is None:
             return None
         kind, due = step
         if due is None:
-            latest = self._commands.latest()
-            if latest is not None and latest.running and not latest.on:
-                return None
-            return kind
+            return None if self._commands.running(on=False) else kind
         return kind if now >= due else None
 
     def off_step_at(self) -> datetime | None:
         """Return when the next step of the stepwise "off" is due, while it waits."""
         step = self._off_next() if self._stepwise.active else None
         return step[1] if step is not None else None
-
-    @property
-    def socket(self) -> str | None:
-        """Return the socket that powers the switch's device, if it has one."""
-        return power_socket(self._hass, self.switch)
 
     @property
     def off_attempts(self) -> int:
@@ -596,8 +609,7 @@ class ThermostatControl:
         To a switch that reads off (its power sensor may be late), or on with
         no attempt left; never while a command of it runs.
         """
-        latest = self._commands.latest()
-        if latest is not None and latest.running:
+        if self._commands.running():
             return False
         reading = self.reading(now)
         return reading is Reading.OFF or (
@@ -676,7 +688,13 @@ class ThermostatControl:
         tolerance = timedelta(seconds=settings.tolerance_seconds)
         hysteresis = timedelta(seconds=settings.hysteresis_seconds)
         # Enter and leave of each; no power is no fault: it leaves at once
-        self._not_turning_off.set(self._stepwise.active, now)
+        # Entered only while the switch runs (an ordinary "off" taken within
+        # the tolerance shows nothing); once confirmed, a dip of it holds it
+        self._not_turning_off.set(
+            self._stepwise.active
+            and (self.reading(now) is Reading.ON or self._not_turning_off.confirmed),
+            now,
+        )
         conditions = {
             ControlState.SWITCH_UNAVAILABLE: (self._switch_gone, tolerance, hysteresis),
             ControlState.NOT_TURNING_OFF: (

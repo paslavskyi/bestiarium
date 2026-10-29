@@ -389,6 +389,8 @@ class BalancingCoordinator:
         self._report_shared_switches()
         self._report_gone_sockets()
         zone = self._zone()
+        for control in self.controls.values():
+            control.shedding = zone in SHEDDING_ZONES
         self._allocate(self._thermostats(), now, zone)
         if zone in SHEDDING_ZONES and self._last_zone not in SHEDDING_ZONES:
             self._shed(now)

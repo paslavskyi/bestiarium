@@ -103,6 +103,10 @@ class SwitchCommands:
         """Return whether a command of a direction waits for its answer."""
         return any(c.on is on and c.waiting(now) for c in self._commands)
 
+    def running(self, *, on: bool | None = None) -> bool:
+        """Return whether a command, or one of a direction, has not ended yet."""
+        return any(c.running and on in (None, c.on) for c in self._commands)
+
     def in_flight(self, now: datetime, *, on: bool) -> bool:
         """Return whether a command of a direction runs or is in its window."""
         return any(c.on is on and c.in_window(now) for c in self._commands)
