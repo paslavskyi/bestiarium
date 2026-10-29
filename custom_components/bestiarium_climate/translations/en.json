@@ -45,6 +45,7 @@
         "name": "Control state",
         "state": {
           "switch_unavailable": "Switch unavailable",
+          "not_turning_off": "Does not turn off",
           "unresponsive": "Not responding",
           "no_temperature": "No temperature data",
           "no_power": "No power",
@@ -84,7 +85,8 @@
             "min_power": "Minimum power (W) to treat device as on",
             "power_hysteresis_percent": "Hysteresis (%)",
             "power_delay_seconds": "Delay (s)",
-            "power_tolerance_seconds": "Power tolerance (s)"
+            "power_tolerance_seconds": "Power tolerance (s)",
+            "power_socket": "Power socket"
           },
           "data_description": {
             "name": "Friendly name for this switch",
@@ -95,7 +97,8 @@
             "min_power": "At or above this power the switch is on",
             "power_hysteresis_percent": "On goes to off only below the minimum power minus this share of it",
             "power_delay_seconds": "A change of the state (and no power data) is shown only after it has lasted this long",
-            "power_tolerance_seconds": "No power data is shown (the switch unavailable) only after this long"
+            "power_tolerance_seconds": "No power data is shown (the switch unavailable) only after this long",
+            "power_socket": "Optional. The thermostat turns it off (never on) when the device goes on running despite its \"off\"s. Recommended: the \"Allowed\" switch of the device's Bestiarium Devices entry. Its relay is not recommended: the Devices balancer may turn it back on, and then the device is turned off again about every 20 minutes, with events. While the socket is off the thermostat shows \"No power\"."
           }
         },
         "reconfigure": {
@@ -109,7 +112,11 @@
             "min_power": "Minimum power (W) to treat device as on",
             "power_hysteresis_percent": "Hysteresis (%)",
             "power_delay_seconds": "Delay (s)",
-            "power_tolerance_seconds": "Power tolerance (s)"
+            "power_tolerance_seconds": "Power tolerance (s)",
+            "power_socket": "Power socket"
+          },
+          "data_description": {
+            "power_socket": "Optional. The thermostat turns it off (never on) when the device goes on running despite its \"off\"s. Recommended: the \"Allowed\" switch of the device's Bestiarium Devices entry. Its relay is not recommended: the Devices balancer may turn it back on, and then the device is turned off again about every 20 minutes, with events. While the socket is off the thermostat shows \"No power\"."
           }
         }
       },
@@ -191,14 +198,18 @@
         "title": "Switch control",
         "description": "How the balancer controls the thermostats' switches, for all thermostats of this entry.",
         "data": {
-          "attempts": "Attempts before deferring",
+          "attempts": "Attempts to turn on before deferring",
           "tolerance_seconds": "Tolerance, seconds",
-          "hysteresis_seconds": "Hysteresis, seconds"
+          "hysteresis_seconds": "Hysteresis, seconds",
+          "off_attempts": "Attempts to turn off",
+          "off_interval_seconds": "Interval between the steps of turning off, seconds"
         },
         "data_description": {
-          "attempts": "Balancing cycles (a minute each) a switch may stay unlike the expected state before it is deferred for the recovery timeout",
+          "attempts": "Balancing cycles (a minute each) a switch may stay off while it should turn on before it is deferred for the recovery timeout",
           "tolerance_seconds": "A switch or temperature sensor gone for less than this is a short dropout, not a problem",
-          "hysteresis_seconds": "A problem ends only after this long without it"
+          "hysteresis_seconds": "A problem ends only after this long without it",
+          "off_attempts": "A switch that runs while its thermostat wants it off gets this many \"off\"s, the interval apart; then the event \"out of control\", and after one more interval its socket is cut",
+          "off_interval_seconds": "Between two \"off\"s, the last \"off\" and the event, the event and cutting the socket"
         }
       }
     }
@@ -299,6 +310,26 @@
         },
         "abort": {
           "thermostat_removed": "The thermostat is removed"
+        }
+      }
+    },
+    "socket_gone": {
+      "title": "Virtual switch {switch}: its power socket is gone",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Power socket of {switch}",
+            "description": "The power socket {socket} of {switch} is no longer in Home Assistant, so a device that does not turn off cannot be cut. Choose another socket, or clear the field.",
+            "data": {
+              "power_socket": "Power socket"
+            },
+            "data_description": {
+              "power_socket": "Optional. The thermostat turns it off (never on) when the device goes on running despite its \"off\"s. Recommended: the \"Allowed\" switch of the device's Bestiarium Devices entry. Its relay is not recommended: the Devices balancer may turn it back on, and then the device is turned off again about every 20 minutes, with events. While the socket is off the thermostat shows \"No power\"."
+            }
+          }
+        },
+        "abort": {
+          "switch_removed": "The switch is removed"
         }
       }
     }

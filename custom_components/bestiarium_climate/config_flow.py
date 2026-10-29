@@ -40,6 +40,7 @@ from .const import (
     CONF_POWER_DELAY,
     CONF_POWER_ENTITY,
     CONF_POWER_HYSTERESIS,
+    CONF_POWER_SOCKET,
     CONF_POWER_TOLERANCE,
     CONF_PRESETS,
     CONF_RECOVERY_TIMEOUT,
@@ -114,6 +115,31 @@ def actions_schema(saved: Mapping[str, Any]) -> dict[vol.Marker, Any]:
         vol.Required(CONF_OFF_ACTION, default=saved.get(CONF_OFF_ACTION)): (
             selector.ActionSelector()
         ),
+    }
+
+
+def socket_schema(
+    hass: HomeAssistant, saved: Mapping[str, Any]
+) -> dict[vol.Marker, Any]:
+    """
+    Return the socket field of a virtual switch: optional, suggested, not a default.
+
+    Any switch but the virtual switches of Climate: they power nothing.
+    """
+    virtual = [
+        entity.entity_id
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN and entity.domain == DOMAIN_SWITCH
+    ]
+    return {
+        vol.Optional(
+            CONF_POWER_SOCKET,
+            description={"suggested_value": saved.get(CONF_POWER_SOCKET)},
+        ): selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=DOMAIN_SWITCH, exclude_entities=virtual
+            )
+        )
     }
 
 
@@ -343,7 +369,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_POWER_DELAY: int(user_input[CONF_POWER_DELAY]),
                     CONF_POWER_TOLERANCE: int(user_input[CONF_POWER_TOLERANCE]),
                 }
-                for key in ACTIONS:
+                for key in (*ACTIONS, CONF_POWER_SOCKET):
                     if user_input.get(key):
                         data[key] = user_input[key]
 
@@ -412,6 +438,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
                 ),
             ),
+            **socket_schema(self.hass, saved),
             **actions_schema(saved),
         }
 
