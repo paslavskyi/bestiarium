@@ -5,11 +5,11 @@
 `bestiarium_mock` (domain `bestiarium_mock`) simulates smart-home devices for
 testing the Bestiarium integrations without hardware. It has no dependencies.
 
-1. **16 mock smart sockets**, one per test scenario. Each socket has a
+1. **18 mock smart sockets**, one per test scenario. Each socket has a
    **fault model** that makes it misbehave like a real cloud socket (ignored
    commands, slow replies, a stale state in HA, short dropouts), chosen with
    a **fault profile**.
-2. **4 mock thermometers** with a temperature set by hand.
+2. **5 mock thermometers** with a temperature set by hand.
 3. **A grid**: the sum of what the loads draw plus 40–100 W of background,
    (the overload alarm was removed in DEV-008 stage B: nobody read it, the
    overload zone tells it).
@@ -72,8 +72,9 @@ Device names are translated (`device` in the translations, `translation_key`
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
-| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7) |
-| `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
+| `heater` | Mock Heater | 1500 W | Reliable | no Bestiarium device: the switch of the universal thermostat "Stand heater" (DEV-011), read by its power |
+| `ac_1..4` | Mock AC 1–4 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7). `ac_4` is the cloud air conditioner of the universal thermostat "Stand cloud AC" (DEV-011): its template switch runs `ac_4`'s IR scripts as the home's Tuya scenes |
+| `thermo_1..5` | Mock Thermometer 1–5 | — | — | thermostat inputs |
 
 ---
 

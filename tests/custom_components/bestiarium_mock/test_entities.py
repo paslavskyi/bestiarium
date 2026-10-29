@@ -187,3 +187,19 @@ async def test_reading_profiles(
         )
     await hass.async_block_till_done()
     assert hass.states.get(sensor).state == frozen
+
+
+async def test_the_devices_of_the_universal_thermostats(
+    hass: HomeAssistant, entity_id: EntityId
+) -> None:
+    """DEV-011: a free heater, a fourth AC's power with its IR knobs, a fifth room."""
+    for domain, unique_id in (
+        ("switch", "mock_heater"),
+        ("sensor", "mock_heater_power"),
+        ("sensor", "mock_ac_4_power"),
+        ("switch", "mock_ac_4_ir_lost"),
+        ("sensor", "mock_thermo_5_temperature"),
+    ):
+        assert hass.states.get(entity_id(domain, unique_id)) is not None
+    heater = next(spec for spec in MOCK_DEVICES if spec.device_id == "heater")
+    assert heater.power_w == 1500  # noqa: PLR2004

@@ -159,6 +159,15 @@
     },
     "ac_3": {
       "name": "Mock AC 3 Power"
+    },
+    "heater": {
+      "name": "Mock Heater"
+    },
+    "ac_4": {
+      "name": "Mock AC 4 Power"
+    },
+    "thermo_5": {
+      "name": "Mock Thermometer 5"
     }
   }
 }
