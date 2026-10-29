@@ -18,6 +18,7 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import CoreState, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
@@ -53,7 +54,7 @@ from .const import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from homeassistant.config_entries import ConfigSubentry
+    from homeassistant.config_entries import ConfigEntry, ConfigSubentry
     from homeassistant.core import (
         CALLBACK_TYPE,
         Event,
@@ -75,6 +76,24 @@ ACTION_OF_MODE = {
 async def async_validate_actions(hass: HomeAssistant, actions: Any) -> list[dict]:
     """Return the sequence validated as HA validates a script; raise if invalid."""
     return await async_validate_actions_config(hass, cv.SCRIPT_SCHEMA(actions))
+
+
+def virtual_switch(
+    hass: HomeAssistant, switch: str
+) -> tuple[ConfigEntry, ConfigSubentry] | None:
+    """Return the entry and subentry of a virtual switch of Climate, if it is one."""
+    entity = er.async_get(hass).async_get(switch)
+    if entity is None or entity.platform != DOMAIN:
+        return None
+    return next(
+        (
+            (entry, subentry)
+            for entry in hass.config_entries.async_entries(DOMAIN)
+            if (subentry := entry.subentries.get(entity.unique_id or ""))
+            and subentry.subentry_type == SUBENTRY_TYPE_SWITCH
+        ),
+        None,
+    )
 
 
 def thermostats_of(

@@ -6,7 +6,9 @@ thermostat's switch is never a device relay. A virtual switch's power,
 though, is often a device: the relay that powers an air conditioner, whose
 power sensor the virtual switch reads. Its expected power is the heater's
 power, and while its relay is off (the load protection cut it) a heater that
-does not heat leaves the rotation until the power is back.
+does not heat leaves the rotation until the power is back. So does one whose
+own socket (a field of its virtual switch) is off: the stepwise "off" cut it,
+or a person.
 """
 
 from __future__ import annotations
@@ -19,15 +21,15 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     CONF_POWER_ENTITY,
+    CONF_POWER_SOCKET,
     DEVICES_ESTIMATE_SOURCE,
     DEVICES_EXPECTED_POWER_UNIQUE_ID,
     DEVICES_LARGE_DEFAULT,
     DEVICES_POWER_SENSOR,
     DEVICES_SWITCH,
-    DOMAIN,
     DOMAIN_BESTIARIUM_DEVICES,
-    SUBENTRY_TYPE_SWITCH,
 )
+from .switch import virtual_switch
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -48,19 +50,14 @@ def device_of_relay(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
 
 def power_entity(hass: HomeAssistant, switch: str) -> str | None:
     """Return the power sensor a virtual switch of Climate reads, if it is one."""
-    entity = er.async_get(hass).async_get(switch)
-    if entity is None or entity.platform != DOMAIN:
-        return None
-    return next(
-        (
-            subentry.data.get(CONF_POWER_ENTITY)
-            for entry in hass.config_entries.async_entries(DOMAIN)
-            for subentry in entry.subentries.values()
-            if subentry.subentry_id == entity.unique_id
-            and subentry.subentry_type == SUBENTRY_TYPE_SWITCH
-        ),
-        None,
-    )
+    found = virtual_switch(hass, switch)
+    return found[1].data.get(CONF_POWER_ENTITY) if found else None
+
+
+def power_socket(hass: HomeAssistant, switch: str) -> str | None:
+    """Return the socket of a virtual switch of Climate, if it has one."""
+    found = virtual_switch(hass, switch)
+    return found[1].data.get(CONF_POWER_SOCKET) if found else None
 
 
 def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
@@ -99,24 +96,32 @@ def expected_power(hass: HomeAssistant, device: ConfigEntry) -> float | None:
 
 def power_cut(hass: HomeAssistant, switch: str) -> bool:
     """
-    Return whether the device powering a virtual switch has its relay off.
+    Return whether the power of a virtual switch's device is off.
 
-    The load protection (or a person) cut the power: a heater that does not
-    heat (not on, no start under way) leaves the rotation, holding no place
-    of the capacity, until the power is back. One that heats stays: it goes
-    off by its 0 W, so a moment "off" of a cloud relay commands nothing.
+    The relay of the device powering it, or its own socket: the load
+    protection, the stepwise "off" (or a person) cut the power. A heater
+    that does not heat (not on, no start under way) leaves the rotation,
+    holding no place of the capacity, until the power is back. One that heats
+    stays: it goes off by its 0 W, so a moment "off" of a cloud relay
+    commands nothing.
     """
-    device = power_device(hass, switch)
-    if device is None:
-        return False
-    state = hass.states.get(device.data.get(DEVICES_SWITCH, ""))
-    return state is not None and state.state == STATE_OFF
+    return any(
+        (state := hass.states.get(relay)) is not None and state.state == STATE_OFF
+        for relay in power_relays(hass, [switch])
+    )
 
 
 def power_relays(hass: HomeAssistant, switches: list[str]) -> list[str]:
-    """Return the relays of the devices that power these virtual switches."""
-    return [
-        device.data[DEVICES_SWITCH]
-        for switch in switches
-        if (device := power_device(hass, switch)) and DEVICES_SWITCH in device.data
-    ]
+    """Return the relays and sockets that power these virtual switches."""
+    relays = []
+    for switch in switches:
+        device = power_device(hass, switch)
+        relays += [
+            relay
+            for relay in (
+                device.data.get(DEVICES_SWITCH) if device else None,
+                power_socket(hass, switch),
+            )
+            if relay
+        ]
+    return relays

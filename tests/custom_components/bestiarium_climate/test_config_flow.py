@@ -477,6 +477,8 @@ async def test_control_settings_in_the_options(hass: HomeAssistant) -> None:
         "attempts": 7,
         "tolerance_seconds": 60,
         "hysteresis_seconds": 60,
+        "off_attempts": 3,
+        "off_interval_seconds": 300,
     }
 
     await hass.config_entries.options.async_configure(
@@ -495,3 +497,50 @@ def test_control_texts_are_translated(language: str) -> None:
     assert set(texts["options"]["step"]["init"]["data"]) == {
         f.name for f in fields(ControlSettings)
     }
+
+
+async def test_switch_power_socket_is_optional(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """DEV-010: a switch may name its socket; the Climate switches are not offered."""
+    hass.states.async_set(
+        "sensor.power_test",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    er.async_get(hass).async_get_or_create(
+        "switch", DOMAIN, "other", suggested_object_id="other_virtual"
+    )
+    result = await hass.config_entries.subentries.async_init(
+        (climate_entry.entry_id, SUBENTRY_TYPE_SWITCH),
+        context={"source": SOURCE_USER},
+    )
+    field = next(
+        key for key in result["data_schema"].schema if key.schema == "power_socket"
+    )
+    selector = result["data_schema"].schema[field]
+    assert selector.config["exclude_entities"] == ["switch.other_virtual"]
+
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {**SWITCH_INPUT, "power_socket": "switch.ac_socket"}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    sub = next(iter(climate_entry.subentries.values()))
+    assert sub.data["power_socket"] == "switch.ac_socket"
+
+
+async def test_an_old_switch_has_no_socket(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """DEV-010: a switch saved before has no socket and the defaults of turning off."""
+    result = await hass.config_entries.subentries.async_init(
+        (climate_entry.entry_id, SUBENTRY_TYPE_SWITCH),
+        context={"source": SOURCE_USER},
+    )
+    await hass.config_entries.subentries.async_configure(
+        result["flow_id"], SWITCH_INPUT
+    )
+    sub = next(iter(climate_entry.subentries.values()))
+    assert "power_socket" not in sub.data
+    settings = ControlSettings.of(climate_entry)
+    assert (settings.off_attempts, settings.off_interval_seconds) == (3, 300)

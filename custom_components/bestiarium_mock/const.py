@@ -135,7 +135,9 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
         device_id="cooker",
         power_w=400,
         power_min_w=400,
-        power_max_w=4200,
+        # From the reset's ~0.5 kW the grid reaches red (4.5 kW) and the
+        # overload (5 kW) with the cooker alone (DEV-010 review 06, R3)
+        power_max_w=5500,
     ),
     MockDeviceSpec(device_id="fridge", power_w=100),
     MockDeviceSpec(device_id="floor_heating_1", power_w=1200),

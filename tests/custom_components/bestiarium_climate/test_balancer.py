@@ -878,7 +878,12 @@ async def test_a_long_command_spends_no_attempts(floors: Floors) -> None:
 async def test_an_overtaking_off_not_taken_fails_after_its_window(
     floors: Floors,
 ) -> None:
-    """C5: "off" over a running "on" is an attempt; not taken, it fails a window later."""
+    """
+    C5: "off" over a running "on" is an attempt; not taken, it fails later.
+
+    DEV-010: an "off" to a switch that is on is the stepwise "off": it fails
+    once its interval (5 min) is over, not a window later.
+    """
     released, on_started = asyncio.Event(), asyncio.Event()
 
     async def slow_on() -> None:
@@ -904,6 +909,9 @@ async def test_an_overtaking_off_not_taken_fails_after_its_window(
     released.set()
     await setup
     await floors.tick(MINUTE)
+    assert floors.state("floor_1") == "not_turning_off"
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
+    await floors.tick(4 * MINUTE)
     assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 1
 
 
@@ -1331,6 +1339,10 @@ async def test_a_heater_off_in_red_waits_for_its_pause(floors: Floors) -> None:
 async def test_the_pause_starts_when_climate_turns_it_off(floors: Floors) -> None:
     """Decision 29: the one rotated out pauses from climate's "off", before its switch."""
     await floors.setup(min_working_minutes=1)
+    # Its "off" not taken is tried again a minute later (DEV-010: stepwise)
+    floors.hass.config_entries.async_update_entry(
+        floors.entry, options={"off_interval_seconds": MINUTE}
+    )
     floors.stuck.add("floor_2")  # its "off" shows late, as a virtual switch
     await floors.tick(2 * MINUTE)
     assert ("turn_off", "floor_2") in floors.calls
@@ -1384,7 +1396,12 @@ async def test_a_heater_out_of_attempts_takes_no_place(
 async def test_a_command_before_a_deferral_answers_nothing(
     floors: Floors, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """G1: after the deferral, a person turns the switch on: no "Normal" between."""
+    """
+    G1: after the deferral, a person turns the switch on: no "Normal" between.
+
+    DEV-010: the switch on, wanted off, is turned off stepwise: "Does not turn
+    off" goes before "Not responding".
+    """
     floors.stuck.add("floor_1")
     await floors.setup(capacity=1)
     floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 2})
@@ -1399,7 +1416,7 @@ async def test_a_command_before_a_deferral_answers_nothing(
     floors.hass.states.async_set("switch.floor_1", STATE_ON)
     await floors.tick(3 * MINUTE)
 
-    assert floors.state("floor_1") == "unresponsive"
+    assert floors.state("floor_1") == "not_turning_off"
     assert "Floor_1: control state back to normal" not in caplog.text
     assert caplog.text.count("Floor_1: control state unresponsive") == 1
 
@@ -1738,3 +1755,74 @@ async def test_a_second_attempt_in_yellow_is_turned_off(floors: Floors) -> None:
     floors.zone("yellow")
     await floors.tick(3 * MINUTE, step=10)
     assert floors.calls.count(("turn_on", "floor_1")) == 2  # no third attempt
+
+
+def _offs(floors: Floors, floor: str, since: int) -> int:
+    return floors.calls[since:].count(("turn_off", floor))
+
+
+async def test_the_entry_to_red_turns_off_what_reads_off_once(floors: Floors) -> None:
+    """
+    FR-029.3: an "off" to each switch that reads off, once an entry.
+
+    No attempt, no change of the control state; red to overload is no new
+    entry; out and in again is.
+    """
+    await floors.setup(zones=True)
+    (waiting,) = set(FLOORS) - floors.on()
+    since = len(floors.calls)
+
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    assert _offs(floors, waiting, since) == 1
+    await floors.tick(3 * MINUTE, step=5)
+    floors.zone("overload")
+    await floors.tick(MINUTE)
+    assert _offs(floors, waiting, since) == 1
+    sensor = floors.entity_id("sensor", f"{waiting}_control_state")
+    assert floors.state(waiting) == "normal"
+    assert floors.hass.states.get(sensor).attributes["failed_attempts"] == 0
+
+    floors.load(4000)  # nothing fits: no start in green
+    floors.zone("green")
+    await floors.tick(MINUTE)
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    assert _offs(floors, waiting, since) == 2
+
+
+async def test_the_entry_to_red_makes_the_next_attempt_now(floors: Floors) -> None:
+    """FR-029.2: a stepwise "off" under way does not wait for its interval."""
+    await floors.setup(zones=True)
+    first = sorted(floors.on())[0]
+    floors.stuck.add(first)
+    since = len(floors.calls)
+    await _hvac(floors, first, "off")
+    assert _offs(floors, first, since) == 1
+    await floors.tick(2 * MINUTE)
+    assert _offs(floors, first, since) == 1
+
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    assert _offs(floors, first, since) == 2
+    # Review 06, R2: in red the next a cycle later, not 5 minutes
+    await floors.tick(MINUTE)
+    assert _offs(floors, first, since) == 3
+
+
+async def test_in_red_an_off_not_taken_is_repeated_a_cycle_later(
+    floors: Floors,
+) -> None:
+    """Review 06, R2: the red step's "off" not taken: again in about 55 s."""
+    await floors.setup(zones=True)
+    floors.stuck.update(FLOORS)
+    since = len(floors.calls)
+    floors.zone("red")
+    await floors.hass.async_block_till_done()
+    offs = {floor for service, floor in floors.calls[since:] if service == "turn_off"}
+    (first,) = offs & floors.on()
+
+    await floors.tick(50, step=5)
+    assert _offs(floors, first, since) == 1
+    await floors.tick(15, step=5)
+    assert _offs(floors, first, since) == 2

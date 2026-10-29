@@ -60,6 +60,7 @@ async def setup_stand(url: str, token: str) -> None:
             reg = await registry(ha)  # with the mode select
             await remove_stand_climate(ha)
             await recreate_devices(ha, reg)
+            reg = await registry(ha)  # with the devices' "Allowed" switches
             await recreate_climate(ha, reg)
             reg = await registry(ha)
             await write_dashboard(ha, reg, await write_scripts(ha, reg))

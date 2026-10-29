@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, fields
 from datetime import timedelta
 from enum import StrEnum
 from logging import Logger, getLogger
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypedDict
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -36,6 +36,8 @@ CONF_MIN_POWER = "min_power"
 CONF_POWER_HYSTERESIS = "power_hysteresis_percent"
 CONF_POWER_DELAY = "power_delay_seconds"
 CONF_POWER_TOLERANCE = "power_tolerance_seconds"
+# The socket that powers the device: cut when it does not turn off (DEV-010)
+CONF_POWER_SOCKET = "power_socket"
 DEFAULT_POWER_HYSTERESIS_PERCENT = 20
 DEFAULT_POWER_DELAY_SECONDS = 10
 DEFAULT_POWER_TOLERANCE_SECONDS = 60
@@ -65,6 +67,9 @@ CAPACITY_STEP = 1
 BALANCING_INTERVAL_SECONDS = 60
 EVENT_DEVICE_ROTATED_IN = "bestiarium_climate_device_rotated_in"
 EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
+# The stepwise "off" ran out of attempts; then it cut the socket (DEV-010)
+EVENT_SWITCH_OUT_OF_CONTROL = "bestiarium_climate_switch_out_of_control"
+EVENT_POWER_CUT = "bestiarium_climate_power_cut"
 SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
 
 # The thermostats' state the balancer keeps across restarts (Store)
@@ -85,14 +90,18 @@ class ControlSettings:
     """
     How the balancer controls the thermostats' switches: options of the entry.
 
-    See docs/concepts/stability.md. A switch that does not take the expected
-    state for `attempts` balancing cycles is deferred for the recovery
-    timeout of the entry.
+    See docs/concepts/stability.md. A switch that does not turn on for
+    `attempts` balancing cycles is deferred for the recovery timeout of the
+    entry. One that does not turn off gets `off_attempts` "off"s
+    `off_interval_seconds` apart, then the event, then its socket is cut
+    (stepwise.py).
     """
 
     attempts: int = _setting(7, 1, 20)
     tolerance_seconds: int = _setting(60, 0, 600)
     hysteresis_seconds: int = _setting(60, 0, 600)
+    off_attempts: int = _setting(3, 1, 10)
+    off_interval_seconds: int = _setting(300, 30, 3600)
 
     @classmethod
     def of(cls, entry: ConfigEntry) -> Self:
@@ -130,6 +139,25 @@ ISSUE_SWITCH_SHARED = "switch_shared"
 ISSUE_SWITCH_IS_DEVICE = "switch_is_device"
 ISSUE_INVALID_ACTION = "invalid_action"
 ISSUE_SWITCH_NOW_HEATS = "switch_now_heats"
+ISSUE_SOCKET_GONE = "socket_gone"
+
+
+class SwitchOutOfControlData(TypedDict):
+    """The payload of EVENT_SWITCH_OUT_OF_CONTROL."""
+
+    thermostat: str | None
+    switch_entity_id: str
+    # What the virtual switch's power sensor reads; None for another switch
+    power: float | None
+    attempts: int
+
+
+class PowerCutData(TypedDict):
+    """The payload of EVENT_POWER_CUT."""
+
+    thermostat: str | None
+    switch_entity_id: str
+    socket_entity_id: str
 
 
 class Zone(StrEnum):
@@ -151,6 +179,8 @@ class ControlState(StrEnum):
     """The control state of a thermostat, the most important problem first."""
 
     SWITCH_UNAVAILABLE = "switch_unavailable"
+    # It runs while its thermostat wants it off: the stepwise "off" (DEV-010)
+    NOT_TURNING_OFF = "not_turning_off"
     UNRESPONSIVE = "unresponsive"
     NO_TEMPERATURE = "no_temperature"
     # The device that powers the heater is off: no fault (decision 28)

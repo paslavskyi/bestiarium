@@ -136,6 +136,19 @@ class Registry:
             if e["platform"] == CLIMATE and e["config_entry_id"] in entry_ids
         ]
 
+    def control_state(self, thermostat: str) -> str:
+        """Return the "Control state" sensor of a stand thermostat, by its name."""
+        for device in self.devices:
+            if device.get("name") != thermostat:
+                continue
+            for entity in self.stand_climate():
+                if entity["device_id"] == device["id"] and entity["unique_id"].endswith(
+                    "_control_state"
+                ):
+                    return entity["entity_id"]
+        msg = f"No control state of {thermostat}"
+        raise StandError(msg)
+
     def mock_device(self, mock_id: str) -> dict[str, Any]:
         """Return the device of a test socket or thermometer."""
         for device in self.devices:

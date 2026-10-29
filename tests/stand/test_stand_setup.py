@@ -139,8 +139,21 @@ async def test_stand_setup_is_repeatable(
     ]
     climate = hass.config_entries.async_entries("bestiarium_climate")
     assert len(climate) == 1
-    # Each thermostat runs an air conditioner through its own virtual switch
+    # Each thermostat runs an air conditioner through its own virtual switch,
+    # whose power socket is the "Allowed" of the AC socket's device (DEV-010)
     assert len(climate[0].subentries) == 2 * len(THERMOSTATS)
+    sockets = [
+        subentry.data["power_socket"]
+        for subentry in climate[0].subentries.values()
+        if subentry.subentry_type == "switch"
+    ]
+    entities = er.async_get(hass)
+    assert all(
+        entities.async_get(socket).platform == DEVICES
+        and entities.async_get(socket).unique_id.endswith("_allowed")
+        for socket in sockets
+    )
+    assert climate[0].options["off_interval_seconds"] == 60  # noqa: PLR2004
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -281,6 +294,9 @@ class _Registry:
     def control(self, device_id: str, key: str) -> str:
         return f"switch.{device_id}_{key}"
 
+    def control_state(self, _thermostat: str) -> str:
+        return "sensor.stand_ac_1_control_state"
+
 
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
@@ -383,3 +399,36 @@ def test_a_fault_scenario_shows_its_fault_first() -> None:
     reset = scripts["reset"]["sequence"]
     assert {"action": "switch.turn_on", "target": {"entity_id": loads}} in reset
     assert not [s for s in reset if s.get("action", "").startswith("scene.")]
+
+
+def test_the_stepwise_off_has_its_scenarios() -> None:
+    """DEV-010: the reset gives the ACs their power back; the stuck AC loses its IR."""
+    scripts = scenario_scripts(_Registry())
+    sockets = [f"switch.{ac}_allowed" for _, _, ac in THERMOSTATS]
+    assert {
+        "action": "switch.turn_on",
+        "target": {"entity_id": sockets},
+    } in scripts["reset"]["sequence"]
+    lost = {
+        "action": "switch.turn_on",
+        "target": {"entity_id": "switch.mock_ac_1_ir_lost"},
+    }
+    assert lost in scripts["climate_stuck_on"]["sequence"]
+    assert lost in scripts["climate_bypass_on_pause"]["sequence"]
+    # Review 06, R3: only AC 1 heats, capacity 1; the cooker holds red
+    bypass = scripts["climate_bypass_on_pause"]["sequence"]
+    assert {
+        "action": "number.set_value",
+        "target": {"entity_id": ["number.stand_capacity"]},
+        "data": {"value": 1},
+    } in bypass
+    assert {
+        "wait_template": (
+            "{{ is_state('sensor.stand_ac_1_control_state', 'unresponsive') }}"
+        ),
+        "timeout": {"minutes": 5},
+        "continue_on_timeout": False,
+    } in bypass
+    red = scripts["climate_red_entry"]["sequence"]
+    assert red[1]["target"]["entity_id"] == "number.mock_cooker_mock_power"
+    assert {"delay": {"seconds": 60}} in red

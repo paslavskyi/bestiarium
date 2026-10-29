@@ -244,7 +244,7 @@ trigger:
 
 ## bestiarium_climate Events
 
-All events are fired from `custom_components/bestiarium_climate/balancer.py`, only in a deficit of capacity, when a thermostat goes in or out of the rotation.
+All events are fired from `custom_components/bestiarium_climate/balancer.py`: the rotation events only in a deficit of capacity, when a thermostat goes in or out of the rotation; the stepwise "off" events when a device goes on running while its thermostat wants it off (DEV-010).
 
 Removed in DEV-008 stage B ([necessity](concepts/necessity.md)): `bestiarium_climate_switch_failed` and `_switch_recovered` (the thermostat's "Control state" sensor tells it), `bestiarium_climate_capacity_exhausted` (fired every minute of a deficit, which is the normal state).
 
@@ -301,6 +301,39 @@ action:
 ---
 
 ---
+
+### `bestiarium_climate_switch_out_of_control`
+
+The stepwise "off" ran out of attempts: the device still runs one interval after its last "off" (DEV-010, FR-027.2). Once per stepwise "off", a decision of the integration; the control state "Does not turn off" lasts meanwhile. The owner's automation tells the family (DEC-012).
+
+| Field | Type | Description |
+|---|---|---|
+| `thermostat` | `str \| null` | The thermostat's entity_id |
+| `switch_entity_id` | `str` | Its switch |
+| `power` | `float \| null` | What the virtual switch's power sensor reads, W; null for another switch |
+| `attempts` | `int` | The "off"s sent |
+
+```yaml
+trigger:
+  - platform: event
+    event_type: bestiarium_climate_switch_out_of_control
+```
+
+### `bestiarium_climate_power_cut`
+
+The stepwise "off" turned off the virtual switch's power socket, one interval after `switch_out_of_control` (FR-027.3). Fired after HA carried out the call. The thermostat never turns the socket back on.
+
+| Field | Type | Description |
+|---|---|---|
+| `thermostat` | `str \| null` | The thermostat's entity_id |
+| `switch_entity_id` | `str` | Its switch |
+| `socket_entity_id` | `str` | The socket turned off |
+
+```yaml
+trigger:
+  - platform: event
+    event_type: bestiarium_climate_power_cut
+```
 
 ## See Also
 

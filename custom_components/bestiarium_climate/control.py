@@ -3,8 +3,9 @@ The control of a thermostat's switch and its control state (DEC-014).
 
 A switch or temperature gone for longer than the tolerance is a problem; a
 problem ends after the hysteresis. The commands to a switch and their series
-are its control's (command.py). A switch out of attempts, or whose command
-outlasts their budget, is deferred for the recovery timeout and tried again.
+are its control's (command.py). A switch out of attempts to turn on, or whose
+"on" outlasts their budget, is deferred for the recovery timeout and tried
+again; one that runs while wanted off is turned off stepwise (stepwise.py).
 What the balancer must remember across restarts lives in a Store, not in the
 thermostat's attributes.
 """
@@ -44,6 +45,8 @@ from .const import (
     ControlSettings,
     ControlState,
 )
+from .devices import power_socket
+from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
@@ -199,6 +202,12 @@ class ThermostatControl:
         self._switch_gone = _Condition()
         self._no_temperature = _Condition()
         self._no_power = _Condition()
+        self._stepwise = StepwiseOff()
+        self._not_turning_off = _Condition()
+        # In red or overload the steps go a cycle apart at most (the balancer)
+        self.shedding = False
+        # The socket of its virtual switch: a change of it reloads the entry
+        self.socket: str | None = None
         # When the heater was last wanted off or its switch turned off: a
         # start waits for the pause after it
         self.off_at: datetime | None = (
@@ -227,6 +236,7 @@ class ThermostatControl:
     @callback
     def async_start(self) -> None:
         """Follow the switch and the sensor; their availability once HA started."""
+        self.socket = power_socket(self._hass, self.switch)
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
@@ -401,17 +411,21 @@ class ThermostatControl:
         deferral closed. Then nothing until it ends. An "off" by another not
         confirmed yet gets no command either way (a switch deferred is wanted
         off: none of its "off"s is by another).
+
+        A switch on while wanted off, deferred too, is turned off stepwise:
+        its attempts are not the series' (stepwise.py).
         """
         self._observe(now)
         reading = self.reading(now)
         if reading in (None, Reading.OFF_UNCONFIRMED):
             return None
-        if self.deferred_until is not None:
-            if self._off_owed and not self._commands.in_flight(now, on=False):
-                return False
-            return None
         actual = reading is Reading.ON
         wanted = self.wanted(now)
+        if actual and not wanted:
+            return False if self.off_step(now) is Step.ATTEMPT else None
+        if self.deferred_until is not None:
+            owed = self._off_owed and not self._commands.in_flight(now, on=False)
+            return False if owed else None
         if self._commands.waiting(now, on=wanted):
             return None
         latest = self._commands.latest()
@@ -420,7 +434,13 @@ class ThermostatControl:
         return None if actual is wanted else wanted
 
     def send(self, on: bool, now: datetime) -> SwitchCommand:  # noqa: FBT001
-        """Count a command sent now; the deferral's "off" is owed no more."""
+        """
+        Count a command sent now; the deferral's "off" is owed no more.
+
+        An "off" to a switch that is on is an attempt of the stepwise "off".
+        """
+        if not on and self.reading(now) is Reading.ON:
+            self._stepwise.attempt(now)
         command = self._commands.send(on, now, deferral=self.deferred_until is not None)
         if command.deferral:
             self._off_owed = False
@@ -441,23 +461,22 @@ class ThermostatControl:
 
     def defer_if_exhausted(self, now: datetime) -> None:
         """
-        Defer the switch now if it is out of attempts or a command hangs.
+        Defer the switch now if it is out of attempts to turn on or an "on" hangs.
 
-        Out of attempts: a series has as many failed attempts as the
-        attempts, the switch not in its state, whatever is wanted now (a
-        heater out of attempts never takes another's place). Hung: a command
-        not answered runs longer than the budget of the attempts (attempts x
-        a cycle). Called before the capacity is shared, so that its place goes
-        to another thermostat in this cycle.
+        Out of attempts: the series "on" has as many failed attempts as the
+        attempts, the switch off, whatever is wanted now (a heater out of
+        attempts never takes another's place). Hung: an "on" not answered
+        runs longer than the budget of the attempts (attempts x a cycle). A
+        switch that does not turn off is never deferred: it is turned off
+        stepwise. Called before the capacity is shared, so that its place
+        goes to another thermostat in this cycle.
         """
         self._observe(now)
-        actual = self.switch_is_on(now)
-        if actual is None or self.deferred_until is not None:
+        if self.switch_is_on(now) is not False or self.deferred_until is not None:
             return
         attempts = self.settings.attempts
-        # The series the switch is not in the state of
-        failed = self._commands.failed(now, on=not actual)
-        if self._commands.hung(now, ATTEMPT_INTERVAL * attempts):
+        failed = self._commands.failed(now, on=True)
+        if self._commands.hung(now, ATTEMPT_INTERVAL * attempts, on=True):
             # The hung command is a failed attempt too
             self._defer(now, failed + 1)
         elif failed >= attempts:
@@ -468,11 +487,28 @@ class ThermostatControl:
         End the series the switch answered: it is in the state of its command.
 
         Only the switch's answer ends a series, never a new wanted state; an
-        answer to a command sent out of a deferral ends "Not responding".
+        answer to a command sent out of a deferral ends "Not responding". The
+        stepwise "off" ends with the switch wanted on again, or off for a whole
+        step: an air conditioner idling at its setpoint draws little for a
+        minute or two and runs on (review 06, R1). Off after its socket was
+        cut, it ends at once: the power back is a new chain.
         """
         actual = self.switch_is_on(now)
         if actual is None:
             return
+        if self._stepwise.active and (
+            self.wanted(now)
+            or (
+                not actual
+                and (
+                    self._stepwise.cut
+                    or now - self._hass.states.get(self.switch).last_changed
+                    >= timedelta(seconds=self.settings.off_interval_seconds)
+                )
+            )
+        ):
+            self._stepwise = StepwiseOff()
+            self._refresh(now)
         before = self._commands.kept
         command = self._commands.answer(actual)
         # A switch in the state already when the command went is no answer of
@@ -500,6 +536,85 @@ class ThermostatControl:
         if self._commands.close(on=True):
             self._keep()
             self._refresh(now)
+
+    # The stepwise "off"
+
+    @property
+    def _off_interval(self) -> timedelta:
+        """Return the step: a cycle at most in red or overload (DEC-014, hard limit)."""
+        interval = timedelta(seconds=self.settings.off_interval_seconds)
+        return min(interval, ATTEMPT_INTERVAL) if self.shedding else interval
+
+    def _off_next(self) -> tuple[Step, datetime | None] | None:
+        return self._stepwise.next(
+            self.settings.off_attempts,
+            self._off_interval,
+            socket=self.socket is not None,
+        )
+
+    def off_step(self, now: datetime) -> Step | None:
+        """
+        Return the step of the stepwise "off" due now, or None.
+
+        Only while the switch is on: one off for a moment waits. An attempt
+        due at once (the first, or one the red zone asks for) waits while an
+        "off" runs; a later one cuts it short.
+        """
+        if self.reading(now) is not Reading.ON or (step := self._off_next()) is None:
+            return None
+        kind, due = step
+        if due is None:
+            return None if self._commands.running(on=False) else kind
+        return kind if now >= due else None
+
+    def off_step_at(self) -> datetime | None:
+        """Return when the next step of the stepwise "off" is due, while it waits."""
+        step = self._off_next() if self._stepwise.active else None
+        return step[1] if step is not None else None
+
+    @property
+    def off_attempts(self) -> int:
+        """Return the "off"s the stepwise "off" sent."""
+        return self._stepwise.attempts
+
+    def reported(self, now: datetime) -> None:
+        """Note the event "out of control" fired now."""
+        self._stepwise.reported_at = now
+        self._refresh(now)
+
+    def cut(self, now: datetime) -> None:
+        """Note the socket cut now: never again in this stepwise "off"."""
+        self._stepwise.cut = True
+        self._refresh(now)
+
+    def force_off_attempt(self, now: datetime) -> bool:
+        """
+        Make the next attempt of a stepwise "off" under way due now (red zone).
+
+        Return whether it is due now: not with no attempt left, nor while an
+        "off" runs.
+        """
+        if (
+            not self._stepwise.active
+            or self._stepwise.attempts >= self.settings.off_attempts
+        ):
+            return False
+        self._stepwise.forced = True
+        return self.off_step(now) is Step.ATTEMPT
+
+    def blind_off(self, now: datetime) -> bool:
+        """
+        Return whether an "off" outside the attempts may go now (red zone).
+
+        To a switch that reads off (its power sensor may be late), or on with
+        no attempt left; never while a command of it runs.
+        """
+        if self._commands.running():
+            return False
+        reading = self.reading(now)
+        return reading is Reading.OFF or (
+            reading is Reading.ON and self._stepwise.active
+        )
 
     def _defer(self, now: datetime, failed: int) -> None:
         self.deferred_until = now + duration_dict_to_timedelta(
@@ -573,8 +688,20 @@ class ThermostatControl:
         tolerance = timedelta(seconds=settings.tolerance_seconds)
         hysteresis = timedelta(seconds=settings.hysteresis_seconds)
         # Enter and leave of each; no power is no fault: it leaves at once
+        # Entered only while the switch runs (an ordinary "off" taken within
+        # the tolerance shows nothing); once confirmed, a dip of it holds it
+        self._not_turning_off.set(
+            self._stepwise.active
+            and (self.reading(now) is Reading.ON or self._not_turning_off.confirmed),
+            now,
+        )
         conditions = {
             ControlState.SWITCH_UNAVAILABLE: (self._switch_gone, tolerance, hysteresis),
+            ControlState.NOT_TURNING_OFF: (
+                self._not_turning_off,
+                tolerance,
+                hysteresis,
+            ),
             ControlState.UNRESPONSIVE: (self._unresponsive, timedelta(), hysteresis),
             ControlState.NO_TEMPERATURE: (self._no_temperature, tolerance, hysteresis),
             ControlState.NO_POWER: (self._no_power, tolerance, timedelta()),
@@ -608,6 +735,8 @@ class ThermostatControl:
             changes.append(until)
         if (window := self._commands.next_window_end(now)) is not None:
             changes.append(window)
+        if (step := self.off_step_at()) is not None and step > now:
+            changes.append(step)
         if self._cancel_timer:
             self._cancel_timer()
             self._cancel_timer = None
@@ -625,7 +754,13 @@ class ThermostatControl:
     def attributes(self) -> dict[str, Any]:
         """Return the details of the control state."""
         now = dt_util.utcnow()
-        failed = max(self._commands.failed(now, on=on) for on in (True, False))
+        if self.state is ControlState.NOT_TURNING_OFF:
+            return {
+                "failed_attempts": self._stepwise.failed(now, self._off_interval),
+                "next_attempt": self.off_step_at(),
+                "pause_until": self.paused_until(now),
+            }
+        failed = self._commands.failed(now, on=True)
         return {
             "failed_attempts": self._failed_at_deferral
             if self.deferred_until is not None

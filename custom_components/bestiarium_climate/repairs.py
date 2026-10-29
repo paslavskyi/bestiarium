@@ -3,8 +3,9 @@ Repairs of Bestiarium Climate: settings of a switch a person must fix.
 
 A setting a person must fix is a Repairs issue (docs/concepts/problem-reporting.md),
 fixed in its own form: the actions of a virtual switch (an invalid saved
-action, a cooling switch that now heats), or other switches for the extra
-thermostats of a shared switch. The entry reloads with the fix.
+action, a cooling switch that now heats), the socket of a virtual switch that
+is gone, or other switches for the extra thermostats of a shared switch. The
+entry reloads with the fix.
 """
 
 from __future__ import annotations
@@ -16,12 +17,19 @@ from homeassistant.components.repairs import RepairsFlow
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers import selector
 
-from .config_flow import actions_schema, async_action_errors, switch_error
+from .config_flow import (
+    actions_schema,
+    async_action_errors,
+    socket_schema,
+    switch_error,
+)
 from .const import (
+    CONF_POWER_SOCKET,
     CONF_TARGET_SWITCH,
     CONF_THERMOSTAT_MODE,
     DOMAIN,
     DOMAIN_SWITCH,
+    ISSUE_SOCKET_GONE,
     ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
     ClimateMode,
@@ -45,6 +53,8 @@ async def async_create_fix_flow(
         flow = SharedSwitchRepairFlow(data or {})
     elif issue_id.startswith(ISSUE_SWITCH_IS_DEVICE):
         flow = ThermostatSwitchRepairFlow(data or {})
+    elif issue_id.startswith(ISSUE_SOCKET_GONE):
+        flow = SocketRepairFlow(data or {})
     else:
         flow = ActionsRepairFlow(data or {})
     return flow
@@ -90,6 +100,39 @@ class ActionsRepairFlow(_GoneRepairFlow):
             data_schema=vol.Schema(actions_schema(subentry.data)),
             errors=errors,
             description_placeholders={"switch": subentry.title, "error": self._error},
+        )
+
+
+class SocketRepairFlow(_GoneRepairFlow):
+    """Show the socket of a virtual switch, gone from HA; save another or none."""
+
+    def __init__(self, data: dict[str, str]) -> None:
+        """Remember which switch to fix."""
+        self._entry_id = data["entry_id"]
+        self._subentry_id = data["subentry_id"]
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show the socket field; save what is chosen, a cleared field too."""
+        entry = self.hass.config_entries.async_get_entry(self._entry_id)
+        if entry is None or self._subentry_id not in entry.subentries:
+            return self._gone("switch_removed")
+        subentry = entry.subentries[self._subentry_id]
+        if user_input is not None:
+            data = {k: v for k, v in subentry.data.items() if k != CONF_POWER_SOCKET}
+            if socket := user_input.get(CONF_POWER_SOCKET):
+                data[CONF_POWER_SOCKET] = socket
+            self.hass.config_entries.async_update_subentry(entry, subentry, data=data)
+            ir.async_delete_issue(self.hass, DOMAIN, self.issue_id)
+            return self.async_create_entry(data={})
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(socket_schema(self.hass, subentry.data)),
+            description_placeholders={
+                "switch": subentry.title,
+                "socket": subentry.data.get(CONF_POWER_SOCKET, ""),
+            },
         )
 
 
