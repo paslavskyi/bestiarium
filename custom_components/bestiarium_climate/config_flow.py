@@ -54,6 +54,7 @@ from .const import (
     DEFAULT_POWER_HYSTERESIS_PERCENT,
     DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_TOLERANCE,
+    DEFAULT_UNIVERSAL_MIN_POWER,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
     DOMAIN,
@@ -62,6 +63,7 @@ from .const import (
     PRESET_KEYS,
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
+    SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
     ControlSettings,
 )
@@ -118,6 +120,57 @@ def actions_schema(saved: Mapping[str, Any]) -> dict[vol.Marker, Any]:
     }
 
 
+def power_schema(
+    saved: Mapping[str, Any], *, min_power: float
+) -> dict[vol.Marker, Any]:
+    """Return the fields that read on/off from power: threshold, waits, hysteresis."""
+    return {
+        vol.Required(
+            CONF_MIN_POWER,
+            default=saved.get(CONF_MIN_POWER, min_power),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0,
+                step=0.1,
+                mode=selector.NumberSelectorMode.BOX,
+            ),
+        ),
+        vol.Required(
+            CONF_POWER_TOLERANCE,
+            default=saved.get(CONF_POWER_TOLERANCE, DEFAULT_POWER_TOLERANCE_SECONDS),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+            ),
+        ),
+        vol.Required(
+            CONF_POWER_HYSTERESIS,
+            default=saved.get(CONF_POWER_HYSTERESIS, DEFAULT_POWER_HYSTERESIS_PERCENT),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=90, step=1, mode=selector.NumberSelectorMode.BOX
+            ),
+        ),
+        vol.Required(
+            CONF_POWER_DELAY,
+            default=saved.get(CONF_POWER_DELAY, DEFAULT_POWER_DELAY_SECONDS),
+        ): selector.NumberSelector(
+            selector.NumberSelectorConfig(
+                min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
+            ),
+        ),
+    }
+
+
+def virtual_switches(hass: HomeAssistant) -> list[str]:
+    """Return the virtual switches of Climate: they have their own power."""
+    return [
+        entity.entity_id
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN and entity.domain == DOMAIN_SWITCH
+    ]
+
+
 def socket_schema(
     hass: HomeAssistant, saved: Mapping[str, Any]
 ) -> dict[vol.Marker, Any]:
@@ -126,18 +179,13 @@ def socket_schema(
 
     Any switch but the virtual switches of Climate: they power nothing.
     """
-    virtual = [
-        entity.entity_id
-        for entity in er.async_get(hass).entities.values()
-        if entity.platform == DOMAIN and entity.domain == DOMAIN_SWITCH
-    ]
     return {
         vol.Optional(
             CONF_POWER_SOCKET,
             description={"suggested_value": saved.get(CONF_POWER_SOCKET)},
         ): selector.EntitySelector(
             selector.EntitySelectorConfig(
-                domain=DOMAIN_SWITCH, exclude_entities=virtual
+                domain=DOMAIN_SWITCH, exclude_entities=virtual_switches(hass)
             )
         )
     }
@@ -322,6 +370,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
         return {
             SUBENTRY_TYPE_SWITCH: SwitchSubentryFlowHandler,
             SUBENTRY_TYPE_THERMOSTAT: ThermostatSubentryFlowHandler,
+            SUBENTRY_TYPE_UNIVERSAL: UniversalThermostatSubentryFlowHandler,
         }
 
 
@@ -400,44 +449,7 @@ class SwitchSubentryFlowHandler(ConfigSubentryFlow):
                     device_class=DEVICE_CLASS_POWER,
                 ),
             ),
-            vol.Required(
-                CONF_MIN_POWER,
-                default=saved.get(CONF_MIN_POWER, 0.0),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0,
-                    step=0.1,
-                    mode=selector.NumberSelectorMode.BOX,
-                ),
-            ),
-            vol.Required(
-                CONF_POWER_TOLERANCE,
-                default=saved.get(
-                    CONF_POWER_TOLERANCE, DEFAULT_POWER_TOLERANCE_SECONDS
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
-                ),
-            ),
-            vol.Required(
-                CONF_POWER_HYSTERESIS,
-                default=saved.get(
-                    CONF_POWER_HYSTERESIS, DEFAULT_POWER_HYSTERESIS_PERCENT
-                ),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=90, step=1, mode=selector.NumberSelectorMode.BOX
-                ),
-            ),
-            vol.Required(
-                CONF_POWER_DELAY,
-                default=saved.get(CONF_POWER_DELAY, DEFAULT_POWER_DELAY_SECONDS),
-            ): selector.NumberSelector(
-                selector.NumberSelectorConfig(
-                    min=0, max=600, step=1, mode=selector.NumberSelectorMode.BOX
-                ),
-            ),
+            **power_schema(saved, min_power=0.0),
             **socket_schema(self.hass, saved),
             **actions_schema(saved),
         }
@@ -540,7 +552,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 # An optional field cleared in the form goes
                 self._options.pop(CONF_HEATER_POWER, None)
                 self._options.update(user_input)
-                return await self.async_step_presets()
+                return await self._async_after_basic()
 
         subentry = self._get_reconfigure_subentry() if self.source != "user" else None
         name_default = self._options.get(CONF_THERMOSTAT_NAME) or (
@@ -596,9 +608,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 vol.Required(
                     CONF_TARGET_SWITCH,
                     default=target_switch_default,
-                ): selector.EntitySelector(
-                    selector.EntitySelectorConfig(domain=DOMAIN_SWITCH),
-                ),
+                ): self._switch_selector(),
                 vol.Required(
                     CONF_THERMOSTAT_MODE,
                     default=thermo_mode_default,
@@ -692,11 +702,21 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             description_placeholders={"device": self._device_name},
         )
 
+    def _switch_selector(self) -> selector.EntitySelector:
+        """Return the selector of the switch: any switch."""
+        return selector.EntitySelector(
+            selector.EntitySelectorConfig(domain=DOMAIN_SWITCH)
+        )
+
+    async def _async_after_basic(self) -> SubentryFlowResult:
+        """Go on after the basic step: the presets."""
+        return await self.async_step_presets()
+
     async def async_step_presets(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> SubentryFlowResult:
-        """Step 2: preset temperatures."""
+        """Last step: preset temperatures."""
         if user_input is not None:
             self._options.update(user_input)
             preset_data = {
@@ -742,6 +762,71 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             step_id="presets",
             data_schema=vol.Schema(schema_dict),
             errors={},
+        )
+
+
+class UniversalThermostatSubentryFlowHandler(ThermostatSubentryFlowHandler):
+    """
+    Subentry flow of a universal thermostat: basic, power, presets.
+
+    Any switch but the virtual switches of Climate, read by its power sensor
+    if it has one, else by its own state.
+    """
+
+    def _switch_selector(self) -> selector.EntitySelector:
+        """Return the selector of the switch: not a virtual switch of Climate."""
+        return selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                domain=DOMAIN_SWITCH, exclude_entities=virtual_switches(self.hass)
+            )
+        )
+
+    async def _async_after_basic(self) -> SubentryFlowResult:
+        """Go on after the basic step: the power sensor."""
+        return await self.async_step_power()
+
+    async def async_step_power(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> SubentryFlowResult:
+        """Step 2: the power sensor, optional, and when it reads on."""
+        if user_input is not None:
+            # A power sensor cleared in the form goes
+            self._options.pop(CONF_POWER_ENTITY, None)
+            self._options.update(
+                {
+                    **user_input,
+                    CONF_MIN_POWER: float(user_input[CONF_MIN_POWER]),
+                    **{
+                        key: int(user_input[key])
+                        for key in (
+                            CONF_POWER_HYSTERESIS,
+                            CONF_POWER_DELAY,
+                            CONF_POWER_TOLERANCE,
+                        )
+                    },
+                }
+            )
+            return await self.async_step_presets()
+        return self.async_show_form(
+            step_id="power",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_POWER_ENTITY,
+                        description={
+                            "suggested_value": self._options.get(CONF_POWER_ENTITY)
+                        },
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=DOMAIN_SENSOR, device_class=DEVICE_CLASS_POWER
+                        )
+                    ),
+                    **power_schema(
+                        self._options, min_power=DEFAULT_UNIVERSAL_MIN_POWER
+                    ),
+                }
+            ),
         )
 
 

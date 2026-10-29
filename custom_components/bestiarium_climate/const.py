@@ -20,6 +20,9 @@ DOMAIN_BESTIARIUM_DEVICES = "bestiarium_devices"
 # Subentry types
 SUBENTRY_TYPE_SWITCH = "switch"
 SUBENTRY_TYPE_THERMOSTAT = "thermostat"
+# Any switch, read by its power sensor if it has one; auto, off and manual
+SUBENTRY_TYPE_UNIVERSAL = "universal_thermostat"
+THERMOSTAT_TYPES = (SUBENTRY_TYPE_THERMOSTAT, SUBENTRY_TYPE_UNIVERSAL)
 
 # Config keys — entry-level
 CONF_CAPACITY = "capacity"
@@ -41,6 +44,8 @@ CONF_POWER_SOCKET = "power_socket"
 DEFAULT_POWER_HYSTERESIS_PERCENT = 20
 DEFAULT_POWER_DELAY_SECONDS = 10
 DEFAULT_POWER_TOLERANCE_SECONDS = 60
+# A universal thermostat's switch runs at or above it (an idling AC ~40 W)
+DEFAULT_UNIVERSAL_MIN_POWER = 20.0
 
 # Config keys — thermostat subentry
 CONF_THERMOSTAT_NAME = "name"

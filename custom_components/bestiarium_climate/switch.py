@@ -37,7 +37,7 @@ from .const import (
     ISSUE_INVALID_ACTION,
     ISSUE_SWITCH_NOW_HEATS,
     SUBENTRY_TYPE_SWITCH,
-    SUBENTRY_TYPE_THERMOSTAT,
+    THERMOSTAT_TYPES,
     ClimateMode,
 )
 from .power_reading import PowerReading, PowerThresholds
@@ -89,7 +89,7 @@ def thermostats_of(
         subentry
         for entry in hass.config_entries.async_entries(DOMAIN)
         for subentry in entry.subentries.values()
-        if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+        if subentry.subentry_type in THERMOSTAT_TYPES
         and subentry.data.get(CONF_TARGET_SWITCH) == switch
         and subentry.subentry_id != besides
     ]

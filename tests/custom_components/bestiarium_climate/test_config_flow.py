@@ -5,10 +5,12 @@
 import json
 from dataclasses import fields
 from pathlib import Path
+from typing import Any
 
 import pytest
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
+    ConfigSubentry,
     SOURCE_USER,
     ConfigEntryState,
 )
@@ -27,9 +29,12 @@ from custom_components.bestiarium_climate.const import (
     DEFAULT_CAPACITY,
     DEFAULT_POWER_DELAY_SECONDS,
     DEFAULT_POWER_HYSTERESIS_PERCENT,
+    DEFAULT_POWER_TOLERANCE_SECONDS,
+    DEFAULT_UNIVERSAL_MIN_POWER,
     DOMAIN,
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
+    SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
 )
 
@@ -544,3 +549,143 @@ async def test_an_old_switch_has_no_socket(
     assert "power_socket" not in sub.data
     settings = ControlSettings.of(climate_entry)
     assert (settings.off_attempts, settings.off_interval_seconds) == (3, 300)
+
+
+UNIVERSAL_POWER_INPUT = {"power_entity": "sensor.heater_power"}
+
+
+async def _universal(hass: HomeAssistant, entry: MockConfigEntry, *steps: dict) -> dict:
+    """Run the universal thermostat's form through its steps."""
+    return await _add(hass, entry, SUBENTRY_TYPE_UNIVERSAL, *steps)
+
+
+def _universal_subentry(entry: MockConfigEntry) -> ConfigSubentry:
+    return next(
+        sub
+        for sub in entry.subentries.values()
+        if sub.subentry_type == SUBENTRY_TYPE_UNIVERSAL
+    )
+
+
+def _selector_of(result: dict, key: str) -> Any:
+    field = next(k for k in result["data_schema"].schema if k.schema == key)
+    return result["data_schema"].schema[field]
+
+
+async def test_universal_thermostat_three_steps(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """Basic, then power, then presets; the power fields get their defaults."""
+    result = await _universal(hass, climate_entry, THERMOSTAT_INPUT)
+    assert result["step_id"] == "power"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], UNIVERSAL_POWER_INPUT
+    )
+    assert result["step_id"] == "presets"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"sleep_temp": 18}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+
+    sub = _universal_subentry(climate_entry)
+    assert sub.title == "Room Thermostat"
+    assert sub.data["target_switch"] == "switch.room_heat"
+    assert sub.data["thermostat_mode"] == ClimateMode.HEATING
+    assert sub.data["power_entity"] == "sensor.heater_power"
+    assert sub.data["min_power"] == DEFAULT_UNIVERSAL_MIN_POWER == 20.0
+    assert sub.data["power_hysteresis_percent"] == DEFAULT_POWER_HYSTERESIS_PERCENT
+    assert sub.data["power_delay_seconds"] == DEFAULT_POWER_DELAY_SECONDS
+    assert sub.data["power_tolerance_seconds"] == DEFAULT_POWER_TOLERANCE_SECONDS
+    assert sub.data["sleep_temp"] == 18
+
+
+async def test_universal_power_sensor_is_optional(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """Without a power sensor the thermostat reads the switch itself."""
+    result = await _universal(hass, climate_entry, THERMOSTAT_INPUT, {}, {})
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert "power_entity" not in _universal_subentry(climate_entry).data
+
+
+async def test_universal_offers_no_virtual_switch(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """The virtual switches of Climate have their own power: not offered."""
+    er.async_get(hass).async_get_or_create(
+        "switch", DOMAIN, "other", suggested_object_id="other_virtual"
+    )
+    result = await _universal(hass, climate_entry)
+    selector = _selector_of(result, "target_switch")
+    assert selector.config["exclude_entities"] == ["switch.other_virtual"]
+
+
+async def test_universal_refuses_a_taken_switch(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """One switch, one thermostat: an old thermostat's switch is taken."""
+    await _add(hass, climate_entry, SUBENTRY_TYPE_THERMOSTAT, THERMOSTAT_INPUT, {})
+    result = await _universal(hass, climate_entry, {**THERMOSTAT_INPUT, "name": "U"})
+    assert result["errors"] == {"target_switch": "switch_taken"}
+
+
+async def test_universal_refuses_a_device_relay(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """One relay, one integration: a Bestiarium Devices relay is refused."""
+    MockConfigEntry(
+        domain="bestiarium_devices",
+        title="Heater",
+        data={"switch_entity_id": "switch.room_heat"},
+    ).add_to_hass(hass)
+    result = await _universal(hass, climate_entry, THERMOSTAT_INPUT)
+    assert result["errors"] == {"target_switch": "switch_is_device"}
+
+
+async def test_old_thermostat_refuses_the_universals_switch(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """The old thermostat's form counts the universal thermostats too."""
+    await _universal(hass, climate_entry, THERMOSTAT_INPUT, {}, {})
+    result = await _add(
+        hass,
+        climate_entry,
+        SUBENTRY_TYPE_THERMOSTAT,
+        {**THERMOSTAT_INPUT, "name": "Old"},
+    )
+    assert result["errors"] == {"target_switch": "switch_taken"}
+
+
+async def test_universal_reconfigure_clears_the_power_sensor(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """A power sensor cleared in the form goes; the switch is its own, not taken."""
+    await _universal(hass, climate_entry, THERMOSTAT_INPUT, UNIVERSAL_POWER_INPUT, {})
+    sub = _universal_subentry(climate_entry)
+    result = await _run_subentry_flow(
+        hass,
+        climate_entry,
+        SUBENTRY_TYPE_UNIVERSAL,
+        {"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id},
+        [THERMOSTAT_INPUT, {}, {}],
+    )
+    assert result["reason"] == "reconfigure_successful"
+    assert "power_entity" not in _universal_subentry(climate_entry).data
+
+
+@pytest.mark.parametrize("language", ["en", "uk"])
+async def test_universal_translations_have_every_field(
+    hass: HomeAssistant, climate_entry: MockConfigEntry, language: str
+) -> None:
+    """Every field of the three steps has a text in both languages."""
+    path = Path(climate.__file__).parent / "translations" / f"{language}.json"
+    texts = json.loads(path.read_text(encoding="utf-8"))
+    steps = texts["config_subentries"][SUBENTRY_TYPE_UNIVERSAL]["step"]
+    result = await _universal(hass, climate_entry)
+    for user_input in (THERMOSTAT_INPUT, UNIVERSAL_POWER_INPUT, None):
+        keys = {key.schema for key in result["data_schema"].schema}
+        assert keys <= set(steps[result["step_id"]]["data"]), result["step_id"]
+        if user_input is not None:
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], user_input
+            )

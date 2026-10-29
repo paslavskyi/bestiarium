@@ -56,6 +56,7 @@ from .const import (
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     SUBENTRY_TYPE_THERMOSTAT,
+    THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
     DeviceRotatedData,
@@ -90,7 +91,7 @@ def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[s
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id != besides
         for subentry in entry.subentries.values()
-        if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+        if subentry.subentry_type in THERMOSTAT_TYPES
     )
     return {switch for switch, count in targets.items() if count > 1}
 

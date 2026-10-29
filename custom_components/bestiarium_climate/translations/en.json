@@ -190,6 +190,83 @@
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"
       }
+    },
+    "universal_thermostat": {
+      "entry_type": "Universal Thermostat",
+      "initiate_flow": {
+        "user": "Add universal thermostat",
+        "reconfigure": "Reconfigure universal thermostat"
+      },
+      "step": {
+        "basic": {
+          "title": "Thermostat Settings",
+          "description": "Any switch (a socket, a relay, a template switch) and the room's temperature sensor. Auto: the balancer shares the capacity; manual: the thermostat heats or cools by itself, outside the capacity, until the red zone.",
+          "data": {
+            "name": "Name",
+            "temperature_sensor": "Temperature sensor",
+            "target_switch": "Target switch",
+            "thermostat_mode": "What auto and manual do",
+            "cold_tolerance": "Cold tolerance (°C)",
+            "hot_tolerance": "Hot tolerance (°C)",
+            "min_cycle_duration": "Minimum cycle duration",
+            "min_temp": "Minimum temperature",
+            "max_temp": "Maximum temperature",
+            "heater_power": "Heater power"
+          },
+          "data_description": {
+            "name": "Friendly name for this thermostat",
+            "temperature_sensor": "Sensor that provides current temperature",
+            "target_switch": "The switch that powers the device: any switch but the virtual switches of Bestiarium Climate and the relays of Bestiarium Devices",
+            "thermostat_mode": "Heating: the manual mode is \"heat\"; cooling: \"cool\"",
+            "cold_tolerance": "Temperature band below target before turning on",
+            "hot_tolerance": "Temperature band above target before turning off",
+            "min_cycle_duration": "Minimum time between on/off cycles (optional)",
+            "min_temp": "Minimum set temperature (optional)",
+            "max_temp": "Maximum set temperature (optional)",
+            "heater_power": "Used to check that a start fits under the red zone. Empty: the expected power of the Bestiarium device of this switch, else 2000 W"
+          }
+        },
+        "power": {
+          "title": "Power",
+          "description": "Optional. With a power sensor the thermostat reads whether the device runs from its power, not from the switch (a cloud or template switch may show a state it does not have).",
+          "data": {
+            "power_entity": "Power sensor",
+            "min_power": "Minimum power (W) to treat device as on",
+            "power_tolerance_seconds": "Power tolerance (s)",
+            "power_hysteresis_percent": "Hysteresis (%)",
+            "power_delay_seconds": "Delay (s)"
+          },
+          "data_description": {
+            "power_entity": "Optional. Sensor that measures the device's power (W). Empty: the switch's own state",
+            "min_power": "At or above this power the switch is on",
+            "power_tolerance_seconds": "No power data is shown (the switch unavailable) only after this long",
+            "power_hysteresis_percent": "On goes to off only below the minimum power minus this share of it",
+            "power_delay_seconds": "A change of the state (and no power data) is shown only after it has lasted this long"
+          }
+        },
+        "presets": {
+          "title": "Preset Temperatures",
+          "description": "Optional preset target temperatures.",
+          "data": {
+            "away_temp": "Away temperature",
+            "comfort_temp": "Comfort temperature",
+            "eco_temp": "Eco temperature",
+            "home_temp": "Home temperature",
+            "sleep_temp": "Sleep temperature",
+            "activity_temp": "Activity temperature"
+          }
+        }
+      },
+      "error": {
+        "name_required": "Name is required",
+        "required": "This field is required",
+        "switch_has_no_action": "This virtual switch has no action for this mode",
+        "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
+        "switch_is_device": "This switch is the relay of the Bestiarium device {device}: one relay lives in one integration"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration successful"
+      }
     }
   },
   "options": {
