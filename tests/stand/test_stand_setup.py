@@ -294,6 +294,9 @@ class _Registry:
     def control(self, device_id: str, key: str) -> str:
         return f"switch.{device_id}_{key}"
 
+    def control_state(self, _thermostat: str) -> str:
+        return "sensor.stand_ac_1_control_state"
+
 
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
@@ -418,6 +421,13 @@ def test_the_stepwise_off_has_its_scenarios() -> None:
         "action": "number.set_value",
         "target": {"entity_id": ["number.stand_capacity"]},
         "data": {"value": 1},
+    } in bypass
+    assert {
+        "wait_template": (
+            "{{ is_state('sensor.stand_ac_1_control_state', 'unresponsive') }}"
+        ),
+        "timeout": {"minutes": 5},
+        "continue_on_timeout": False,
     } in bypass
     red = scripts["climate_red_entry"]["sequence"]
     assert red[1]["target"]["entity_id"] == "number.mock_cooker_mock_power"

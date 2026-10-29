@@ -390,7 +390,8 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:hand-back-right-off",
             # AC 1 "Not responding" (its IR lost), then a person turns it on
             # with the remote: it is turned off stepwise all the same. Only
-            # AC 1 wants heat, capacity 1: no rotation takes it out
+            # AC 1 wants heat, capacity 1: no rotation takes it out. Stops if
+            # it is not "Not responding" within 5 minutes
             "sequence": [
                 reset,
                 {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
@@ -401,7 +402,14 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 },
                 *faulty_first(1),
                 *(room(thermometer, 30) for _, thermometer, _ in THERMOSTATS[1:]),
-                wait(150),
+                {
+                    "wait_template": (
+                        f"{{{{ is_state('{reg.control_state(THERMOSTATS[0][0])}',"
+                        " 'unresponsive') }}"
+                    ),
+                    "timeout": {"minutes": 5},
+                    "continue_on_timeout": False,
+                },
                 ac_power(THERMOSTATS[0][2], AC_RUNNING_W),
             ],
         },
