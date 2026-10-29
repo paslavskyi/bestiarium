@@ -389,11 +389,18 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "alias": "Стенд: клімат — увімкнули в обхід паузи",
             "icon": "mdi:hand-back-right-off",
             # AC 1 "Not responding" (its IR lost), then a person turns it on
-            # with the remote: it is turned off stepwise all the same
+            # with the remote: it is turned off stepwise all the same. Only
+            # AC 1 wants heat, capacity 1: no rotation takes it out
             "sequence": [
                 reset,
                 {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
+                {
+                    "action": "number.set_value",
+                    "target": {"entity_id": capacity},
+                    "data": {"value": 1},
+                },
                 *faulty_first(1),
+                *(room(thermometer, 30) for _, thermometer, _ in THERMOSTATS[1:]),
                 wait(150),
                 ac_power(THERMOSTATS[0][2], AC_RUNNING_W),
             ],
@@ -402,8 +409,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "alias": "Стенд: клімат — вхід у червону зону",
             "icon": "mdi:alert-octagon-outline",
             # The thermostats off: the entry to red sends each air
-            # conditioner one IR "off" (its power sensor may be late), once
-            "sequence": [reset, grid_at(RED_W, 200)],
+            # conditioner one IR "off" (its power sensor may be late), once.
+            # The cooker holds red for a minute: always on, the devices' red
+            # strategy never turns it off
+            "sequence": [reset, grid_at(RED_W, 300), wait(60), cooker(400)],
         },
         "thermostats_no_temperature": {
             "alias": "Стенд: термостати — немає температури",

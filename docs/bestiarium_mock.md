@@ -68,7 +68,7 @@ Device names are translated (`device` in the translations, `translation_key`
 | `commode_socket` | Mock Commode Socket (SmartThings) | 8 W | Stuck state | the night of 2026-10-23, with the next one |
 | `bedside_socket` | Mock Bedside Socket | 8 W | Reliable | same priority as the commode socket: does its turn come? |
 | `dead_socket` | Mock Dead Socket | 500 W | Unresponsive | "not responding", deferral |
-| `cooker` | Mock Cooker | 400–4200 W | Reliable | pushes the load to yellow, red, overload |
+| `cooker` | Mock Cooker | 400–5500 W | Reliable | pushes the load to yellow, red, overload |
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
@@ -131,7 +131,7 @@ Per socket (device `mock_<device_id>`, model "Mock Smart Socket"):
 | `binary_sensor` "State" | `mock_<id>_state` | — | whether the load draws power, whatever the switch shows; stays available during a dropout (the tester's view of the truth) |
 | `select` "Fault profile" | `mock_<id>_fault_profile` | config | |
 | 7 × `number` fault parameters | `mock_<id>_<parameter>` | config | editable in Custom only |
-| `number` "Mock Power" | `mock_cooker_mock_power` | config | cooker only, 400–4200 W |
+| `number` "Mock Power" | `mock_cooker_mock_power` | config | cooker only, 400–5500 W |
 
 Per thermometer: `sensor` "Temperature" (`mock_<id>_temperature`), `number`
 "Set Temperature" (`mock_<id>_mock_temperature`, `config`) and `select` "Fault
@@ -240,8 +240,8 @@ the script fails if HA did not load them.
    | `climate_rotation` | reset; the stand's loads not allowed; the three thermostats heat (capacity 2): after a minute (the stand thermostats' minimum cycle duration) the one past its time goes out and the waiting one starts — the "off" at once, the start once it fits (decision 32); the one turned out pauses a minute, so there is no cascade |
    | `climate_switch_glitch` | no reset, in the zone as it is: the first running air conditioner draws its standby for 15 s, so its switch shows "off" for a moment (its power delay is 10 s): climate sends no command and keeps the arrangement (review 37, J1–J2); for an "off" that lasts, its IR "off" button, as a person with the remote |
    | `climate_stuck_on` | reset; AC 1 the first to start (its room the coldest); once it runs, its IR is lost ("IR lost") and its room at 30 °C: the thermostat wants it off — "off" at once and twice more a minute apart, "Does not turn off" after a minute, the event "out of control" at 3 minutes, its socket ("Allowed" of `ac_1`) off and the event "power cut" at 4 (DEV-010) |
-   | `climate_bypass_on_pause` | reset; the IR of AC 1 lost, AC 1 the first to start: after 2 attempts "Not responding"; at 150 s a person turns it on with the remote (its power at 1200 W): it is turned off stepwise all the same, the deferral not lengthened |
-   | `climate_red_entry` | reset (the thermostats off); the grid 200 W into red: each air conditioner's IR "off" runs once (its script in the logbook), not every 5 s; no control state changes |
+   | `climate_bypass_on_pause` | reset; the IR of AC 1 lost, capacity 1, only AC 1 wants heat (the other rooms at 30 °C, so no rotation takes it out): after 2 attempts "Not responding"; at 150 s a person turns it on with the remote (its power at 1200 W): it is turned off stepwise all the same, the deferral not lengthened |
+   | `climate_red_entry` | reset (the thermostats off); the cooker pushes the grid 300 W into red for a minute (always on: the devices' red strategy never turns it off; up to 5500 W since DEV-010, 4200 W did not reach red from the reset), then back to 400 W: each air conditioner's IR "off" runs once (its script in the logbook), not every 5 s; no control state changes |
    | `thermostats_no_temperature` | reset; the stand's loads not allowed; AC 2's room at 15 °C, the others at 21 °C, all heat to 25 °C, so AC 2 starts first; 90 s later thermometer 2 "No data": after a minute AC 2 is off, its thermostat unavailable, "No temperature data" |
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |

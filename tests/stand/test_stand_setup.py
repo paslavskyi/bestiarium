@@ -412,4 +412,13 @@ def test_the_stepwise_off_has_its_scenarios() -> None:
     }
     assert lost in scripts["climate_stuck_on"]["sequence"]
     assert lost in scripts["climate_bypass_on_pause"]["sequence"]
-    assert "climate_red_entry" in scripts
+    # Review 06, R3: only AC 1 heats, capacity 1; the cooker holds red
+    bypass = scripts["climate_bypass_on_pause"]["sequence"]
+    assert {
+        "action": "number.set_value",
+        "target": {"entity_id": ["number.stand_capacity"]},
+        "data": {"value": 1},
+    } in bypass
+    red = scripts["climate_red_entry"]["sequence"]
+    assert red[1]["target"]["entity_id"] == "number.mock_cooker_mock_power"
+    assert {"delay": {"seconds": 60}} in red
