@@ -47,10 +47,8 @@ from .const import (
     MODE_AC_LOAD_LIMITS,
     MODE_AC_POWER_SENSOR,
     MODE_RED_THRESHOLD,
-    RED_STEP_SECONDS,
     SENSOR_ZONES,
     SIGNAL_CONTROL_CHANGED,
-    START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -67,10 +65,10 @@ from .devices import (
     power_entity,
     power_relays,
 )
-from .rotation import Heater, arrange
 from .stepwise import Step
 from .switch import virtual_switch
 from .util import duration_dict_to_timedelta
+from .zone_rules import Candidate, ZoneInput, arrange_zone
 
 if TYPE_CHECKING:
     import asyncio
@@ -83,8 +81,6 @@ if TYPE_CHECKING:
     from .command import SwitchCommand
     from .data import BestiariumClimateConfigEntry
 
-# The zones in which the balancer starts heaters
-STARTING_ZONES = (Zone.GREEN, Zone.NONE)
 # The zones whose entry turns off at once what runs unwanted (FR-029)
 SHEDDING_ZONES = (Zone.RED, Zone.OVERLOAD)
 
@@ -151,12 +147,9 @@ class BalancingCoordinator:
         self._pending = False
         self._stopped = False
         self._red_off_at: datetime | None = None
-        self._red_timer: CALLBACK_TYPE | None = None
         self._zone_ids: list[str] = []
         self._zone_unsubscribe: CALLBACK_TYPE | None = None
         self._started_at: datetime | None = None
-        # In green whether a start may go in this cycle (one at a time)
-        self._gate_open = True
         self._start_timer: CALLBACK_TYPE | None = None
         self._start_due: datetime | None = None
         # The zone of the last cycle: the entry to red or overload acts once
@@ -235,7 +228,6 @@ class BalancingCoordinator:
         if self._zone_unsubscribe is not None:
             self._zone_unsubscribe()
             self._zone_unsubscribe = None
-        self._cancel_red_timer()
         if self._start_timer is not None:
             self._start_timer()
             self._start_timer = self._start_due = None
@@ -649,28 +641,7 @@ class BalancingCoordinator:
         for _thermostat, control in working:
             if control.turned_off_by_another(now):
                 control.set_expected(False, now)  # noqa: FBT003
-        if zone is not Zone.RED:
-            self._red_off_at = None
-            self._cancel_red_timer()
-        if zone is Zone.RED:
-            self._red_step([p for p in working if self._heating(p[1], now)], now)
-            return
-        capacity = self._capacity()
-        ranked = sorted(working, key=lambda pair: self._rank(*pair, now))
-        # In green a start waits for the one under way; no load limits, no wait
-        self._gate_open = zone is Zone.NONE or (
-            zone is Zone.GREEN and not any(c.starting(now) for _, c in ranked)
-        )
-        LOGGER.debug(
-            "Zone %s, capacity %s: %s",
-            zone,
-            capacity,
-            [
-                (c.name, round(self._working_time_coefficient(t, c, now), 2))
-                for t, c in ranked
-            ],
-        )
-        self._arrange(ranked, capacity, zone, now)
+        self._arrange(working, zone, now)
 
     def _rank(
         self, thermostat: VirtualThermostat, control: ThermostatControl, now: datetime
@@ -681,196 +652,86 @@ class BalancingCoordinator:
             -thermostat.temperature_diff,
         )
 
+    def _candidate(
+        self, thermostat: VirtualThermostat, control: ThermostatControl, now: datetime
+    ) -> Candidate:
+        power, source = self._heater_power(control)
+        return Candidate(
+            key=control.subentry_id,
+            name=control.name,
+            rank=self._rank(thermostat, control, now),
+            running=control.expected_on,
+            starting=control.starting(now),
+            paused_until=control.paused_until(now),
+            heating=control.heating(now),
+            temperature_diff=thermostat.temperature_diff,
+            power=power,
+            power_source=source,
+            measured=self._measured_power(control),
+        )
+
     def _arrange(
         self,
-        ranked: list[tuple[VirtualThermostat, ThermostatControl]],
-        capacity: int,
+        working: list[tuple[VirtualThermostat, ThermostatControl]],
         zone: Zone,
         now: datetime,
     ) -> None:
         """
-        Carry out the arrangement by the zone's rules (the owner, decision 32).
+        Carry out the arrangement of the zone's rules (zone_rules.py).
 
-        Who should heat is decided without the zone (rotation.arrange). Green
-        (or no load limits): its "off"s at once, even before the new heater
-        fits, and its starts one at a time, if they fit with the power of
-        the ones turned off freed. Yellow: its "off"s only. The pause and no
-        data: no rotation. Overload: all off at once. Out of green a heater
-        that does not heat is not wanted on (B1).
+        The "off"s first, then the starts, each in the order of rank; in a
+        deficit the rotation is told of what it turned off or on.
         """
-        deficit = capacity < len(ranked)
-        if zone is Zone.OVERLOAD:
-            # Not in the devices' emergency queue: climate turns off all at
-            # once; no rotation, so no rotation events
-            for pair in ranked:
-                self._turn(pair, on=False, now=now, deficit=False)
-            return
-        arranged, unfit = self._arranged(ranked, capacity, zone, now)
-        for _thermostat, control in ranked:
-            # Decide again the moment a pause ends
-            if not control.expected_on and (until := control.paused_until(now)):
-                self._start_again(until - now)
-        if zone not in STARTING_ZONES:
-            for pair in ranked:
-                control = pair[1]
-                on = self._heating(control, now) and (
-                    zone is not Zone.YELLOW or control.subentry_id in arranged
-                )
-                self._turn(pair, on=on, now=now, deficit=deficit)
-            return
-        out = [
+        candidates = {
+            control.subentry_id: self._candidate(thermostat, control, now)
+            for thermostat, control in working
+        }
+        capacity = self._capacity()
+        ranked = sorted(working, key=lambda p: candidates[p[1].subentry_id].rank)
+        if zone is not Zone.RED:
+            LOGGER.debug(
+                "Zone %s, capacity %s: %s",
+                zone,
+                capacity,
+                [
+                    (c.name, round(self._working_time_coefficient(t, c, now), 2))
+                    for t, c in ranked
+                ],
+            )
+        arrangement = arrange_zone(
+            list(candidates.values()),
+            ZoneInput(
+                zone=zone,
+                capacity=capacity,
+                now=now,
+                load_and_threshold=self._load_and_red_threshold(),
+                started_at=self._started_at,
+                red_off_at=self._red_off_at,
+            ),
+        )
+        self._started_at = arrangement.started_at
+        self._red_off_at = arrangement.red_off_at
+        changes = [
             pair
             for pair in ranked
-            if pair[1].expected_on and pair[1].subentry_id not in arranged
+            if (pair[1].subentry_id in arrangement.heaters) != pair[1].expected_on
         ]
-        for pair in out:
-            self._turn(pair, on=False, now=now, deficit=deficit)
-        # While one does not fit, the next step decides again
-        if unfit:
-            self._start_again(timedelta(seconds=START_STEP_SECONDS))
-        for pair in ranked:
-            control = pair[1]
-            if (
-                control.subentry_id in arranged
-                and not control.expected_on
-                and self._start(now, zone)
-            ):
-                self._turn(pair, on=True, now=now, deficit=deficit)
-
-    def _arranged(
-        self,
-        ranked: list[tuple[VirtualThermostat, ThermostatControl]],
-        capacity: int,
-        zone: Zone,
-        now: datetime,
-    ) -> tuple[set[str], bool]:
-        """
-        Return who should heat, and whether a waiting one does not fit.
-
-        The owner's decision (SRC-140): a waiting heater that does not fit
-        even with the power of the running one it would replace freed (load
-        minus that one's measured power plus its own over the red threshold;
-        an unknown load or threshold does not fit) takes no place, as one in
-        its pause: the running one goes on heating. Without load limits all
-        fit.
-        """
-        heaters = {
-            control.subentry_id: Heater(
-                control.subentry_id,
-                self._rank(thermostat, control, now),
-                running=control.expected_on,
-                starting=control.starting(now),
-                paused=control.paused_until(now) is not None,
-            )
-            for thermostat, control in ranked
-        }
-        unfit: set[str] = set()
-        while True:
-            arranged = arrange(
-                (h for key, h in heaters.items() if key not in unfit), capacity
-            )
-            new = [
-                c for _, c in ranked if c.subentry_id in arranged and not c.expected_on
-            ]
-            out = [
-                c
-                for _, c in reversed(ranked)
-                if c.expected_on and c.subentry_id not in arranged
-            ]
-            # Each new one takes the place of the worst-ranked going out
-            freed = {
-                control.subentry_id: self._measured_power(out[place])
-                if place < len(out)
-                else 0.0
-                for place, control in enumerate(new)
-            }
-            if zone is Zone.NONE:
-                return arranged, False
-            if (
-                no_fit := next(
-                    (c for c in new if not self._fits(c, freed[c.subentry_id])),
-                    None,
+        for thermostat, control in sorted(changes, key=lambda p: not p[1].expected_on):
+            on = control.subentry_id in arrangement.heaters
+            coefficient = self._working_time_coefficient(thermostat, control, now)
+            control.set_expected(on, now)
+            if arrangement.rotated and (on or control.subentry_id in arrangement.freed):
+                self._hass.bus.async_fire(
+                    EVENT_DEVICE_ROTATED_IN if on else EVENT_DEVICE_ROTATED_OUT,
+                    {
+                        "thermostat": thermostat.entity_id,
+                        "switch_entity_id": control.switch,
+                        "working_time_coefficient": round(coefficient, 2),
+                        "temperature_diff": round(thermostat.temperature_diff, 2),
+                    },
                 )
-            ) is None:
-                return arranged, bool(unfit)
-            unfit.add(no_fit.subentry_id)
-
-    def _start(self, now: datetime, zone: Zone) -> bool:
-        """Return whether an arranged heater (it fits) starts now: one at a time."""
-        if not self._gate_open:
-            self._start_again(timedelta(seconds=START_STEP_SECONDS))
-            return False
-        on = self._may_start(now, zone)
-        self._gate_open = not on
-        return on
-
-    def _turn(
-        self,
-        pair: tuple[VirtualThermostat, ThermostatControl],
-        *,
-        on: bool,
-        now: datetime,
-        deficit: bool,
-    ) -> None:
-        """Want a heater on or off; in a deficit, tell the rotation."""
-        thermostat, control = pair
-        if on == control.expected_on:
-            return
-        coefficient = self._working_time_coefficient(thermostat, control, now)
-        control.set_expected(on, now)
-        if deficit:
-            self._hass.bus.async_fire(
-                EVENT_DEVICE_ROTATED_IN if on else EVENT_DEVICE_ROTATED_OUT,
-                {
-                    "thermostat": thermostat.entity_id,
-                    "switch_entity_id": control.switch,
-                    "working_time_coefficient": round(coefficient, 2),
-                    "temperature_diff": round(thermostat.temperature_diff, 2),
-                },
-            )
-
-    def _may_start(self, now: datetime, zone: Zone) -> bool:
-        """
-        Return whether a heater that fits may start now: one at a time.
-
-        The next start waits a step, so that the load shows the last one.
-        Without load limits (no zone) only the capacity counts.
-        """
-        step = timedelta(seconds=START_STEP_SECONDS)
-        if zone is Zone.NONE:
-            return True
-        if self._started_at is not None and now - self._started_at < step:
-            self._start_again(step - (now - self._started_at))
-            return False
-        self._started_at = now
-        self._start_again(step)
-        return True
-
-    def _fits(self, control: ThermostatControl, freed: float) -> bool:
-        """
-        Return whether a heater's start fits: the rule of the devices' balancer.
-
-        The load, less the measured power freed by the one it takes the place
-        of, plus the heater's power stays at or below the red threshold
-        (DEV-006, SRC-140); an unknown load or threshold does not fit.
-        """
-        if (load_and_threshold := self._load_and_red_threshold()) is None:
-            LOGGER.debug("%s does not fit: load or red threshold unknown", control.name)
-            return False
-        load, threshold = load_and_threshold
-        power, source = self._heater_power(control)
-        if load - freed + power > threshold:
-            LOGGER.debug(
-                "%s does not fit: %s W - %s W + %s W (%s) > %s W",
-                control.name,
-                load,
-                freed,
-                power,
-                source,
-                threshold,
-            )
-            return False
-        return True
+        if arrangement.retry_in is not None:
+            self._start_again(arrangement.retry_in)
 
     def _start_again(self, delay: timedelta) -> None:
         """Run a cycle after a delay (a step, a pause, a tolerance): the earliest."""
@@ -933,43 +794,6 @@ class BalancingCoordinator:
             return float(load.state), float(red_state.attributes[MODE_RED_THRESHOLD])
         except (KeyError, TypeError, ValueError):
             return None
-
-    @staticmethod
-    def _heating(control: ThermostatControl, now: datetime) -> bool:
-        """Return whether the switch heats (or is starting); else want it off."""
-        if control.heating(now):
-            return True
-        control.set_expected(False, now)  # noqa: FBT003
-        return False
-
-    def _red_step(
-        self, heating: list[tuple[VirtualThermostat, ThermostatControl]], now: datetime
-    ) -> None:
-        """Red zone: every 5 s the heater whose room needs it least goes off."""
-        if not heating:
-            return
-        step = timedelta(seconds=RED_STEP_SECONDS)
-        if self._red_off_at is None or now - self._red_off_at >= step:
-            _thermostat, control = min(heating, key=lambda p: p[0].temperature_diff)
-            LOGGER.info("%s: turned off in the red zone", control.name)
-            control.set_expected(False, now)  # noqa: FBT003
-            self._red_off_at = now
-            if len(heating) == 1:
-                return
-        if self._red_timer is None:
-            self._red_timer = async_call_later(
-                self._hass, RED_STEP_SECONDS, self._async_red_timer
-            )
-
-    @callback
-    def _async_red_timer(self, _now: datetime) -> None:
-        self._red_timer = None
-        self.async_request_balance()
-
-    def _cancel_red_timer(self) -> None:
-        if self._red_timer is not None:
-            self._red_timer()
-            self._red_timer = None
 
     def _command_ended(
         self,
