@@ -155,7 +155,8 @@ class SwitchOutOfControlData(TypedDict):
 
     thermostat: str | None
     switch_entity_id: str
-    # What the virtual switch's power sensor reads; None for another switch
+    # What the switch's power sensor reads (its virtual switch's or the
+    # universal thermostat's); None without one
     power: float | None
     attempts: int
 

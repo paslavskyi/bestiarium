@@ -38,6 +38,7 @@ from .command import (
 )
 from .const import (
     CONF_HEATER_POWER,
+    CONF_POWER_ENTITY,
     CONF_RECOVERY_TIMEOUT,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
@@ -53,7 +54,7 @@ from .const import (
     ControlState,
     Zone,
 )
-from .devices import PowerSupply, power_supply
+from .devices import PowerSupply, power_supply, switch_power
 from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
@@ -203,6 +204,8 @@ class ThermostatControl:
         self._sensor: str = subentry.data[CONF_TEMPERATURE_SENSOR]
         # The power the thermostat's form gives its heater, if any
         self.heater_power: float | None = subentry.data.get(CONF_HEATER_POWER)
+        # A universal thermostat's own power sensor; else its virtual switch's
+        self._power_entity: str | None = subentry.data.get(CONF_POWER_ENTITY)
         self._memory = memory
         kept = memory.get(self.subentry_id)
         self.expected_on: bool = kept.get("expected_on", False)
@@ -266,9 +269,13 @@ class ThermostatControl:
 
     # What the balancer asks
 
+    def measured_power(self) -> float | None:
+        """Return what the switch's power sensor reads, if it has one."""
+        return switch_power(self._hass, self.switch, self._power_entity)
+
     def follow_power(self) -> bool:
         """Find again what powers the switch; return whether it changed."""
-        power = power_supply(self._hass, self.switch)
+        power = power_supply(self._hass, self.switch, self._power_entity)
         changed, self.power = power != self.power, power
         return changed
 

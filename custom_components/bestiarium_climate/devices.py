@@ -55,9 +55,16 @@ def power_entity(hass: HomeAssistant, switch: str) -> str | None:
     return found[1].data.get(CONF_POWER_ENTITY) if found else None
 
 
-def switch_power(hass: HomeAssistant, switch: str) -> float | None:
-    """Return what a virtual switch's power sensor reads, if it has one."""
-    entity_id = power_entity(hass, switch)
+def switch_power(
+    hass: HomeAssistant, switch: str, power: str | None = None
+) -> float | None:
+    """
+    Return what the switch's power sensor reads, if it has one.
+
+    The sensor is the universal thermostat's own (`power`), else its virtual
+    switch's.
+    """
+    entity_id = power or power_entity(hass, switch)
     state = hass.states.get(entity_id) if entity_id else None
     try:
         return float(state.state) if state else None
@@ -71,9 +78,16 @@ def power_socket(hass: HomeAssistant, switch: str) -> str | None:
     return found[1].data.get(CONF_POWER_SOCKET) if found else None
 
 
-def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
-    """Return the Bestiarium device that powers a virtual switch of Climate."""
-    power = power_entity(hass, switch)
+def power_device(
+    hass: HomeAssistant, switch: str, power: str | None = None
+) -> ConfigEntry | None:
+    """
+    Return the Bestiarium device that powers a switch, by its power sensor.
+
+    The sensor is the universal thermostat's own (`power`), else its virtual
+    switch's.
+    """
+    power = power or power_entity(hass, switch)
     devices = [
         entry
         for entry in hass.config_entries.async_entries(DOMAIN_BESTIARIUM_DEVICES)
@@ -122,9 +136,15 @@ class PowerSupply:
         return [r for r in (self.relay, self.socket) if r]
 
 
-def power_supply(hass: HomeAssistant, switch: str) -> PowerSupply:
-    """Find what powers a switch: a virtual switch's device and socket, if any."""
-    device = power_device(hass, switch)
+def power_supply(
+    hass: HomeAssistant, switch: str, power: str | None = None
+) -> PowerSupply:
+    """
+    Find what powers a switch: the device of its power sensor; a socket, if any.
+
+    Only a virtual switch has a socket.
+    """
+    device = power_device(hass, switch, power)
     return PowerSupply(
         switch,
         device=device.entry_id if device else None,

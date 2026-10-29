@@ -23,7 +23,6 @@ from .const import (
     PowerCutData,
     SwitchOutOfControlData,
 )
-from .devices import switch_power
 from .repairs import set_issue
 from .stepwise import Step
 from .switch import virtual_switch
@@ -76,7 +75,7 @@ class StepwiseActions:
                 SwitchOutOfControlData(
                     thermostat=self._thermostat_id(control),
                     switch_entity_id=control.switch,
-                    power=switch_power(self._hass, control.switch),
+                    power=control.measured_power(),
                     attempts=control.off_attempts,
                 ),
             )

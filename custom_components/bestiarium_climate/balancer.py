@@ -55,7 +55,6 @@ from .const import (
     SENSOR_ZONES,
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
-    SUBENTRY_TYPE_THERMOSTAT,
     THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -67,7 +66,6 @@ from .devices import (
     device_of_relay,
     expected_power,
     power_cut,
-    switch_power,
 )
 from .repairs import set_issue
 from .stepwise_actions import StepwiseActions
@@ -180,7 +178,7 @@ class BalancingCoordinator:
                 self._hass, self._entry, subentry, memory, zone=self._zone
             )
             for subentry in self._entry.subentries.values()
-            if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+            if subentry.subentry_type in THERMOSTAT_TYPES
         }
 
     def start(self) -> None:
@@ -695,7 +693,7 @@ class BalancingCoordinator:
         A running air conditioner idling draws less than its expected power,
         and frees only that; a switch without a power sensor, the expected.
         """
-        power = switch_power(self._hass, control.switch)
+        power = control.measured_power()
         return self._heater_power(control)[0] if power is None else power
 
     def _load_and_red_threshold(self) -> tuple[float, float] | None:
