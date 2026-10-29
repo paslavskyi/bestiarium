@@ -47,7 +47,7 @@ from .const import (
     ControlState,
     Zone,
 )
-from .devices import power_socket
+from .devices import PowerSupply, power_supply
 from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
@@ -212,8 +212,8 @@ class ThermostatControl:
         self._not_turning_off = _Condition()
         # The load zone, read where the balancer reads it
         self._zone = zone
-        # The socket of its virtual switch: a change of it reloads the entry
-        self.socket: str | None = None
+        # What powers its switch, found by the balancer (follow_power)
+        self.power = PowerSupply(self.switch)
         # When the heater was last wanted off or its switch turned off: a
         # start waits for the pause after it
         self.off_at: datetime | None = (
@@ -242,7 +242,6 @@ class ThermostatControl:
     @callback
     def async_start(self) -> None:
         """Follow the switch and the sensor; their availability once HA started."""
-        self.socket = power_socket(self._hass, self.switch)
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
@@ -260,6 +259,17 @@ class ThermostatControl:
         self._unsubscribe, self._cancel_timer = [], None
 
     # What the balancer asks
+
+    def follow_power(self) -> bool:
+        """Find again what powers the switch; return whether it changed."""
+        power = power_supply(self._hass, self.switch)
+        changed, self.power = power != self.power, power
+        return changed
+
+    @property
+    def socket(self) -> str | None:
+        """Return the socket of its virtual switch, if it has one."""
+        return self.power.socket
 
     @property
     def no_temperature(self) -> bool:

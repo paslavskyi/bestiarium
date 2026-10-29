@@ -12,11 +12,17 @@ from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
 from homeassistant.components.climate import HVACAction, HVACMode
+from homeassistant.config_entries import (
+    SIGNAL_CONFIG_ENTRY_CHANGED,
+    ConfigEntry,
+    ConfigEntryChange,
+)
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import Event, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
 from homeassistant.helpers.event import (
@@ -34,6 +40,7 @@ from .const import (
     CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
     DOMAIN,
+    DOMAIN_BESTIARIUM_DEVICES,
     DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
@@ -44,6 +51,7 @@ from .const import (
     MODE_AC_LOAD_LIMITS,
     MODE_AC_POWER_SENSOR,
     MODE_RED_THRESHOLD,
+    POWER_CHANGE_COOLDOWN_SECONDS,
     SENSOR_ZONES,
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
@@ -58,8 +66,6 @@ from .devices import (
     device_of_relay,
     expected_power,
     power_cut,
-    power_device,
-    power_relays,
     switch_power,
 )
 from .repairs import set_issue
@@ -147,6 +153,16 @@ class BalancingCoordinator:
         # The zone of the last cycle: the entry to red or overload acts once
         self._last_zone: Zone | None = None
         self._actions = StepwiseActions(hass, self._send)
+        self._power_unsubscribe: CALLBACK_TYPE | None = None
+        # The changes of the devices in a row (a migration, a reload) make
+        # one decision
+        self._power_changed = Debouncer(
+            hass,
+            LOGGER,
+            cooldown=POWER_CHANGE_COOLDOWN_SECONDS,
+            immediate=False,
+            function=self._async_power_changed,
+        )
 
     async def async_load(self) -> None:
         """Make the control of each thermostat with what it kept."""
@@ -180,16 +196,10 @@ class BalancingCoordinator:
                 )
             )
         self._follow_zones()
-        # Decide at once when a power relay or a switch changes its state,
-        # not its attributes: the rotation changes, a virtual switch shows
-        # its "on" late, a person turns one on or off (an "off" by another
-        # gets no command until the tolerance confirms it)
-        switches = [c.switch for c in self.controls.values()]
+        self._follow_power()
         self._unsubscribe.append(
-            async_track_state_change_event(
-                self._hass,
-                [*power_relays(self._hass, switches), *switches],
-                self._on_changed,
+            async_dispatcher_connect(
+                self._hass, SIGNAL_CONFIG_ENTRY_CHANGED, self._on_entry_changed
             )
         )
         self._unsubscribe.append(
@@ -212,9 +222,11 @@ class BalancingCoordinator:
             control.cancel_commands()
         while self._unsubscribe:
             self._unsubscribe.pop()()
-        if self._zone_unsubscribe is not None:
-            self._zone_unsubscribe()
-            self._zone_unsubscribe = None
+        for unsubscribe in (self._zone_unsubscribe, self._power_unsubscribe):
+            if unsubscribe is not None:
+                unsubscribe()
+        self._zone_unsubscribe = self._power_unsubscribe = None
+        self._power_changed.async_cancel()
         if self._start_timer is not None:
             self._start_timer()
             self._start_timer = self._start_due = None
@@ -231,6 +243,44 @@ class BalancingCoordinator:
             self._zone_ids,
             callback(lambda _event: self.async_request_balance()),
         )
+
+    def _follow_power(self) -> bool:
+        """
+        Follow the switches and what powers them now; return whether it changed.
+
+        What powers them is found once (devices.PowerSupply), and again when
+        a Bestiarium device is added, removed or changed (its relay renamed).
+
+        Decide at once when a power relay or a switch changes its state, not
+        its attributes: the rotation changes, a virtual switch shows its "on"
+        late, a person turns one on or off (an "off" by another gets no
+        command until the tolerance confirms it).
+        """
+        # Every control finds its power again, not only up to the first change
+        changed = [c for c in self.controls.values() if c.follow_power()]
+        if self._power_unsubscribe is not None:
+            self._power_unsubscribe()
+        self._power_unsubscribe = async_track_state_change_event(
+            self._hass,
+            [
+                *(r for c in self.controls.values() for r in c.power.relays),
+                *(c.switch for c in self.controls.values()),
+            ],
+            self._on_changed,
+        )
+        return bool(changed)
+
+    @callback
+    def _on_entry_changed(self, _change: ConfigEntryChange, entry: ConfigEntry) -> None:
+        """Find what powers the switches again: a Bestiarium device changed."""
+        if entry.domain == DOMAIN_BESTIARIUM_DEVICES:
+            self._power_changed.async_schedule_call()
+
+    @callback
+    def _async_power_changed(self) -> None:
+        """Find again what powers the switches; decide again if it changed."""
+        if self._follow_power():
+            self.async_request_balance()
 
     @callback
     def _on_registry_updated(self, _event: Event) -> None:
@@ -489,7 +539,7 @@ class BalancingCoordinator:
             # Decide again the moment an "off" by another is confirmed
             if (confirmed_at := control.off_confirmed_at(now)) is not None:
                 self._start_again(confirmed_at - now)
-            if not control.heating(now) and power_cut(self._hass, control.switch):
+            if not control.heating(now) and power_cut(self._hass, control.power):
                 control.lost_power(now)
                 cut.add(control)
             # "No power" only while its thermostat is not off (decision 32)
@@ -630,7 +680,7 @@ class BalancingCoordinator:
         The expected power of the Bestiarium device that powers its virtual
         switch; else the power in the thermostat's form; else a large heater.
         """
-        device = power_device(self._hass, control.switch)
+        device = control.power.device
         if device is not None and (power := expected_power(self._hass, device)):
             return power, "devices"
         if control.heater_power:

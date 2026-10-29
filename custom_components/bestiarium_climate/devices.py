@@ -14,6 +14,7 @@ or a person.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from homeassistant.const import STATE_OFF
@@ -82,9 +83,9 @@ def power_device(hass: HomeAssistant, switch: str) -> ConfigEntry | None:
     return devices[0] if len(devices) == 1 else None
 
 
-def expected_power(hass: HomeAssistant, device: ConfigEntry) -> float | None:
+def expected_power(hass: HomeAssistant, device: str) -> float | None:
     """
-    Return the expected power of a Bestiarium device, if it is known.
+    Return the expected power of a Bestiarium device (its entry), if known.
 
     The devices' default for a large device is no knowledge: the
     thermostat's own heater power counts then.
@@ -92,7 +93,7 @@ def expected_power(hass: HomeAssistant, device: ConfigEntry) -> float | None:
     entity_id = er.async_get(hass).async_get_entity_id(
         "sensor",
         DOMAIN_BESTIARIUM_DEVICES,
-        DEVICES_EXPECTED_POWER_UNIQUE_ID.format(entry_id=device.entry_id),
+        DEVICES_EXPECTED_POWER_UNIQUE_ID.format(entry_id=device),
     )
     state = hass.states.get(entity_id) if entity_id else None
     if state is None or state.attributes.get(DEVICES_ESTIMATE_SOURCE) == (
@@ -104,7 +105,35 @@ def expected_power(hass: HomeAssistant, device: ConfigEntry) -> float | None:
     return None
 
 
-def power_cut(hass: HomeAssistant, switch: str) -> bool:
+@dataclass(frozen=True)
+class PowerSupply:
+    """What powers a thermostat's switch, found once and again on a change."""
+
+    switch: str
+    # The Bestiarium device that powers its virtual switch, and its relay
+    device: str | None = None
+    relay: str | None = None
+    # The virtual switch's own socket
+    socket: str | None = None
+
+    @property
+    def relays(self) -> list[str]:
+        """Return the relay and the socket there are."""
+        return [r for r in (self.relay, self.socket) if r]
+
+
+def power_supply(hass: HomeAssistant, switch: str) -> PowerSupply:
+    """Find what powers a switch: a virtual switch's device and socket, if any."""
+    device = power_device(hass, switch)
+    return PowerSupply(
+        switch,
+        device=device.entry_id if device else None,
+        relay=device.data.get(DEVICES_SWITCH) if device else None,
+        socket=power_socket(hass, switch),
+    )
+
+
+def power_cut(hass: HomeAssistant, supply: PowerSupply) -> bool:
     """
     Return whether the power of a virtual switch's device is off.
 
@@ -117,21 +146,5 @@ def power_cut(hass: HomeAssistant, switch: str) -> bool:
     """
     return any(
         (state := hass.states.get(relay)) is not None and state.state == STATE_OFF
-        for relay in power_relays(hass, [switch])
+        for relay in supply.relays
     )
-
-
-def power_relays(hass: HomeAssistant, switches: list[str]) -> list[str]:
-    """Return the relays and sockets that power these virtual switches."""
-    relays = []
-    for switch in switches:
-        device = power_device(hass, switch)
-        relays += [
-            relay
-            for relay in (
-                device.data.get(DEVICES_SWITCH) if device else None,
-                power_socket(hass, switch),
-            )
-            if relay
-        ]
-    return relays

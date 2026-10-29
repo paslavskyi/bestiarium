@@ -842,7 +842,7 @@ async def test_a_heater_without_power_holds_no_place(floors: Floors) -> None:
     cut = {"switch.floor_1"}
     with patch(
         "custom_components.bestiarium_climate.balancer.power_cut",
-        lambda _hass, switch: switch in cut,
+        lambda _hass, supply: supply.switch in cut,
     ):
         await floors.setup(capacity=1)
         assert floors.on() == {"floor_2"}
