@@ -310,7 +310,7 @@ The stepwise "off" ran out of attempts: the device still runs one interval after
 |---|---|---|
 | `thermostat` | `str \| null` | The thermostat's entity_id |
 | `switch_entity_id` | `str` | Its switch |
-| `power` | `float \| null` | What the virtual switch's power sensor reads, W; null for another switch |
+| `power` | `float \| null` | What the switch's power sensor reads (its virtual switch's or the universal thermostat's), W; null without one |
 | `attempts` | `int` | The "off"s sent |
 
 ```yaml
@@ -333,6 +333,29 @@ The stepwise "off" turned off the virtual switch's power socket, one interval af
 trigger:
   - platform: event
     event_type: bestiarium_climate_power_cut
+```
+
+### `bestiarium_climate_manual_turned_off`
+
+Red or the overload turned a universal thermostat in its manual mode off (DEV-011, FR-029 step 1): its mode is "off" and stays off until a person turns it on. Fired once per thermostat turned off, a decision of the integration — the climate entity shows only that it is off, not why. The manual ones go off first, before the other rules of the zone; a switch that goes on running is then turned off stepwise (`switch_out_of_control` may follow).
+
+| Field | Type | Description |
+|---|---|---|
+| `thermostat` | `str` | The thermostat's entity_id |
+| `switch_entity_id` | `str` | Its switch |
+| `zone` | `str` | `red` or `overload` |
+| `cause` | `str` | `zone_entered`: the home entered red or the overload; `turned_on`: a person turned it on while the zone was red or the overload (the pause between them is no new entry) |
+
+```yaml
+trigger:
+  - platform: event
+    event_type: bestiarium_climate_manual_turned_off
+action:
+  - action: notify.family
+    data:
+      message: >
+        {{ state_attr(trigger.event.data.thermostat, 'friendly_name') }}
+        turned off: the load is too high
 ```
 
 ## See Also

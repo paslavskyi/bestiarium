@@ -75,6 +75,8 @@ EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
 # The stepwise "off" ran out of attempts; then it cut the socket (DEV-010)
 EVENT_SWITCH_OUT_OF_CONTROL = "bestiarium_climate_switch_out_of_control"
 EVENT_POWER_CUT = "bestiarium_climate_power_cut"
+# Red or overload turned a manual thermostat off (FR-029)
+EVENT_MANUAL_TURNED_OFF = "bestiarium_climate_manual_turned_off"
 SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
 # A switch read by power changed: the balancer decides again
 SIGNAL_SWITCH_CHANGED = f"{DOMAIN}_switch_changed_{{}}"
@@ -178,6 +180,25 @@ class PowerCutData(TypedDict):
     thermostat: str | None
     switch_entity_id: str
     socket_entity_id: str
+
+
+class ManualCause(StrEnum):
+    """Why the zone turned a manual thermostat off."""
+
+    # The home entered red or overload
+    ZONE_ENTERED = "zone_entered"
+    # A person turned it on while the zone was red or overload
+    TURNED_ON = "turned_on"
+
+
+class ManualTurnedOffData(TypedDict):
+    """The payload of EVENT_MANUAL_TURNED_OFF."""
+
+    thermostat: str
+    switch_entity_id: str
+    # red or overload
+    zone: str
+    cause: str
 
 
 class Zone(StrEnum):

@@ -174,3 +174,23 @@ def test_a_pause_decides_again_when_it_ends() -> None:
     result = arrange_zone([a], _state(Zone.GREEN))
     assert result.heaters == frozenset()
     assert result.retry_in == timedelta(seconds=40)
+
+
+@pytest.mark.parametrize("zone", [Zone.RED, Zone.OVERLOAD])
+def test_red_and_overload_turn_off_every_manual(zone: Zone) -> None:
+    """FR-029, step 1: every manual thermostat goes off, none is a heater."""
+    arrangement = arrange_zone(
+        [_heater("a", 0, running=True)], _state(zone), manual=frozenset({"m"})
+    )
+    assert arrangement.manual_off == {"m"}
+    assert "m" not in arrangement.heaters
+    assert "m" not in arrangement.freed
+
+
+@pytest.mark.parametrize(
+    "zone", [Zone.GREEN, Zone.YELLOW, Zone.PAUSE, Zone.NO_DATA, Zone.NONE]
+)
+def test_other_zones_leave_manual_alone(zone: Zone) -> None:
+    """Out of red and overload the manual ones are the person's."""
+    arrangement = arrange_zone([], _state(zone), manual=frozenset({"m"}))
+    assert arrangement.manual_off == frozenset()

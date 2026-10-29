@@ -4,8 +4,17 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from homeassistant.const import STATE_OFF
+from homeassistant.core import Event, HomeAssistant, callback
+
+from custom_components.bestiarium_climate.const import (
+    EVENT_MANUAL_TURNED_OFF,
+    ManualCause,
+    ManualTurnedOffData,
+)
 
 from .test_balancer import MINUTE, Floors, _hvac, _temperatures, floors
 
@@ -136,3 +145,145 @@ async def test_manual_to_auto_without_a_place_turns_off_stepwise(
     await floors.tick(MINUTE)
     assert ("turn_off", "floor_1") in floors.calls
     assert len(floors.on()) == 1
+
+
+def _manual_events(floors: Floors) -> list[dict[str, Any]]:
+    """Record the payloads of the manual thermostats turned off by the zone."""
+    payloads: list[dict[str, Any]] = []
+
+    @callback
+    def record(event: Event) -> None:
+        payloads.append(dict(event.data))
+
+    floors.hass.bus.async_listen(EVENT_MANUAL_TURNED_OFF, record)
+    return payloads
+
+
+def _mode(floors: Floors, floor: str) -> str:
+    return floors.hass.states.get(floors.climate(floor)).state
+
+
+async def _manual_running_in_green(floors: Floors) -> list[dict[str, Any]]:
+    """Floor 1 manual and running, the old ones heating, the zone green."""
+    events = _manual_events(floors)
+    await _manual(floors, capacity=2, zones=True)
+    await _manual_heats(floors)
+    assert floors.on() == {"floor_1", "floor_2", "floor_3"}
+    floors.calls.clear()
+    return events
+
+
+@pytest.mark.parametrize("zone", ["red", "overload"])
+async def test_entering_the_zone_turns_manual_off_first(
+    floors: Floors, zone: str
+) -> None:
+    """The entry: the manual one goes off first, its mode off, the event."""
+    events = await _manual_running_in_green(floors)
+    floors.zone(zone)
+    await floors.tick(5, step=5)
+    assert floors.calls[0] == ("turn_off", "floor_1")
+    assert _mode(floors, "floor_1") == "off"
+    assert events == [
+        {
+            "thermostat": floors.climate("floor_1"),
+            "switch_entity_id": "switch.floor_1",
+            "zone": zone,
+            "cause": "zone_entered",
+        }
+    ]
+
+
+async def test_overload_turns_the_others_off_too(floors: Floors) -> None:
+    """The overload: the manual one first, then all at once."""
+    await _manual_running_in_green(floors)
+    floors.zone("overload")
+    await floors.tick(5, step=5)
+    assert floors.on() == set()
+
+
+async def test_manual_stays_off_after_red(floors: Floors) -> None:
+    """Back to green the manual thermostat stays off until a person turns it on."""
+    events = await _manual_running_in_green(floors)
+    floors.zone("red")
+    await floors.tick(MINUTE)
+    floors.zone("green")
+    await floors.tick(10 * MINUTE)
+    assert _mode(floors, "floor_1") == "off"
+    assert "floor_1" not in floors.on()
+    assert len(events) == 1
+
+
+async def test_manual_turned_on_in_red_goes_off_at_once(floors: Floors) -> None:
+    """Heat set in red: off at once, no "on" sent, the event says so."""
+    events = _manual_events(floors)
+    await floors.setup(universal=UNIVERSAL, zones=True)
+    await _hvac(floors, "floor_1", "off")
+    await floors.tick(MINUTE)
+    floors.zone("red")
+    await floors.tick(MINUTE)
+    floors.calls.clear()
+    await _hvac(floors, "floor_1", "heat")
+    assert _mode(floors, "floor_1") == "off"
+    assert ("turn_on", "floor_1") not in floors.calls
+    assert events[-1]["cause"] == "turned_on"
+    assert events[-1]["zone"] == "red"
+
+
+async def test_manual_in_the_pause_between_red_and_overload(floors: Floors) -> None:
+    """Red, the pause: heat goes on; the overload is no new entry: cause turned_on."""
+    events = _manual_events(floors)
+    await floors.setup(universal=UNIVERSAL, zones=True)
+    await _hvac(floors, "floor_1", "off")
+    floors.zone("red")
+    await floors.tick(MINUTE)
+    floors.zone("pause")
+    await floors.tick(5, step=5)
+    await _hvac(floors, "floor_1", "heat")
+    await floors.tick(5, step=5)
+    assert ("turn_on", "floor_1") in floors.calls
+    offs = floors.calls.count(("turn_off", "floor_2"))
+    floors.zone("overload")
+    await floors.tick(5, step=5)
+    assert _mode(floors, "floor_1") == "off"
+    assert events[-1]["cause"] == "turned_on"
+    assert events[-1]["zone"] == "overload"
+    # No entry: the "off"s outside the attempts are not sent again
+    assert floors.calls.count(("turn_off", "floor_2")) == offs
+
+
+async def test_manual_restored_in_red_is_turned_off(
+    hass: HomeAssistant, floors: Floors
+) -> None:
+    """HA starts again in red with a manual thermostat: the entry turns it off."""
+    events = await _manual_running_in_green(floors)
+    assert await hass.config_entries.async_unload(floors.entry.entry_id)
+    floors.zone("red")
+    assert await hass.config_entries.async_setup(floors.entry.entry_id)
+    await hass.async_block_till_done()
+    # The first cycle, at the latest the periodic one
+    await floors.tick(MINUTE)
+    assert _mode(floors, "floor_1") == "off"
+    assert [e["cause"] for e in events] == ["zone_entered"]
+
+
+async def test_manual_shed_switch_still_on_is_turned_off_stepwise(
+    floors: Floors,
+) -> None:
+    """Its switch does not turn off: again a cycle apart in red, "Does not turn off"."""
+    await _manual_running_in_green(floors)
+    floors.stuck.add("floor_1")
+    floors.zone("red")
+    await floors.tick(4 * MINUTE)
+    assert floors.calls.count(("turn_off", "floor_1")) >= 2
+    assert floors.state("floor_1") == "not_turning_off"
+
+
+def test_manual_event_payload_is_typed() -> None:
+    """The payload's fields are the contract for the owner's automations."""
+    assert set(ManualTurnedOffData.__annotations__) == {
+        "thermostat",
+        "switch_entity_id",
+        "zone",
+        "cause",
+    }
+    assert {cause.value for cause in ManualCause} == {"zone_entered", "turned_on"}
