@@ -417,7 +417,8 @@ class BalancingCoordinator:
             if self._left_alone(control):
                 continue
             if (on := control.next_command(now)) is not None:
-                self._send(control, on, now)
+                # The manual mode's commands are no attempts (FR-028)
+                self._send(control, on, now, counted=not control.manual)
             if (due := self._actions.take_step(control, now)) is not None:
                 self._start_again(due - now)
 
@@ -541,6 +542,14 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
+            # The manual mode: by the temperature alone, outside the capacity
+            control.set_manual(
+                thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+                if thermostat.manual
+                else None,
+                now,
+                thermostat.min_cycle_duration,
+            )
         for subentry_id, control in self.controls.items():
             control.defer_if_exhausted(now)
             # Decide again the moment an "off" by another is confirmed
@@ -562,11 +571,12 @@ class BalancingCoordinator:
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
             and not self._left_alone(control)
+            and not control.manual
             and control not in cut
             and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
         ]
         for control in self.controls.values():
-            if not any(control is c for _, c in working):
+            if not control.manual and not any(control is c for _, c in working):
                 control.set_expected(False, now)  # noqa: FBT003
         for _thermostat, control in working:
             if control.turned_off_by_another(now):

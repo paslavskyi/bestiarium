@@ -223,6 +223,11 @@ class ThermostatControl:
             else None
         )
         self._power_was_on = False
+        # In the manual mode: what the temperature asks, the last command sent
+        # and the thermostat's minimum cycle (FR-028)
+        self._manual: bool | None = None
+        self._manual_sent: bool | None = None
+        self._manual_cycle = timedelta()
         self._memory = memory
         kept = memory.get(self.subentry_id)
         self.expected_on: bool = kept.get("expected_on", False)
@@ -467,7 +472,57 @@ class ThermostatControl:
             self._no_power.set(cut, now)
             self._refresh(now)
 
-    def next_command(self, now: datetime) -> bool | None:
+    @property
+    def manual(self) -> bool:
+        """Return whether the thermostat is in its manual mode."""
+        return self._manual is not None
+
+    def set_manual(
+        self,
+        demand: bool | None,  # noqa: FBT001
+        now: datetime,
+        min_cycle: timedelta,
+    ) -> None:
+        """
+        Set what the manual mode asks for (None: not manual).
+
+        Entering it, the switch is the person's: the balancer wants nothing
+        of it and its stepwise "off" ends; the switch as it reads counts as
+        the last command. Leaving it with the switch on, no pause waits. A
+        cycle of the manual mode lasts at least the thermostat's own minimum
+        cycle duration.
+        """
+        if (demand is None) != (self._manual is None):
+            running = self.reading(now) is Reading.ON
+            self._manual_sent = running if demand is not None else None
+            if demand is not None:
+                self.expected_on, self.expected_changed_at = False, now
+                self._stepwise = StepwiseOff()
+            elif running:
+                # Back to auto running: it never stopped, so no pause; it
+                # keeps running if it gets a place, else goes off stepwise
+                self.off_at = None
+            self._keep()
+            self._refresh(now)
+        self._manual, self._manual_cycle = demand, min_cycle
+
+    def _manual_command(self, now: datetime) -> bool | None:
+        """
+        Return the manual mode's command: once for each change of the demand.
+
+        As a thermostat of HA: no attempts, no "Not responding", no stepwise
+        "off"; the switch changes no sooner than the minimum cycle after its
+        last change.
+        """
+        demand = self._manual
+        if demand is None or demand is self._manual_sent:
+            return None
+        state = self._switch_state()
+        if state is not None and now - state.last_changed < self._manual_cycle:
+            return None
+        return demand
+
+    def next_command(self, now: datetime) -> bool | None:  # noqa: PLR0911
         """
         Return the state to send the switch now, or None.
 
@@ -487,6 +542,8 @@ class ThermostatControl:
         reading = self.reading(now)
         if reading in (None, Reading.OFF_UNCONFIRMED):
             return None
+        if self.manual:
+            return self._manual_command(now)
         actual = reading is Reading.ON
         wanted = self.wanted(now)
         if actual and not wanted:
@@ -524,6 +581,8 @@ class ThermostatControl:
         )
         if deferred and target is None:
             self._off_owed = False
+        if self.manual and target is None:
+            self._manual_sent = on
         self._keep()
         self._refresh(now)
         return command
@@ -553,7 +612,11 @@ class ThermostatControl:
         goes to another thermostat in this cycle.
         """
         self._observe(now)
-        if self.switch_is_on(now) is not False or self.deferred_until is not None:
+        if (
+            self.manual
+            or self.switch_is_on(now) is not False
+            or self.deferred_until is not None
+        ):
             return
         attempts = self.settings.attempts
         failed = self._commands.failed(now, on=True)
