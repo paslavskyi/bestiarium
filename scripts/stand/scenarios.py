@@ -55,19 +55,44 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "data": {"value": watts},
         }
 
-    def grid_at(watts: int, delta: int) -> dict[str, Any]:
-        """Set the cooker so that the grid load is watts + delta."""
+    def grid_at(watts: int, delta: int) -> list[dict[str, Any]]:
+        """
+        Set the cooker so that the grid load is watts + delta.
+
+        The other loads are the grid less what the cooker draws now (nothing
+        while it is off). A power out of the cooker's range stops the script:
+        after the climate scenarios the other loads alone may be above the
+        target, and only a reset brings them down (review 39).
+        """
         grid = reg.mock("sensor", "mock_grid_power")
-        power = reg.mock("number", "mock_cooker_mock_power")
-        value = (
+        draws = reg.mock("sensor", "mock_cooker_power")
+        knob = reg.mock("number", "mock_cooker_mock_power")
+        cooker = (
             f"{{{{ {watts + delta} - states('{grid}') | float(0)"
-            f" + states('{power}') | float(0) }}}}"
+            f" + states('{draws}') | float(0) }}}}"
         )
-        return {
-            "action": "number.set_value",
-            "target": {"entity_id": power},
-            "data": {"value": value},
-        }
+        out_of_range = (
+            f"{{{{ cooker < state_attr('{knob}', 'min')"
+            f" or cooker > state_attr('{knob}', 'max') }}}}"
+        )
+        return [
+            {"variables": {"cooker": cooker}},
+            {
+                "if": [{"condition": "template", "value_template": out_of_range}],
+                "then": [
+                    {
+                        "stop": "Інше навантаження не дає досягти цілі плитою: "
+                        "спершу «Стенд: скинути»",
+                        "error": True,
+                    }
+                ],
+            },
+            {
+                "action": "number.set_value",
+                "target": {"entity_id": knob},
+                "data": {"value": "{{ cooker }}"},
+            },
+        ]
 
     def mode(name: str) -> dict[str, Any]:
         return {
@@ -203,13 +228,18 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         ]
 
     ir_hangs = [reg.mock("switch", f"mock_{ac}_ir_hangs") for _, _, ac in THERMOSTATS]
-    # The power knob of the first air conditioner that runs, or ''
     ac_powers = [
         reg.mock("number", f"mock_{ac}_mock_power") for _, _, ac in THERMOSTATS
     ]
+    # The power knob of the first air conditioner whose switch is on, or ''
+    # (SRC-142: by its switch, not by its knob)
     running_ac = (
-        f"{{{{ {ac_powers} | select('is_state', '{float(AC_RUNNING_W)}')"
-        " | first | default('') }}"
+        "".join(
+            f"{{% {'elif' if n else 'if'} is_state('{reg.ir_switch(name)}', 'on') %}}"
+            + reg.mock("number", f"mock_{ac}_mock_power")
+            for n, (name, _, ac) in enumerate(THERMOSTATS)
+        )
+        + "{% endif %}"
     )
     irs = {
         f"ir_{ac}_{command}": {
@@ -290,15 +320,15 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:sine-wave",
             "sequence": [
                 reset,
-                grid_at(YELLOW_W, 100),
+                *grid_at(YELLOW_W, 100),
                 wait(5),
                 {
                     "repeat": {
                         "count": 12,
                         "sequence": [
-                            grid_at(YELLOW_W, -100),
+                            *grid_at(YELLOW_W, -100),
                             wait(5),
-                            grid_at(YELLOW_W, 100),
+                            *grid_at(YELLOW_W, 100),
                             wait(5),
                         ],
                     }
@@ -343,7 +373,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 wait(3),
                 turn("turn_on", "tuya_socket", "night_light", "boiler"),
                 wait(3),
-                grid_at(RED_W, 200),
+                *grid_at(RED_W, 200),
             ],
         },
         "thermostats_dead_switch": {
@@ -420,7 +450,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             # conditioner one IR "off" (its power sensor may be late), once.
             # The cooker holds red for a minute: always on, the devices' red
             # strategy never turns it off
-            "sequence": [reset, grid_at(RED_W, 300), wait(60), cooker(400)],
+            "sequence": [reset, *grid_at(RED_W, 300), wait(60), cooker(400)],
         },
         "thermostats_no_temperature": {
             "alias": "Стенд: термостати — немає температури",
@@ -446,7 +476,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "alias": "Стенд: клімат — вміщається лише один обігрівач",
             "icon": "mdi:scale-balance",
             # 2300 W: one heater fits under the red threshold, two do not
-            "sequence": [reset, grid_at(2300, 0), *heat("heat")],
+            "sequence": [reset, *grid_at(2300, 0), *heat("heat")],
         },
         "climate_switch_glitch": {
             "alias": "Стенд: клімат — збій вимикача працюючого кондиціонера",
@@ -470,24 +500,27 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             ],
         },
         "climate_margin": {
-            "alias": "Стенд: клімат — з'явився запас (2300 Вт з обігрівачем)",
+            "alias": "Стенд: клімат — з'явився запас (плита на мінімум)",
             "icon": "mdi:scale-unbalanced",
-            "sequence": [grid_at(2300, 0)],
+            # After climate_fit (load ~3500 W with one AC): the cooker down to
+            # its minimum frees what it drew above 400 W, so the second AC
+            # fits under the red threshold
+            "sequence": [cooker(400)],
         },
         "load_green": {
             "alias": "Стенд: навантаження — зелена",
             "icon": "mdi:circle-slice-2",
-            "sequence": [grid_at(YELLOW_W, -900)],
+            "sequence": grid_at(YELLOW_W, -900),
         },
         "load_yellow": {
             "alias": "Стенд: навантаження — жовта",
             "icon": "mdi:circle-slice-5",
-            "sequence": [grid_at(YELLOW_W, 200)],
+            "sequence": grid_at(YELLOW_W, 200),
         },
         "load_red": {
             "alias": "Стенд: навантаження — червона",
             "icon": "mdi:circle-slice-8",
-            "sequence": [grid_at(RED_W, 200)],
+            "sequence": grid_at(RED_W, 200),
         },
         "grid_no_data": {
             "alias": "Стенд: мережа без даних",

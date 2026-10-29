@@ -23,7 +23,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CALLBACK_TYPE, callback
@@ -94,6 +94,14 @@ class Direction(StrEnum):
     def expected_state(self) -> str:
         """Return the relay state the command asks for."""
         return STATE_ON if self is Direction.TURN_ON else STATE_OFF
+
+
+class ControlEventData(TypedDict):
+    """The attributes of a control event of the device's event entity."""
+
+    direction: Direction | None
+    failed_attempts: int
+    next_attempt: datetime | None
 
 
 class ResponseMemory(EntryStore[deque[float]]):
@@ -469,11 +477,11 @@ class DeviceControl:
             self._hass,
             SIGNAL_CONTROL_EVENT.format(self._entry.entry_id),
             event,
-            {
-                "direction": series.direction if series else None,
-                "failed_attempts": series.failures if series else 0,
-                "next_attempt": series.deferred_until if series else None,
-            },
+            ControlEventData(
+                direction=series.direction if series else None,
+                failed_attempts=series.failures if series else 0,
+                next_attempt=series.deferred_until if series else None,
+            ),
         )
 
 

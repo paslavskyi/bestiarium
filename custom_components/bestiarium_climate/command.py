@@ -7,6 +7,14 @@ answer. Only the switch's answer ends a series, never a change of what is
 wanted; a power cut ends the series "on" too (protection, not a fault), and
 a deferral ends all of them. One path closes a series: its commands are
 closed with it.
+
+A command not counted is no attempt: the deferral's "off", the "off"
+outside the attempts at the entry to red, the cut of the socket. It counts
+in no series nor in the stepwise "off", and its answer ends no "Not
+responding"; one to the switch still holds its window like any other, so a
+toggling IR code never goes twice. One to the socket (its `target`) is none
+of the switch's commands: only its task is kept, to be cancelled when the
+entry unloads. Every command to a switch or its socket is a SwitchCommand.
 """
 
 from __future__ import annotations
@@ -22,6 +30,10 @@ if TYPE_CHECKING:
 
 # One attempt a balancing cycle; a little less, as the timers jitter
 ATTEMPT_INTERVAL = timedelta(seconds=BALANCING_INTERVAL_SECONDS - 5)
+# The least budget of an "on" not answered: an IR sequence takes about a
+# minute, so with a single attempt (55 s) a working air conditioner would be
+# "Not responding" (DEC-014, rule 3: never sooner than the device answers)
+MIN_RESPONSE_BUDGET = timedelta(seconds=90)
 
 
 def direction(on: bool) -> str:  # noqa: FBT001
@@ -35,8 +47,10 @@ class SwitchCommand:
 
     on: bool
     sent_at: datetime
-    # The deferral's "off": its answer ends no "Not responding"
-    deferral: bool = False
+    # An attempt of its direction's series (see the module's docstring)
+    counted: bool = True
+    # The socket it goes to; None: the switch
+    target: str | None = None
     task: asyncio.Task[None] | None = None
     ended_at: datetime | None = None
     # Its series is closed: the switch answered, the power was cut or the
@@ -68,11 +82,17 @@ class SwitchCommands:
         turned off stepwise, from its first "off" after a restart (DEV-010).
         """
         self._series = {True: kept.get("on", 0), False: 0}
-        # The commands running or in their window, and the last of each direction
+        # The commands running or in their window, and the last of each
+        # direction; the socket's while they run
         self._commands: list[SwitchCommand] = []
         # The "on"s of the start the balancer wants now: its first, and how many
         self._start: SwitchCommand | None = None
         self._start_ons = 0
+
+    @property
+    def _switch(self) -> list[SwitchCommand]:
+        """Return the commands to the switch, not to its socket."""
+        return [c for c in self._commands if c.target is None]
 
     @property
     def kept(self) -> dict[str, int]:
@@ -82,7 +102,7 @@ class SwitchCommands:
     def latest(self, on: bool | None = None) -> SwitchCommand | None:  # noqa: FBT001
         """Return the last command, or the last of a direction."""
         return next(
-            (c for c in reversed(self._commands) if on is None or c.on is on), None
+            (c for c in reversed(self._switch) if on is None or c.on is on), None
         )
 
     def new_start(self) -> None:
@@ -101,15 +121,15 @@ class SwitchCommands:
 
     def waiting(self, now: datetime, *, on: bool) -> bool:
         """Return whether a command of a direction waits for its answer."""
-        return any(c.on is on and c.waiting(now) for c in self._commands)
+        return any(c.on is on and c.waiting(now) for c in self._switch)
 
     def running(self, *, on: bool | None = None) -> bool:
         """Return whether a command, or one of a direction, has not ended yet."""
-        return any(c.running and on in (None, c.on) for c in self._commands)
+        return any(c.running and on in (None, c.on) for c in self._switch)
 
     def in_flight(self, now: datetime, *, on: bool) -> bool:
         """Return whether a command of a direction runs or is in its window."""
-        return any(c.on is on and c.in_window(now) for c in self._commands)
+        return any(c.on is on and c.in_window(now) for c in self._switch)
 
     def failed(self, now: datetime, *, on: bool) -> int:
         """
@@ -119,40 +139,48 @@ class SwitchCommands:
         answer (DEC-014, rule 3), an overtaken one too: the ones still waiting
         are not failed yet.
         """
-        waiting = sum(
-            c.on is on and not c.deferral and c.waiting(now) for c in self._commands
-        )
+        waiting = sum(c.on is on and c.counted and c.waiting(now) for c in self._switch)
         return self._series[on] - waiting
 
     def hung(self, now: datetime, budget: timedelta, *, on: bool) -> bool:
         """Return whether a command of a direction not answered outlasts the budget."""
         return any(
             c.on is on and c.running and not c.closed and now - c.sent_at >= budget
-            for c in self._commands
+            for c in self._switch
         )
 
     def next_window_end(self, now: datetime) -> datetime | None:
         """Return when the next window of a command waiting for its answer ends."""
         ends = [
             c.ended_at + ATTEMPT_INTERVAL
-            for c in self._commands
+            for c in self._switch
             if c.ended_at is not None and c.waiting(now)
         ]
         return min(ends, default=None)
 
-    def send(self, on: bool, now: datetime, *, deferral: bool) -> SwitchCommand:  # noqa: FBT001
+    def send(
+        self,
+        on: bool,  # noqa: FBT001
+        now: datetime,
+        *,
+        counted: bool = True,
+        target: str | None = None,
+    ) -> SwitchCommand:
         """
         Count a command sent now; the one still running the other way is cancelled.
 
-        A command is an attempt of its direction's series when it is sent; the
-        deferral's "off" is none.
+        A command counted is an attempt of its direction's series when it is
+        sent. One to the socket cancels nothing.
         """
+        command = SwitchCommand(on, now, counted=counted, target=target)
+        if target is not None:
+            self._commands.append(command)
+            return command
         latest = self.latest()
         if latest is not None and latest.running and latest.task is not None:
             latest.task.cancel()
-        command = SwitchCommand(on, now, deferral=deferral)
         self._commands.append(command)
-        if not deferral:
+        if counted:
             self._series[on] += 1
         if on:
             self._start_ons += 1
@@ -165,11 +193,14 @@ class SwitchCommands:
 
         Only that command: an overtaken one that ends late frees or restamps
         none newer. The ended ones are forgotten once their window is over,
-        but the last of each direction.
+        but the last of each direction; the socket's at once.
         """
         command.ended_at = now
         self._commands = [
-            c for c in self._commands if c.in_window(now) or c is self.latest(c.on)
+            c
+            for c in self._commands
+            if c.running
+            or (c.target is None and (c.in_window(now) or c is self.latest(c.on)))
         ]
 
     def cancel(self) -> None:
@@ -196,9 +227,9 @@ class SwitchCommands:
     def close(self, *, on: bool) -> bool:
         """Close a direction's series and its commands; return whether it was open."""
         was_open = bool(self._series[on]) or any(
-            c.on is on and not c.closed for c in self._commands
+            c.on is on and not c.closed for c in self._switch
         )
-        for c in self._commands:
+        for c in self._switch:
             c.closed = c.closed or c.on is on
         self._series[on] = 0
         return was_open

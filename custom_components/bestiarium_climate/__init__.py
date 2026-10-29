@@ -22,6 +22,7 @@ from .const import (
     SUBENTRY_TYPE_SWITCH,
     ClimateMode,
 )
+from .follow import async_follow_renames
 from .switch import thermostats_of
 
 if TYPE_CHECKING:
@@ -66,6 +67,7 @@ async def async_setup_entry(
             await hass.config_entries.async_reload(entry.entry_id)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
+    entry.async_on_unload(async_follow_renames(hass, entry))
     return True
 
 

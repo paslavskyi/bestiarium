@@ -35,7 +35,8 @@ custom_components/bestiarium_devices/
 ├── config_flow.py       # Config flow (virtual + extended), reconfigure (re-pointing), settings (options)
 ├── repairs.py           # Repairs: a gone relay or power sensor, its fix flow; renames followed
 ├── helpers.py           # Priority resolution, validation, utility functions
-├── balancer.py          # BalancingCoordinator — the zone, subscriptions, periodic jobs
+├── balancer.py          # BalancingCoordinator — lifecycle, periodic jobs, the mode
+├── zones.py             # ActiveZone, ZoneWatcher — the zone sensors and the zone they show
 ├── strategies.py        # Strategies — green, red, overload, mode, "Allowed"
 ├── consumption.py       # Runs, stable power, memory eviction, estimate (no HA imports)
 ├── power_memory.py      # PowerMemory (Store), live run tracking, recorder import
@@ -178,6 +179,26 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 | `RED_INTERVAL_SECONDS` | `5` | Red strategy periodic interval |
 | `OVERLOAD_WAIT_SECONDS` | `5` | Pause between first and second overload queue |
 
+### Hard-coded parameters and why (DEC-013)
+
+The owner's decision (DEV-008 stage C): these stay in the code. The device's
+own tuning is in its options (`ControlSettings`).
+
+| Parameter | Value | What it decides | Why in the code |
+|---|---|---|---|
+| `MIN_CONSUMING_POWER_W` | 10 W | below it a device switched on idles: no run is recorded | the owner kept it in the code; a device whose standby draws more records its idling as runs |
+| `STABLE_POWER_SECONDS` | 30 s | a run's power is the highest level held this long | part of the measurement model, not a setting of the home |
+| `POWER_MEMORY_SIZE` | 10 | runs kept per device | the bound of the memory (stability, rule 6) |
+| `REAL_RUNS_FOR_ESTIMATE` | 3 | from this many real runs the imported ones no longer count | part of the estimate model |
+| `LARGE_DEVICE_POWER_W` | 2000 W | expected power when nothing is known | a person gives the estimated power in the form; this is only the fallback. Climate keeps its own `LARGE_HEATER_POWER_W`: the contract of two integrations |
+| `RESPONSE_MEMORY_SIZE` | 10 | response times kept per device | the bound of the memory |
+| `STEP_JITTER_SECONDS` | 1 s | tolerance of the timers | technical |
+| `GREEN_INTERVAL_SECONDS` | 60 s | the green strategy's step | a global parameter of the protection; Devices has no global entry (each entry is a device), and Climate follows it |
+| `RED_INTERVAL_SECONDS` | 5 s | the red strategy's step, the repeat of the mode's turn-offs | the same; it decides how fast the home sheds its load |
+| `OVERLOAD_WAIT_SECONDS` | 5 s | the wait between the overload queues | the same |
+| `SAVE_DELAY_SECONDS` | 10 s | the delay of a write of the stores | technical |
+| `UNSTABLE_WINDOW` | 1 h | the window of an "unstable connection" | the option is named "dropouts per hour": the window is part of it |
+
 ---
 
 ## Integration Lifecycle (`__init__.py`)
@@ -303,7 +324,7 @@ It takes the entry, not a `device_id`: two entries can share a device (a two-rel
 
 ## Balancing Coordinator (`balancer.py`)
 
-Class: `BalancingCoordinator`
+Class: `BalancingCoordinator`; the zone sensors are read by `ZoneWatcher` (`zones.py`).
 
 ### Lifecycle
 
@@ -323,13 +344,13 @@ class ActiveZone(StrEnum):
     OVERLOAD = "overload"
 ```
 
-`_determine_active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN. None on: **pause** (green on pause, the sensors available) or **no data** (unavailable). Neither runs a strategy. The zone itself is decided by `bestiarium_mode` ([its zone model](bestiarium_mode.md#zones)).
+`ZoneWatcher.active_zone()` checks binary sensors in priority order: OVERLOAD > RED > YELLOW > GREEN. None on: **pause** (green on pause, the sensors available) or **no data** (unavailable). Neither runs a strategy. The zone itself is decided by `bestiarium_mode` ([its zone model](bestiarium_mode.md#zones)).
 
 Each read resolves the sensor's entity_id from the registry by unique_id at that moment (no cached entity_ids).
 
 ### Following Renamed Entities
 
-State listeners need entity_ids, so `_subscribe()` tracks the zone sensors and the mode select by their current entity_ids and also tracks their entity registry updates (`async_track_entity_registry_updated_event`, which matches renames by `old_entity_id`). When one is renamed, the coordinator drops and re-creates the listeners with the new entity_ids. It does not re-evaluate the zone on a rename: the entity's state is unchanged, and the re-added entity's new state goes through the normal `_on_zone_changed` path (same zone → nothing to do).
+State listeners need entity_ids, so `ZoneWatcher.follow()` (the zone sensors) and `_subscribe()` (the mode select) track them by their current entity_ids and also track their entity registry updates (`async_track_entity_registry_updated_event`, which matches renames by `old_entity_id`). When one is renamed, the coordinator drops and re-creates the listeners with the new entity_ids. It does not re-evaluate the zone on a rename: the entity's state is unchanged, and the re-added entity's new state goes through the normal `_on_zone_changed` path (same zone → nothing to do).
 
 This relies only on the registry update event, so it works both with the HA 2026.10 rename model (entity removed and re-added) and with in-place renames.
 
@@ -346,7 +367,7 @@ This relies only on the registry update event, so it works both with the HA 2026
 ### State Change Handling
 
 **Zone changes** (`_on_zone_changed`):
-- Recalculates active zone via `_determine_active_zone()`
+- Recalculates active zone via `ZoneWatcher.active_zone()`
 - If zone changed: cancels old periodic job, handles new zone
 
 **After HA has started** the mode is applied again (`async_apply_mode(restart=True)`, the owner's choice: restarts are rare, and the mode's duties do not survive one); **so is a device entry reloaded after the start** (`only=` that entry; the integration reloaded: each of its devices), but not a reload of the modes' settings. A relay not off at the start — on, or still unknown (a cloud relay) — gets the turn-off and the mode's duty. Only the devices that are on get a turn-off, and only the always-on ones that are off a turn-on; `bestiarium_devices_mode_applied` with `reason: "restart"` fires only if one was turned off, and lists only those commands.
@@ -429,7 +450,7 @@ Both fire `bestiarium_devices_device_turned_off` / `_turned_on` with `strategy: 
   2. Check if the overload has cleared
   3. If not cleared: wait `OVERLOAD_WAIT_SECONDS` (5s), check again
   4. If still not cleared: turn off all remaining devices (second queue)
-- **Fail-safe**: inside this sequence the overload counts as cleared **only if the overload sensor reports `off`** (`_overload_cleared`). A missing, `unknown` or `unavailable` sensor state means the overload may still be going on, so the second queue is shut down too — turning off more is safer than overloading the supply. Active zone detection outside the sequence is unchanged.
+- **Fail-safe**: inside this sequence the overload counts as cleared **only if the overload sensor reports `off`** (`ZoneWatcher.overload_cleared`). A missing, `unknown` or `unavailable` sensor state means the overload may still be going on, so the second queue is shut down too — turning off more is safer than overloading the supply. Active zone detection outside the sequence is unchanged.
 - **Backward compat**: If no devices have `overload_first_queue=True`, turns off ALL devices immediately (no two-step, no wait)
 - **Ignores** priority — all devices are turned off including ALWAYS_ON
 

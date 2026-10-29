@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import STATE_OFF, STATE_ON
-from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
+from homeassistant.core import HomeAssistant, ServiceRegistry, callback
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bestiarium_devices.balancer import BalancingCoordinator
@@ -23,6 +23,7 @@ from custom_components.bestiarium_devices.control import (
 )
 from custom_components.bestiarium_devices.power_memory import async_get_power_memory
 from custom_components.bestiarium_devices.strategies import Strategies
+from custom_components.bestiarium_devices.zones import ZoneWatcher
 
 from .mode_entities import register_mode_entities
 
@@ -47,7 +48,7 @@ async def device_strategies(hass: HomeAssistant) -> Strategies:
         hass,
         controls,
         await async_get_power_memory(hass),
-        BalancingCoordinator(hass)._overload_cleared,  # noqa: SLF001
+        ZoneWatcher(hass, lambda: None).overload_cleared,
     )
 
 
@@ -88,9 +89,9 @@ def zone_changes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     on_zone_changed = BalancingCoordinator._on_zone_changed  # noqa: SLF001
 
     @callback
-    def record(self: BalancingCoordinator, event: Event) -> None:
+    def record(self: BalancingCoordinator) -> None:
         before = self.active_zone
-        on_zone_changed(self, event)
+        on_zone_changed(self)
         if self.active_zone != before:
             changes.append((before.value, self.active_zone.value))
 

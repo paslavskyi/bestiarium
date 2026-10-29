@@ -128,7 +128,7 @@ Per socket (device `mock_<device_id>`, model "Mock Smart Socket"):
 |---|---|---|---|
 | `switch` "Switch" | `mock_<id>` | — | shows the reported state; commands go to the fault model; unavailable during a dropout |
 | `sensor` "Power" | `mock_<id>_power` | — | what the load draws; unavailable during a dropout |
-| `binary_sensor` "State" | `mock_<id>_state` | — | whether the load draws power, whatever the switch shows; stays available during a dropout (the tester's view of the truth) |
+| `binary_sensor` "State" | `mock_<id>_state` | diagnostic | whether the load draws power, whatever the switch shows; stays available during a dropout (the tester's view of the truth) |
 | `select` "Fault profile" | `mock_<id>_fault_profile` | config | |
 | 7 × `number` fault parameters | `mock_<id>_<parameter>` | config | editable in Custom only |
 | `number` "Mock Power" | `mock_cooker_mock_power` | config | cooker only, 400–5500 W |

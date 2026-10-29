@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.template import Template
 from homeassistant.setup import async_setup_component
 from homeassistant.util.yaml import dump
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -297,6 +298,9 @@ class _Registry:
     def control_state(self, _thermostat: str) -> str:
         return "sensor.stand_ac_1_control_state"
 
+    def ir_switch(self, thermostat: str) -> str:
+        return f"switch.{thermostat.lower().replace(' ', '_')}_ir"
+
 
 def test_reset_leaves_always_on_devices_on() -> None:
     """The reset turns the cooker and fridge on, so the queue starts at once."""
@@ -430,5 +434,45 @@ def test_the_stepwise_off_has_its_scenarios() -> None:
         "continue_on_timeout": False,
     } in bypass
     red = scripts["climate_red_entry"]["sequence"]
-    assert red[1]["target"]["entity_id"] == "number.mock_cooker_mock_power"
+    assert red[3]["target"]["entity_id"] == "number.mock_cooker_mock_power"
     assert {"delay": {"seconds": 60}} in red
+
+
+async def test_the_switch_glitch_picks_the_ac_whose_switch_is_on(
+    hass: HomeAssistant,
+) -> None:
+    """SRC-142: by its switch, not by its knob: AC 1 draws, its switch is off."""
+    scripts = scenario_scripts(_Registry())
+    (variables,) = [
+        s for s in scripts["climate_switch_glitch"]["sequence"] if "variables" in s
+    ]
+    hass.states.async_set("number.mock_ac_1_mock_power", "1200.0")
+    hass.states.async_set("switch.stand_ac_1_ir", "off")
+    hass.states.async_set("switch.stand_ac_2_ir", "on")
+    ac = Template(variables["variables"]["ac"], hass).async_render()
+    assert ac == "number.mock_ac_2_mock_power"
+
+    hass.states.async_set("switch.stand_ac_2_ir", "off")
+    assert Template(variables["variables"]["ac"], hass).async_render() == ""
+
+
+@pytest.mark.parametrize(("grid", "stops"), [(1500, False), (5000, True)])
+async def test_a_load_out_of_the_cookers_reach_stops(
+    hass: HomeAssistant, grid: int, *, stops: bool
+) -> None:
+    """Review 39: green needs the cooker below its minimum: the script stops."""
+    variables, check, set_value = scenario_scripts(_Registry())["load_green"][
+        "sequence"
+    ]
+    hass.states.async_set("sensor.mock_grid_power", str(grid))
+    hass.states.async_set("sensor.mock_cooker_power", "1000")
+    hass.states.async_set(
+        "number.mock_cooker_mock_power", "1000", {"min": 400, "max": 5500}
+    )
+    cooker = Template(variables["variables"]["cooker"], hass).async_render()
+    out = Template(check["if"][0]["value_template"], hass).async_render(
+        {"cooker": cooker}
+    )
+    assert out is stops
+    assert check["then"][0]["error"]
+    assert set_value["data"]["value"] == "{{ cooker }}"

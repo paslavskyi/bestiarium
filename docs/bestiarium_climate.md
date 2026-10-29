@@ -34,8 +34,13 @@ custom_components/bestiarium_climate/
 ├── command.py           # SwitchCommand, SwitchCommands — the commands to a switch and their series
 ├── stepwise.py          # StepwiseOff — the stepwise "off" of a switch that does not turn off (DEV-010)
 ├── control.py           # ThermostatControl, ThermostatMemory (Store)
-├── balancer.py          # BalancingCoordinator — capacity-limited device rotation
+├── balancer.py          # BalancingCoordinator — the cycle, the zone, the one path of the commands
 ├── rotation.py          # arrange() — who should heat, without the zone (decision 32)
+├── zone_rules.py        # arrange_zone() — the zone's rules on the arrangement, no timers (pure)
+├── stepwise_actions.py  # StepwiseActions — what the stepwise "off" and the entry to red send
+├── devices.py           # What Climate reads of Bestiarium Devices; PowerSupply of a switch
+├── follow.py            # A renamed switch, sensor or socket written into the subentries
+├── repairs.py           # Repairs issues and their fix flows
 ├── strings.json         # Default translation strings
 └── translations/
     ├── en.json           # English translations
@@ -49,6 +54,8 @@ tests/custom_components/bestiarium_climate/
 ├── test_switch.py
 ├── test_number.py
 ├── test_balancer.py
+├── test_rotation.py
+├── test_zone_rules.py
 └── test_stepwise_off.py
 ```
 
@@ -156,6 +163,7 @@ class ClimateMode(StrEnum):
 2. Creates a `BalancingCoordinator(hass, entry)` and starts it (60s periodic)
 3. Stores coordinator at `hass.data[DOMAIN][entry.entry_id]`
 4. Registers reload listener
+5. Follows renamed entities (`follow.py`): the target switch and temperature sensor of a thermostat, the power sensor and socket of a virtual switch. A rename in HA is written into the subentries that name the entity, and the entry reloads (its configuration changed), as Bestiarium Devices does with its relay. A virtual switch's sequence running at that moment is cut short; the next cycle sends what is wanted again (the owner accepted it, DEV-008 stage C). Before, the thermostat lost its switch ("Switch unavailable") or its temperature until reconfigured (review 24)
 
 ### Unload (`async_unload_entry`)
 
@@ -258,7 +266,7 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 - It follows the thermostat's switch and temperature sensor; their availability counts only once HA has started.
 - **Switch unavailable / no temperature**: gone (unavailable, unknown, missing; for the temperature also not a number) for longer than `tolerance_seconds` → a confirmed problem; it ends after `hysteresis_seconds` without it.
 - **Commands** (review 24, E4; `command.py`, review 30, G7): each command is a `SwitchCommand` of the control's `SwitchCommands` — its direction, its task, when it was sent and when it ended. The **series** of a direction is its commands sent without an answer; **only the switch's answer ends it** (the switch in the state of its last command), never a new wanted state: an "on" taken off by yellow or the rotation goes on counting with the next "on", and the "off" between them, answered at once by a switch that is off anyway, ends only the series "off". A command is an attempt of its series when it is sent; it is a **failed attempt** once its window (a cycle, 55 s, from its **end**) is over without an answer (DEC-014, rule 3) — an overtaken one too; `failed_attempts` shows the failed ones of the larger series. A command waits while one of its direction waits for its answer (running, or in its window), an overtaken one too, so a toggling IR code is never sent twice; one the other way overtakes the running one at once and **cancels** it. A command that ends late changes only itself (no other is freed or restamped); one that ignores its cancel still counts for the budget. A switch that was in the state already when the command went closes the series but is no answer: only a change after the command ends "Not responding" (review 33, H4). The cycle runs outside the script that asked for it (a fresh context, review 35, I5): its commands, events and timers carry no script stack, else HA refuses another switch's sequence as a recursion (review 33, H8). A virtual switch whose sequence another command stops ends its command normally for the one who sent it — only its own cancellation is passed on (review 35, I4). A start the power cut short is no failed attempt: the cut closes the series "on" (protection, not a fault). A deferral closes every series and every command (one path of closing, review 30, G1): no command sent before it answers for the retry, a person turning the switch on meanwhile ends no "Not responding". **A start under way** is the start's first command — the only "on" since the balancer wanted it on — waiting for its answer by the same rule as any command (running, or its window after its end; review 30, G2): a failed start before does not make the next one "no start". The deferral's "off" waits too while an "off" runs or is in its window (G4). `failed_attempts` shows a failed attempt when its window ends, and the count that deferred the switch while it is deferred (G5).
-- **Not responding**: the switch is **deferred** for the entry's `recovery_timeout` (default 1 hour; 5 minutes on the stand), turned off once (the deferral's "off") and then tried again, when (a) the series "on" has as many failed attempts as `attempts` and the switch is off — **whatever is wanted now**, so a heater out of attempts never takes a running one's place (found on the stand), or (b) an "on" not answered runs longer than the budget of the attempts (`attempts` × 55 s). A switch that does not turn **off** is never deferred: it is turned off stepwise (below, DEV-010) — not when the switch already took its state and only the rest of a sequence hangs (review 24, E2). The check runs **before** the capacity is shared, so the deferred switch holds no place in that very cycle (review 24, E1). After the deferral the switch is in the rotation again with new series and gets a start when it has a place. The state stays "Not responding" — **across a restart too** (`unresponsive` in the memory, review 24, E5) — until the switch **answers a command sent out of a deferral**, not merely because it is as wanted (the thermostat needs no heat while the IR is still lost): then, after the hysteresis, back to "Normal", with one `info` line (review 22, D6).
+- **Not responding**: the switch is **deferred** for the entry's `recovery_timeout` (default 1 hour; 5 minutes on the stand), turned off once (the deferral's "off") and then tried again, when (a) the series "on" has as many failed attempts as `attempts` and the switch is off — **whatever is wanted now**, so a heater out of attempts never takes a running one's place (found on the stand), or (b) an "on" not answered runs longer than the budget of the attempts (`attempts` × 55 s, **at least 90 s**: an IR sequence takes about a minute, so with one attempt a working air conditioner would be "Not responding"; DEC-014 rule 3; `MIN_RESPONSE_BUDGET`, seen at the next cycle). A switch that does not turn **off** is never deferred: it is turned off stepwise (below, DEV-010) — not when the switch already took its state and only the rest of a sequence hangs (review 24, E2). The check runs **before** the capacity is shared, so the deferred switch holds no place in that very cycle (review 24, E1). After the deferral the switch is in the rotation again with new series and gets a start when it has a place. The state stays "Not responding" — **across a restart too** (`unresponsive` in the memory, review 24, E5) — until the switch **answers a command sent out of a deferral**, not merely because it is as wanted (the thermostat needs no heat while the IR is still lost): then, after the hysteresis, back to "Normal", with one `info` line (review 22, D6).
 - **In the rotation** only if none of these: a gone switch, a deferred switch and no temperature all free the thermostat's place for the others.
 
 `ControlStateSensor` — `sensor.<thermostat>_control_state`, enum, diagnostic, on the thermostat's device: `switch_unavailable` > `not_turning_off` > `unresponsive` > `no_temperature` > `no_power` > `normal`. Attributes `failed_attempts`, `next_attempt`, `pause_until` (unrecorded). One `warning` when a problem starts, one `info` when it ends. **No power** (`no_power`, "Без живлення", the owner's decisions 28 and 32): the device powering the heater is off (the load protection, a person, a mode), the heater does not heat and its thermostat is not off (off, it is "Normal") — no fault: no attempt, no "Repair", one `info` line when it starts (after the tolerance) and one when it ends (at once, the power back). The device powering an air conditioner need not be "always on".
@@ -298,6 +306,8 @@ Once per entry — from any zone but red and overload; red to overload is no new
 - Every stepwise "off" under way makes its next attempt now, if it has one left (the owner, SRC-170: not only those on "Not responding").
 - Every other switch that reads off, or is on with no attempt left, gets one "off" outside the attempts: the `off_action` really runs (HA runs a switch's `turn_off` whatever its state), but it is no attempt, awaits no answer, changes no control state and gives no "Not responding". A switch with a command running is skipped, and so are the switches the balancer leaves alone.
 
+**One path of the commands** (DR-9ff12869): every command to a switch or its socket is a `SwitchCommand` of the control, sent by the balancer's `_send`. The "off" outside the attempts, the deferral's "off" and the cut of the socket are **not counted** (`counted=False`): no attempt of a series or of the stepwise "off", their answer ends no "Not responding"; one to the switch still holds its window like any other, so a toggling IR code never goes twice (an "off" outside the attempts to a deferred switch is its deferral's "off" too). The cut of the socket (`target`) is none of the switch's commands: only its task is kept, cancelled when the entry unloads. The actions themselves are in `stepwise_actions.py`.
+
 Then the zone's rules as before: red one heater every 5 s, the overload all at once. Not every cycle: each would send IR to every air conditioner every 5 s.
 
 
@@ -311,7 +321,9 @@ Then the zone's rules as before: red one heater every 5 s, the overload all at o
 
 ## Balancing Coordinator (`balancer.py`)
 
-`BalancingCoordinator` — one per climate entry, made before the platforms (they show its controls), started after them.
+`BalancingCoordinator` — one per climate entry, made before the platforms (they show its controls), started after them. The zone's rules are a pure function (`zone_rules.arrange_zone`): it returns the `Arrangement` — who heats after the cycle, who the rotation turned off, when to decide again — and plans no timer; the balancer applies it (review 37). The controls read the zone where the balancer reads it (the zone sensors), so the stepwise "off" knows red without a flag copied into each (DR-40cba697).
+
+**What powers a switch** (`devices.PowerSupply`: the Bestiarium device of a virtual switch, its relay, the switch's socket) is found at the start and again when a Bestiarium Devices entry is added, removed or changed (its relay renamed, which Devices writes into its entry); the changes within a second make one search and one decision. The cycle no longer searches the registry for them (DR-dce146e8). Before, a new device powering an air conditioner, or a renamed relay, was not followed until the entry reloaded (review 24).
 
 ### Balance Cycle (`async_request_balance`: every 60 s, on a thermostat's change, a capacity change, a zone change and a control's new state)
 
@@ -395,6 +407,8 @@ Coverage:
 - Off stops a sequence still in its delay
 - Hysteresis and delay; a short glitch is not shown; no power data → unavailable after the delay, back at once
 - Migration 1.2 removes the switch's mode
+- A Bestiarium device added later, or its relay renamed, is followed; changes of the devices in a row make one cycle
+- A renamed target switch, temperature sensor, power sensor or socket is written into the subentry; the entry reloads and works
 
 ### `test_number.py`
 - Capacity number creation, initial value from config
@@ -408,6 +422,10 @@ Coverage:
 - The capacity entity applies at once; nothing repeats every minute; no internals in the attributes; a deferral survives a reload
 - A virtual switch without power data is unavailable
 - The entry to red: an "off" to each switch that reads off, once per entry (not red to overload; again after leaving), no attempt, no state; a stepwise "off" under way makes its next attempt now
+- The deferral's "off" goes once while it runs, not again by the entry to red; with one attempt an "on" of a minute is no problem, one hung past 90 s is
+
+### `test_zone_rules.py`
+- The zone's rules without HA: green turns out and starts one at a time, a step apart, only what fits; yellow only turns off; the pause and no data change nothing; red one "off" a step; overload all; a pause decides again at its end
 
 ### `test_stepwise_off.py`
 - "Off" three times 5 minutes apart, the event at 15, the socket and its event at 20; without a socket only the event

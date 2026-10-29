@@ -122,6 +122,9 @@ ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
 RED_STEP_SECONDS = 5
 # In green one heater starts at a time; the next once the load has shown it
 START_STEP_SECONDS = 10
+# The changes of Bestiarium Devices within this make one search of what powers
+# the switches (devices.PowerSupply) and one decision
+POWER_CHANGE_COOLDOWN_SECONDS = 1
 # A start fits when load + heater power <= the red threshold (devices, DEV-006).
 # The load is the power sensor of bestiarium_mode, the threshold its red zone
 # sensor's attribute, the power the expected power of the bestiarium_devices
@@ -152,6 +155,15 @@ class SwitchOutOfControlData(TypedDict):
     attempts: int
 
 
+class DeviceRotatedData(TypedDict):
+    """The payload of EVENT_DEVICE_ROTATED_IN and EVENT_DEVICE_ROTATED_OUT."""
+
+    thermostat: str
+    switch_entity_id: str
+    working_time_coefficient: float
+    temperature_diff: float
+
+
 class PowerCutData(TypedDict):
     """The payload of EVENT_POWER_CUT."""
 
@@ -173,6 +185,11 @@ class Zone(StrEnum):
 
 
 SENSOR_ZONES = (Zone.OVERLOAD, Zone.RED, Zone.YELLOW, Zone.GREEN)
+
+
+# The zones whose entry turns off at once what runs unwanted (FR-029), and in
+# which the steps of the stepwise "off" go a cycle apart at most
+SHEDDING_ZONES = (Zone.RED, Zone.OVERLOAD)
 
 
 class ControlState(StrEnum):

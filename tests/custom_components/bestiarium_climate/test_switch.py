@@ -13,6 +13,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryDisabler,
+    ConfigEntryState,
     ConfigSubentryData,
 )
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
@@ -43,6 +44,7 @@ from custom_components.bestiarium_climate.devices import (
     expected_power,
     power_cut,
     power_device,
+    power_supply,
 )
 from custom_components.bestiarium_climate.repairs import (
     ActionsRepairFlow,
@@ -612,6 +614,71 @@ async def test_the_power_comes_back_and_it_starts_at_once(
     assert len(services["heat"]) == 1
 
 
+async def _power_follows(hass: HomeAssistant) -> None:
+    """Let the changes of the devices in a row make their one decision."""
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=2))
+    await hass.async_block_till_done()
+
+
+async def test_a_device_added_later_powers_the_switch(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """A6: a device added after the start is followed: no start while its relay is off."""
+    hass.states.async_set(RELAY, STATE_OFF)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    device = MockConfigEntry(
+        domain="bestiarium_devices",
+        title="AC power",
+        data={"switch_entity_id": RELAY, "power_sensor_entity_id": POWER},
+        disabled_by=ConfigEntryDisabler.USER,
+    )
+    await hass.config_entries.async_add(device)
+    await _power_follows(hass)
+    await _heat(hass)
+    assert services["heat"] == []
+
+    hass.states.async_set(RELAY, STATE_ON)
+    await hass.async_block_till_done()
+    assert len(services["heat"]) == 1
+
+
+async def test_a_renamed_relay_is_followed(
+    hass: HomeAssistant, setup: Setup, services: dict[str, list[ServiceCall]]
+) -> None:
+    """A6: the device's relay renamed (Devices follows it): the new one counts."""
+    await _relay_powers_the_switch(hass, on=False)
+    await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    await _heat(hass)
+    assert services["heat"] == []
+
+    (device,) = hass.config_entries.async_entries("bestiarium_devices")
+    hass.states.async_set("switch.ac_relay_renamed", STATE_ON)
+    hass.config_entries.async_update_entry(
+        device, data={**device.data, "switch_entity_id": "switch.ac_relay_renamed"}
+    )
+    await _power_follows(hass)
+    assert len(services["heat"]) == 1
+
+
+async def test_devices_changed_in_a_row_make_one_decision(
+    hass: HomeAssistant, setup: Setup
+) -> None:
+    """A6: several changes of the devices at once: one search, one cycle."""
+    await _relay_powers_the_switch(hass, on=True)
+    entry = await setup(_switch(), _thermostat("Heater", ClimateMode.HEATING))
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    (device,) = hass.config_entries.async_entries("bestiarium_devices")
+    others = [_device(hass, f"Other {n}", power=f"sensor.other_{n}") for n in range(3)]
+    with patch.object(coordinator, "_cycle", wraps=coordinator._cycle) as cycle:
+        for n, other in enumerate([device, *others]):
+            hass.config_entries.async_update_entry(
+                other, data={**other.data, "switch_entity_id": f"switch.relay_{n}"}
+            )
+        await _power_follows(hass)
+
+    assert cycle.call_count == 1
+
+
 async def test_two_devices_on_one_power_sensor_are_no_power(
     hass: HomeAssistant, setup: Setup
 ) -> None:
@@ -622,7 +689,7 @@ async def test_two_devices_on_one_power_sensor_are_no_power(
 
     _device(hass, "Another", relay="switch.other")
     assert power_device(hass, SWITCH) is None
-    assert not power_cut(hass, SWITCH)
+    assert not power_cut(hass, power_supply(hass, SWITCH))
 
 
 async def test_the_large_default_of_devices_is_no_power(
@@ -642,12 +709,12 @@ async def test_the_large_default_of_devices_is_no_power(
         "2000",
         {"estimate_source": "large_device_default"},
     )
-    assert expected_power(hass, device) is None
+    assert expected_power(hass, device.entry_id) is None
 
     hass.states.async_set(
         "sensor.ac_power_expected_power", "1150", {"estimate_source": "memory"}
     )
-    assert expected_power(hass, device) == 1150.0
+    assert expected_power(hass, device.entry_id) == 1150.0
 
 
 async def test_the_repairs_of_a_removed_thermostat_go(
@@ -1123,3 +1190,42 @@ async def test_a_cycle_run_inside_a_sequence_carries_no_script_stack(
     switch_b = hass.data["entity_components"]["switch"].get_entity(SWITCH_B)
     assert stacks == [[switch_b._scripts["off_action"].unique_id]]
     assert "Disallowed recursion detected" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("old", "subentry", "key"),
+    [
+        (SWITCH, "Heater", "target_switch"),
+        ("sensor.temp", "Heater", "temperature_sensor"),
+        (POWER, "switch_01", "power_entity"),
+        ("switch.ac_socket", "switch_01", "power_socket"),
+    ],
+)
+async def test_a_renamed_entity_is_followed(
+    hass: HomeAssistant, setup: Setup, old: str, subentry: str, key: str
+) -> None:
+    """A7: a rename is written into the subentry; the entry reloads and works."""
+    registry = er.async_get(hass)
+    domain, object_id = old.split(".")
+    if old != SWITCH:
+        registry.async_get_or_create(
+            domain, "test", object_id, suggested_object_id=object_id
+        )
+    hass.states.async_set("switch.ac_socket", STATE_ON)
+    entry = await setup(
+        _switch(power_socket="switch.ac_socket"),
+        _thermostat("Heater", ClimateMode.HEATING),
+    )
+    await _heat(hass)
+
+    new = f"{old}_renamed"
+    state = hass.states.get(old)
+    registry.async_update_entity(old, new_entity_id=new)
+    if old != SWITCH:
+        # The renamed entity's own integration shows it under the new id
+        hass.states.async_set(new, state.state, state.attributes)
+    await hass.async_block_till_done()
+
+    assert entry.subentries[subentry].data[key] == new
+    assert entry.state is ConfigEntryState.LOADED
+    assert _control_state(hass).state == "normal"

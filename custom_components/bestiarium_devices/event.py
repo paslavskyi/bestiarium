@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.components.event import EventEntity
 from homeassistant.const import EntityCategory
@@ -10,7 +10,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import SIGNAL_CONTROL_EVENT
-from .control import ControlEvent
+from .control import ControlEvent, ControlEventData
 from .entity import BestiariumDeviceEntity
 
 if TYPE_CHECKING:
@@ -56,6 +56,6 @@ class ControlEventEntity(BestiariumDeviceEntity, EventEntity):
         )
 
     @callback
-    def _on_event(self, event: ControlEvent, attributes: dict[str, Any]) -> None:
-        self._trigger_event(event, attributes)
+    def _on_event(self, event: ControlEvent, attributes: ControlEventData) -> None:
+        self._trigger_event(event, dict(attributes))
         self.async_write_ha_state()

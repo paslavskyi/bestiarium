@@ -29,7 +29,13 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .command import ATTEMPT_INTERVAL, SwitchCommand, SwitchCommands, direction
+from .command import (
+    ATTEMPT_INTERVAL,
+    MIN_RESPONSE_BUDGET,
+    SwitchCommand,
+    SwitchCommands,
+    direction,
+)
 from .const import (
     CONF_HEATER_POWER,
     CONF_RECOVERY_TIMEOUT,
@@ -38,18 +44,22 @@ from .const import (
     DOMAIN,
     LOGGER,
     SAVE_DELAY_SECONDS,
+    SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     STORAGE_KEY,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
     ControlSettings,
     ControlState,
+    Zone,
 )
-from .devices import power_socket
+from .devices import PowerSupply, power_supply
 from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from homeassistant.config_entries import ConfigSubentry
     from homeassistant.core import (
         CALLBACK_TYPE,
@@ -181,6 +191,8 @@ class ThermostatControl:
         entry: BestiariumClimateConfigEntry,
         subentry: ConfigSubentry,
         memory: ThermostatMemory,
+        *,
+        zone: Callable[[], Zone],
     ) -> None:
         """Follow the thermostat's switch and sensor; call async_start."""
         self._hass = hass
@@ -204,10 +216,10 @@ class ThermostatControl:
         self._no_power = _Condition()
         self._stepwise = StepwiseOff()
         self._not_turning_off = _Condition()
-        # In red or overload the steps go a cycle apart at most (the balancer)
-        self.shedding = False
-        # The socket of its virtual switch: a change of it reloads the entry
-        self.socket: str | None = None
+        # The load zone, read where the balancer reads it
+        self._zone = zone
+        # What powers its switch, found by the balancer (follow_power)
+        self.power = PowerSupply(self.switch)
         # When the heater was last wanted off or its switch turned off: a
         # start waits for the pause after it
         self.off_at: datetime | None = (
@@ -236,7 +248,6 @@ class ThermostatControl:
     @callback
     def async_start(self) -> None:
         """Follow the switch and the sensor; their availability once HA started."""
-        self.socket = power_socket(self._hass, self.switch)
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
@@ -254,6 +265,17 @@ class ThermostatControl:
         self._unsubscribe, self._cancel_timer = [], None
 
     # What the balancer asks
+
+    def follow_power(self) -> bool:
+        """Find again what powers the switch; return whether it changed."""
+        power = power_supply(self._hass, self.switch)
+        changed, self.power = power != self.power, power
+        return changed
+
+    @property
+    def socket(self) -> str | None:
+        """Return the socket of its virtual switch, if it has one."""
+        return self.power.socket
 
     @property
     def no_temperature(self) -> bool:
@@ -433,16 +455,28 @@ class ThermostatControl:
             return None if latest.on is wanted else wanted
         return None if actual is wanted else wanted
 
-    def send(self, on: bool, now: datetime) -> SwitchCommand:  # noqa: FBT001
+    def send(
+        self,
+        on: bool,  # noqa: FBT001
+        now: datetime,
+        *,
+        counted: bool = True,
+        target: str | None = None,
+    ) -> SwitchCommand:
         """
         Count a command sent now; the deferral's "off" is owed no more.
 
-        An "off" to a switch that is on is an attempt of the stepwise "off".
+        An "off" counted to a switch that is on is an attempt of the stepwise
+        "off"; a command to a deferred switch counts in no series. Not counted:
+        the "off" outside the attempts and the cut of the socket (command.py).
         """
-        if not on and self.reading(now) is Reading.ON:
+        if counted and target is None and not on and self.reading(now) is Reading.ON:
             self._stepwise.attempt(now)
-        command = self._commands.send(on, now, deferral=self.deferred_until is not None)
-        if command.deferral:
+        deferred = self.deferred_until is not None
+        command = self._commands.send(
+            on, now, counted=counted and not deferred, target=target
+        )
+        if deferred and target is None:
             self._off_owed = False
         self._keep()
         self._refresh(now)
@@ -466,9 +500,10 @@ class ThermostatControl:
         Out of attempts: the series "on" has as many failed attempts as the
         attempts, the switch off, whatever is wanted now (a heater out of
         attempts never takes another's place). Hung: an "on" not answered
-        runs longer than the budget of the attempts (attempts x a cycle). A
-        switch that does not turn off is never deferred: it is turned off
-        stepwise. Called before the capacity is shared, so that its place
+        runs longer than the budget of the attempts (attempts x a cycle, at
+        least MIN_RESPONSE_BUDGET), seen at the next cycle. A switch that
+        does not turn off is never deferred: it is turned off stepwise.
+        Called before the capacity is shared, so that its place
         goes to another thermostat in this cycle.
         """
         self._observe(now)
@@ -476,7 +511,8 @@ class ThermostatControl:
             return
         attempts = self.settings.attempts
         failed = self._commands.failed(now, on=True)
-        if self._commands.hung(now, ATTEMPT_INTERVAL * attempts, on=True):
+        budget = max(ATTEMPT_INTERVAL * attempts, MIN_RESPONSE_BUDGET)
+        if self._commands.hung(now, budget, on=True):
             # The hung command is a failed attempt too
             self._defer(now, failed + 1)
         elif failed >= attempts:
@@ -516,7 +552,7 @@ class ThermostatControl:
         state = self._hass.states.get(self.switch)
         if (
             command is not None
-            and not command.deferral
+            and command.counted
             and self.deferred_until is None
             and state is not None
             and state.last_changed >= command.sent_at
@@ -543,7 +579,9 @@ class ThermostatControl:
     def _off_interval(self) -> timedelta:
         """Return the step: a cycle at most in red or overload (DEC-014, hard limit)."""
         interval = timedelta(seconds=self.settings.off_interval_seconds)
-        return min(interval, ATTEMPT_INTERVAL) if self.shedding else interval
+        if self._zone() in SHEDDING_ZONES:
+            return min(interval, ATTEMPT_INTERVAL)
+        return interval
 
     def _off_next(self) -> tuple[Step, datetime | None] | None:
         return self._stepwise.next(

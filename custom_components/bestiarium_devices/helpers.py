@@ -65,6 +65,14 @@ def get_mode_state(hass: HomeAssistant) -> State | None:
     return hass.states.get(entity_id) if entity_id else None
 
 
+def state_watts(state: State | None) -> float | None:
+    """Return the watts a power sensor's state shows; None if it shows none."""
+    try:
+        return float(state.state) if state else None
+    except ValueError:
+        return None
+
+
 def load_and_red_threshold(hass: HomeAssistant) -> tuple[float, float] | None:
     """
     Return the grid load and the red zone threshold, in W.
@@ -83,15 +91,12 @@ def load_and_red_threshold(hass: HomeAssistant) -> tuple[float, float] | None:
     red_sensor = mode_entity_id(
         hass, "binary_sensor", ZONE_SENSOR_UNIQUE_ID.format(zone="red")
     )
-    power_state = hass.states.get(power_sensor) if power_sensor else None
+    load = state_watts(hass.states.get(power_sensor) if power_sensor else None)
     red_state = hass.states.get(red_sensor) if red_sensor else None
-    if power_state is None or red_state is None:
+    if load is None or red_state is None:
         return None
     try:
-        return (
-            float(power_state.state),
-            float(red_state.attributes[MODE_RED_THRESHOLD]),
-        )
+        return load, float(red_state.attributes[MODE_RED_THRESHOLD])
     except (KeyError, TypeError, ValueError):
         return None
 

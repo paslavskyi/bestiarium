@@ -36,6 +36,7 @@ from custom_components.bestiarium_climate.const import (
     START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
     ClimateMode,
+    Zone,
 )
 
 from custom_components.bestiarium_climate.control import (
@@ -641,7 +642,7 @@ async def test_kept_attempts_count_on_after_a_restart(hass: HomeAssistant) -> No
         {"temperature_sensor": "sensor.t", "target_switch": "switch.floor_1"},
     )
     hass.states.async_set("switch.floor_1", STATE_OFF)
-    control = ThermostatControl(hass, entry, subentry, memory)
+    control = ThermostatControl(hass, entry, subentry, memory, zone=lambda: Zone.NONE)
 
     now = dt_util.utcnow()
     assert control.next_command(now) is True
@@ -841,7 +842,7 @@ async def test_a_heater_without_power_holds_no_place(floors: Floors) -> None:
     cut = {"switch.floor_1"}
     with patch(
         "custom_components.bestiarium_climate.balancer.power_cut",
-        lambda _hass, switch: switch in cut,
+        lambda _hass, supply: supply.switch in cut,
     ):
         await floors.setup(capacity=1)
         assert floors.on() == {"floor_2"}
@@ -1727,7 +1728,7 @@ async def test_an_idling_heater_frees_only_what_it_draws(floors: Floors) -> None
     """I7: the running one draws 300 W of its 2000: it frees 300; none starts into red."""
     floors.hass.states.async_set("sensor.floor_1_power", "300")
     with patch(
-        "custom_components.bestiarium_climate.balancer.power_entity",
+        "custom_components.bestiarium_climate.devices.power_entity",
         lambda _hass, switch: "sensor.floor_1_power"
         if switch == "switch.floor_1"
         else None,
@@ -1826,3 +1827,71 @@ async def test_in_red_an_off_not_taken_is_repeated_a_cycle_later(
     assert _offs(floors, first, since) == 1
     await floors.tick(15, step=5)
     assert _offs(floors, first, since) == 2
+
+
+async def test_the_deferral_off_goes_once_while_it_runs(floors: Floors) -> None:
+    """
+    An IR toggle: the deferral's "off" is not sent again while it runs.
+
+    Nor by the entry to red, whose "off"s outside the attempts go the same
+    path: one "off" in all, then nothing once it ended.
+    """
+    released = asyncio.Event()
+
+    async def off_hangs() -> None:
+        if floors.calls[-1] == ("turn_off", "floor_1"):
+            await released.wait()
+
+    async def wait(seconds: int) -> None:
+        for _ in range(seconds // 10):
+            _minutes(floors, 10)
+            for _ in range(5):
+                await asyncio.sleep(0)
+
+    floors.stuck.add("floor_1")
+    floors.before["floor_1"] = off_hangs
+    await floors.setup(zones=True, settle=False)
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 1})
+    await wait(3 * MINUTE)
+    assert floors.state("floor_1") == "unresponsive"
+    assert floors.calls.count(("turn_off", "floor_1")) == 1
+
+    floors.zone("red")
+    await wait(3 * MINUTE)
+    assert floors.calls.count(("turn_off", "floor_1")) == 1
+
+    released.set()
+    await floors.tick(3 * MINUTE, step=10)
+    assert floors.calls.count(("turn_off", "floor_1")) == 1
+
+
+@pytest.mark.parametrize(("sequence", "unresponsive"), [(60, False), (130, True)])
+async def test_a_single_attempt_waits_for_a_sequence_of_a_minute(
+    floors: Floors, sequence: int, *, unresponsive: bool
+) -> None:
+    """
+    A8: with one attempt an "on" gets at least 90 s, not 55 s.
+
+    An IR sequence of a minute is no problem; one that hangs past 90 s is,
+    at the next cycle.
+    """
+    long, on_started = asyncio.Event(), asyncio.Event()
+
+    async def runs() -> None:
+        if ("turn_off", "floor_1") not in floors.calls and not on_started.is_set():
+            on_started.set()
+            await long.wait()
+
+    floors.before["floor_1"] = runs
+    setup = floors.hass.async_create_task(floors.setup(capacity=1))
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 1})
+    for _ in range(sequence // 10):
+        _minutes(floors, 10)
+        for _ in range(5):
+            await asyncio.sleep(0)
+    long.set()
+    await setup
+    await floors.hass.async_block_till_done()
+
+    assert (floors.state("floor_1") == "unresponsive") is unresponsive
