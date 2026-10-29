@@ -77,6 +77,11 @@ rotation, the load zone) leaves the series "on" counting. The devices' control
 still starts a new series with a command of the other direction (a known
 difference, not changed in DEV-008).
 
+The budget of an "on" that never ends is `attempts` × a cycle, but never less
+than 90 s: an IR sequence takes about a minute, so a single attempt would make
+a working air conditioner "not responding" (rule 3, DEV-008 stage C; a fixed
+floor, not a memory of responses, by the owner's choice).
+
 For the direction "off" the thermostats' control has, since DEV-010 (the
 owner, SRC-169), a **stepwise "off"** instead of a series: a device that runs
 while it is wanted off gets an "off" every 5 minutes, 3 in all, then an event,
