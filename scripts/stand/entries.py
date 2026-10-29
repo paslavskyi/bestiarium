@@ -216,14 +216,22 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
         },
     )
     entry_id = result["result"]["entry_id"]
-    # Two attempts (minutes): a dead switch is deferred quickly on the stand
+    # Two attempts (minutes): a dead switch is deferred quickly on the stand;
+    # the steps of turning off a minute apart: the whole chain in 4 minutes
     await ha.flow(
         "options/flow",
         entry_id,
-        {"attempts": 2, "tolerance_seconds": 60, "hysteresis_seconds": 60},
+        {
+            "attempts": 2,
+            "tolerance_seconds": 60,
+            "hysteresis_seconds": 60,
+            "off_attempts": 3,
+            "off_interval_seconds": 60,
+        },
     )
     # The virtual switch of each air conditioner: IR by the stand's scripts,
-    # its state by the power of the AC's socket
+    # its state by the power of the AC's socket, its power socket the
+    # "Allowed" of that socket's device (the recommended choice)
     for name, _thermometer, socket in THERMOSTATS:
         await ha.flow(
             "subentries/flow",
@@ -237,6 +245,7 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
                 "power_delay_seconds": 10,
                 "heating_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_on"}],
                 "off_action": [{"action": f"script.{SCRIPT_PREFIX}ir_{socket}_off"}],
+                "power_socket": reg.control(reg.mock_device(socket)["id"], "allowed"),
             },
         )
     subentries = {

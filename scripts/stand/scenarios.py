@@ -171,6 +171,11 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
     ]
     # The stand's loads not allowed (the reset allows them again)
     loads_wait = [{"action": "switch.turn_off", "target": {"entity_id": loads}}]
+    # The power sockets of the air conditioners' virtual switches: the
+    # stepwise "off" cuts one, the reset allows them again
+    ac_sockets = [
+        reg.control(reg.mock_device(ac)["id"], "allowed") for _, _, ac in THERMOSTATS
+    ]
 
     def room(thermometer: str, celsius: float) -> dict[str, Any]:
         return {
@@ -245,6 +250,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 # The loads a fault scenario did not allow, allowed again; the
                 # rooms at 20 °C
                 {"action": "switch.turn_on", "target": {"entity_id": loads}},
+                {"action": "switch.turn_on", "target": {"entity_id": ac_sockets}},
                 *(room(thermometer, 20) for _, thermometer, _ in THERMOSTATS),
                 wait(2),
             ],
@@ -360,6 +366,44 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 {"action": "switch.turn_on", "target": {"entity_id": ir_hangs[2]}},
                 *faulty_first(3),
             ],
+        },
+        "climate_stuck_on": {
+            "alias": "Стенд: клімат — кондиціонер не вимикається",
+            "icon": "mdi:power-off",
+            # AC 1 runs, then its IR is lost and its room warm: "off" each
+            # minute three times, the event, a minute later its socket off
+            "sequence": [
+                reset,
+                *faulty_first(1),
+                {
+                    "wait_template": (
+                        f"{{{{ is_state('{ac_powers[0]}', '{float(AC_RUNNING_W)}') }}}}"
+                    ),
+                    "timeout": {"minutes": 3},
+                },
+                {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
+                room(THERMOSTATS[0][1], 30),
+            ],
+        },
+        "climate_bypass_on_pause": {
+            "alias": "Стенд: клімат — увімкнули в обхід паузи",
+            "icon": "mdi:hand-back-right-off",
+            # AC 1 "Not responding" (its IR lost), then a person turns it on
+            # with the remote: it is turned off stepwise all the same
+            "sequence": [
+                reset,
+                {"action": "switch.turn_on", "target": {"entity_id": ir_lost[0]}},
+                *faulty_first(1),
+                wait(150),
+                ac_power(THERMOSTATS[0][2], AC_RUNNING_W),
+            ],
+        },
+        "climate_red_entry": {
+            "alias": "Стенд: клімат — вхід у червону зону",
+            "icon": "mdi:alert-octagon-outline",
+            # The thermostats off: the entry to red sends each air
+            # conditioner one IR "off" (its power sensor may be late), once
+            "sequence": [reset, grid_at(RED_W, 200)],
         },
         "thermostats_no_temperature": {
             "alias": "Стенд: термостати — немає температури",
