@@ -108,7 +108,10 @@ def test_every_event_of_the_contract_is_described() -> None:
         (
             EVENT_MODE_APPLIED,
             ModeAppliedData(
-                mode="Night", devices_turned_off=["a"], devices_turned_on=[]
+                mode="Night",
+                devices_turned_off=["a"],
+                devices_turned_on=[],
+                reason="selected",
             ),
             "mode Night applied: turned off 1, turned on 0 devices",
         ),
