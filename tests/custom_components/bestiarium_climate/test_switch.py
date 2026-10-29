@@ -13,6 +13,7 @@ from freezegun.api import FrozenDateTimeFactory
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigEntryDisabler,
+    ConfigEntryState,
     ConfigSubentryData,
 )
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
@@ -1189,3 +1190,42 @@ async def test_a_cycle_run_inside_a_sequence_carries_no_script_stack(
     switch_b = hass.data["entity_components"]["switch"].get_entity(SWITCH_B)
     assert stacks == [[switch_b._scripts["off_action"].unique_id]]
     assert "Disallowed recursion detected" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("old", "subentry", "key"),
+    [
+        (SWITCH, "Heater", "target_switch"),
+        ("sensor.temp", "Heater", "temperature_sensor"),
+        (POWER, "switch_01", "power_entity"),
+        ("switch.ac_socket", "switch_01", "power_socket"),
+    ],
+)
+async def test_a_renamed_entity_is_followed(
+    hass: HomeAssistant, setup: Setup, old: str, subentry: str, key: str
+) -> None:
+    """A7: a rename is written into the subentry; the entry reloads and works."""
+    registry = er.async_get(hass)
+    domain, object_id = old.split(".")
+    if old != SWITCH:
+        registry.async_get_or_create(
+            domain, "test", object_id, suggested_object_id=object_id
+        )
+    hass.states.async_set("switch.ac_socket", STATE_ON)
+    entry = await setup(
+        _switch(power_socket="switch.ac_socket"),
+        _thermostat("Heater", ClimateMode.HEATING),
+    )
+    await _heat(hass)
+
+    new = f"{old}_renamed"
+    state = hass.states.get(old)
+    registry.async_update_entity(old, new_entity_id=new)
+    if old != SWITCH:
+        # The renamed entity's own integration shows it under the new id
+        hass.states.async_set(new, state.state, state.attributes)
+    await hass.async_block_till_done()
+
+    assert entry.subentries[subentry].data[key] == new
+    assert entry.state is ConfigEntryState.LOADED
+    assert _control_state(hass).state == "normal"
