@@ -500,9 +500,12 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             ],
         },
         "climate_margin": {
-            "alias": "Стенд: клімат — з'явився запас (2300 Вт з обігрівачем)",
+            "alias": "Стенд: клімат — з'явився запас (плита на мінімум)",
             "icon": "mdi:scale-unbalanced",
-            "sequence": grid_at(2300, 0),
+            # After climate_fit (load ~3500 W with one AC): the cooker down to
+            # its minimum frees what it drew above 400 W, so the second AC
+            # fits under the red threshold
+            "sequence": [cooker(400)],
         },
         "load_green": {
             "alias": "Стенд: навантаження — зелена",
