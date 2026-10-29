@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CoreState, Event, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.entity_registry import EVENT_ENTITY_REGISTRY_UPDATED
@@ -25,12 +24,12 @@ from .const import (
     LOGGER,
     MODE_SELECT_UNIQUE_ID,
     RED_INTERVAL_SECONDS,
-    ZONE_SENSOR_UNIQUE_ID,
 )
 from .control import DeviceControl, ResponseMemory, async_get_response_memory
 from .helpers import get_mode_state, mode_entity_id
 from .power_memory import async_get_power_memory
 from .strategies import Strategies
+from .zones import ActiveZone, ZoneWatcher
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,24 +42,6 @@ if TYPE_CHECKING:
         State,
     )
     from homeassistant.helpers.entity_registry import EventEntityRegistryUpdatedData
-
-
-class ActiveZone(StrEnum):
-    """
-    Active power load zone for balancing.
-
-    Pause (green on pause) and no data run no strategy.
-    """
-
-    NO_DATA = "no_data"
-    PAUSE = "pause"
-    GREEN = "green"
-    YELLOW = "yellow"
-    RED = "red"
-    OVERLOAD = "overload"
-
-
-ZONES = (ActiveZone.GREEN, ActiveZone.YELLOW, ActiveZone.RED, ActiveZone.OVERLOAD)
 
 
 class BalancingCoordinator:
@@ -87,6 +68,7 @@ class BalancingCoordinator:
         self._active = False
         self._unsubscribe_start: list[Callable[[], None]] = []
 
+        self._zones = ZoneWatcher(hass, self._on_zone_changed)
         self._response_memory: ResponseMemory  # loaded by async_start
         self._strategies: Strategies  # made by async_start
 
@@ -116,7 +98,7 @@ class BalancingCoordinator:
             self._hass,
             self._controls,
             await async_get_power_memory(self._hass),
-            self._overload_cleared,
+            self._zones.overload_cleared,
         )
 
         # The zone sensors may come later: when the AC load limits are set
@@ -125,7 +107,7 @@ class BalancingCoordinator:
                 EVENT_ENTITY_REGISTRY_UPDATED, self._on_entity_registry_updated
             )
         ]
-        if self._zone_entity_ids():
+        if self._zones.entity_ids():
             self._activate()
         self._unsubscribe_start.append(async_at_started(self._hass, self._on_started))
 
@@ -138,7 +120,7 @@ class BalancingCoordinator:
         if (
             event.data["action"] == "remove"
             and self._active
-            and not (self._zone_entity_ids())
+            and not (self._zones.entity_ids())
         ):
             self._deactivate()
             return
@@ -149,7 +131,7 @@ class BalancingCoordinator:
         if self._active and entity_id in self._mode_entity_ids():
             self._unsubscribe()
             self._subscribe()
-        elif entity_id in self._zone_entity_ids():
+        elif entity_id in self._zones.entity_ids():
             self._activate()
 
     @callback
@@ -200,7 +182,7 @@ class BalancingCoordinator:
         self._subscribe()
 
         # Determine initial active zone (but don't execute strategy per Q7)
-        self._active_zone = self._determine_active_zone()
+        self._active_zone = self._zones.active_zone()
         LOGGER.debug("Initial active zone: %s", self._active_zone)
 
         # Start periodic job based on initial zone (per Q7: wait for first interval)
@@ -269,24 +251,10 @@ class BalancingCoordinator:
 
         return remove
 
-    def _zone_entity_id(self, zone: ActiveZone) -> str | None:
-        """Return the current entity_id of a zone binary sensor."""
-        return mode_entity_id(
-            self._hass, "binary_sensor", ZONE_SENSOR_UNIQUE_ID.format(zone=zone)
-        )
-
-    def _zone_state(self, zone: ActiveZone) -> State | None:
-        """Return the state of a zone binary sensor, if it has one."""
-        entity_id = self._zone_entity_id(zone)
-        return self._hass.states.get(entity_id) if entity_id else None
-
-    def _zone_entity_ids(self) -> list[str]:
-        return [e for zone in ZONES if (e := self._zone_entity_id(zone))]
-
     def _mode_entity_ids(self) -> list[str]:
         """Return the entity_ids of the zone sensors and the mode select."""
         select = mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID)
-        return [*self._zone_entity_ids(), *([select] if select else [])]
+        return [*self._zones.entity_ids(), *([select] if select else [])]
 
     def _subscribe(self) -> None:
         """
@@ -295,25 +263,21 @@ class BalancingCoordinator:
         The entities are tracked by their current entity_ids, so the listeners
         are re-created whenever one of them is renamed or created.
         """
-        zone_entity_ids = self._zone_entity_ids()
+        self._zones.follow()
         select_entity_id = mode_entity_id(self._hass, "select", MODE_SELECT_UNIQUE_ID)
         mode_entity_ids = [select_entity_id] if select_entity_id else []
         self._subscriptions = [
             async_track_state_change_event(
-                self._hass, zone_entity_ids, self._on_zone_changed
-            ),
-            async_track_state_change_event(
                 self._hass, mode_entity_ids, self._on_mode_changed
             ),
             async_track_entity_registry_updated_event(
-                self._hass,
-                zone_entity_ids + mode_entity_ids,
-                self._on_mode_entity_registry_updated,
+                self._hass, mode_entity_ids, self._on_mode_entity_registry_updated
             ),
         ]
 
     def _unsubscribe(self) -> None:
         """Remove all bestiarium_mode entity listeners."""
+        self._zones.stop()
         for unsubscribe in self._subscriptions:
             unsubscribe()
         self._subscriptions.clear()
@@ -322,7 +286,7 @@ class BalancingCoordinator:
     def _on_mode_entity_registry_updated(
         self, event: Event[EventEntityRegistryUpdatedData]
     ) -> None:
-        """Follow a renamed bestiarium_mode entity to its new entity_id."""
+        """Follow a renamed mode select to its new entity_id."""
         if "old_entity_id" not in event.data:
             return
         LOGGER.debug(
@@ -332,36 +296,6 @@ class BalancingCoordinator:
         )
         self._unsubscribe()
         self._subscribe()
-
-    def _determine_active_zone(self) -> ActiveZone:
-        """
-        Return the zone whose sensor is on.
-
-        None on: the pause before green while the sensors are available, no
-        data when they are not.
-        """
-        for zone in reversed(ZONES):
-            if self._is_sensor_on(zone):
-                return zone
-        green = self._zone_state(ActiveZone.GREEN)
-        if green is not None and green.state == STATE_OFF:
-            return ActiveZone.PAUSE
-        return ActiveZone.NO_DATA
-
-    def _is_sensor_on(self, zone: ActiveZone) -> bool:
-        """Check if a zone binary sensor is ON."""
-        state = self._zone_state(zone)
-        return state is not None and state.state == STATE_ON
-
-    def _overload_cleared(self) -> bool:
-        """
-        Return True only if the overload sensor reports OFF.
-
-        Fail-safe for the emergency shutdown: a missing, unknown or
-        unavailable sensor means the overload may still be going on.
-        """
-        state = self._zone_state(ActiveZone.OVERLOAD)
-        return state is not None and state.state == STATE_OFF
 
     def _stop_periodic_job(self) -> None:
         """Stop the current periodic job if running."""
@@ -434,21 +368,9 @@ class BalancingCoordinator:
             await self._async_red()
 
     @callback
-    def _on_zone_changed(self, event: Event) -> None:
+    def _on_zone_changed(self) -> None:
         """Handle zone binary sensor state changes."""
-        entity_id = event.data.get("entity_id")
-        new_state = event.data.get("new_state")
-        old_state = event.data.get("old_state")
-
-        LOGGER.debug(
-            "Zone sensor changed: %s from %s to %s",
-            entity_id,
-            old_state.state if old_state else "None",
-            new_state.state if new_state else "None",
-        )
-
-        # Determine the new active zone
-        new_zone = self._determine_active_zone()
+        new_zone = self._zones.active_zone()
 
         if new_zone != self._active_zone:
             previous_zone = self._active_zone
@@ -507,15 +429,6 @@ class BalancingCoordinator:
         await self._strategies.async_allowed_changed(
             entry, green=self._active_zone == ActiveZone.GREEN
         )
-
-
-# Export constants for use in tests
-__all__ = [
-    "GREEN_INTERVAL_SECONDS",
-    "RED_INTERVAL_SECONDS",
-    "ActiveZone",
-    "BalancingCoordinator",
-]
 
 
 def _mode(state: State | None) -> str | None:
