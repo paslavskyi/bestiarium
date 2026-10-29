@@ -29,7 +29,13 @@ from homeassistant.helpers.start import async_at_started
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .command import ATTEMPT_INTERVAL, SwitchCommand, SwitchCommands, direction
+from .command import (
+    ATTEMPT_INTERVAL,
+    MIN_RESPONSE_BUDGET,
+    SwitchCommand,
+    SwitchCommands,
+    direction,
+)
 from .const import (
     CONF_HEATER_POWER,
     CONF_RECOVERY_TIMEOUT,
@@ -494,9 +500,10 @@ class ThermostatControl:
         Out of attempts: the series "on" has as many failed attempts as the
         attempts, the switch off, whatever is wanted now (a heater out of
         attempts never takes another's place). Hung: an "on" not answered
-        runs longer than the budget of the attempts (attempts x a cycle). A
-        switch that does not turn off is never deferred: it is turned off
-        stepwise. Called before the capacity is shared, so that its place
+        runs longer than the budget of the attempts (attempts x a cycle, at
+        least MIN_RESPONSE_BUDGET), seen at the next cycle. A switch that
+        does not turn off is never deferred: it is turned off stepwise.
+        Called before the capacity is shared, so that its place
         goes to another thermostat in this cycle.
         """
         self._observe(now)
@@ -504,7 +511,8 @@ class ThermostatControl:
             return
         attempts = self.settings.attempts
         failed = self._commands.failed(now, on=True)
-        if self._commands.hung(now, ATTEMPT_INTERVAL * attempts, on=True):
+        budget = max(ATTEMPT_INTERVAL * attempts, MIN_RESPONSE_BUDGET)
+        if self._commands.hung(now, budget, on=True):
             # The hung command is a failed attempt too
             self._defer(now, failed + 1)
         elif failed >= attempts:

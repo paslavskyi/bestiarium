@@ -1863,3 +1863,35 @@ async def test_the_deferral_off_goes_once_while_it_runs(floors: Floors) -> None:
     released.set()
     await floors.tick(3 * MINUTE, step=10)
     assert floors.calls.count(("turn_off", "floor_1")) == 1
+
+
+@pytest.mark.parametrize(("sequence", "unresponsive"), [(60, False), (130, True)])
+async def test_a_single_attempt_waits_for_a_sequence_of_a_minute(
+    floors: Floors, sequence: int, *, unresponsive: bool
+) -> None:
+    """
+    A8: with one attempt an "on" gets at least 90 s, not 55 s.
+
+    An IR sequence of a minute is no problem; one that hangs past 90 s is,
+    at the next cycle.
+    """
+    long, on_started = asyncio.Event(), asyncio.Event()
+
+    async def runs() -> None:
+        if ("turn_off", "floor_1") not in floors.calls and not on_started.is_set():
+            on_started.set()
+            await long.wait()
+
+    floors.before["floor_1"] = runs
+    setup = floors.hass.async_create_task(floors.setup(capacity=1))
+    await on_started.wait()
+    floors.hass.config_entries.async_update_entry(floors.entry, options={"attempts": 1})
+    for _ in range(sequence // 10):
+        _minutes(floors, 10)
+        for _ in range(5):
+            await asyncio.sleep(0)
+    long.set()
+    await setup
+    await floors.hass.async_block_till_done()
+
+    assert (floors.state("floor_1") == "unresponsive") is unresponsive

@@ -30,6 +30,10 @@ if TYPE_CHECKING:
 
 # One attempt a balancing cycle; a little less, as the timers jitter
 ATTEMPT_INTERVAL = timedelta(seconds=BALANCING_INTERVAL_SECONDS - 5)
+# The least budget of an "on" not answered: an IR sequence takes about a
+# minute, so with a single attempt (55 s) a working air conditioner would be
+# "Not responding" (DEC-014, rule 3: never sooner than the device answers)
+MIN_RESPONSE_BUDGET = timedelta(seconds=90)
 
 
 def direction(on: bool) -> str:  # noqa: FBT001
