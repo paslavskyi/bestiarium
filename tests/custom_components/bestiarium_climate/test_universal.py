@@ -8,11 +8,12 @@ from typing import Any
 
 import pytest
 from homeassistant.config_entries import ConfigEntryDisabler
-from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.bestiarium_climate.const import (
@@ -20,6 +21,7 @@ from custom_components.bestiarium_climate.const import (
     EVENT_POWER_CUT,
     EVENT_SWITCH_OUT_OF_CONTROL,
 )
+from custom_components.bestiarium_climate.control import Reading, ThermostatControl
 from custom_components.bestiarium_climate.repairs import ThermostatSwitchRepairFlow
 
 from .test_balancer import MINUTE, Floors, _hvac, _temperatures, floors
@@ -101,10 +103,8 @@ async def test_universal_off_frees_its_place(floors: Floors) -> None:
 
 async def test_universal_stepwise_off_has_no_socket_step(floors: Floors) -> None:
     """A stuck switch: three "off"s, then the event with its power; no socket cut."""
-    floors.hass.states.async_set("sensor.floor_1_power", "1500")
     out = _payloads(floors.hass, EVENT_SWITCH_OUT_OF_CONTROL)
-    await floors.setup(capacity=3, universal=UNIVERSAL, power=POWER)
-    assert "floor_1" in floors.on()
+    await _running(floors)
     floors.stuck.add("floor_1")
     await _temperatures(floors, floor_1="25")
     await floors.tick(25 * MINUTE)
@@ -168,3 +168,93 @@ async def test_device_relay_repair_offers_no_virtual_switch(
     field = next(k for k in result["data_schema"].schema if k.schema == "target_switch")
     selector = result["data_schema"].schema[field]
     assert selector.config["exclude_entities"] == ["switch.virtual_one"]
+
+
+def _control(floors: Floors, floor: str) -> ThermostatControl:
+    return floors.hass.data[DOMAIN][floors.entry.entry_id].controls[floor]
+
+
+def _reading(floors: Floors, floor: str) -> Reading | None:
+    return _control(floors, floor).reading(dt_util.utcnow())
+
+
+def _attributes(floors: Floors, floor: str) -> dict[str, Any]:
+    entity_id = floors.entity_id("sensor", f"{floor}_control_state")
+    return dict(floors.hass.states.get(entity_id).attributes)
+
+
+async def _power(floors: Floors, watts: str, *, after: float = 11) -> None:
+    """Show floor 1's power, and let it last."""
+    floors.hass.states.async_set("sensor.floor_1_power", watts)
+    await floors.tick(after, step=1)
+
+
+def _power_follows_the_switch(floors: Floors) -> None:
+    """Floor 1's heater draws 1500 W while its switch is on, 0 W while off."""
+
+    @callback
+    def follow(event: Event) -> None:
+        if event.data["entity_id"] == "switch.floor_1" and event.data["new_state"]:
+            on = event.data["new_state"].state == STATE_ON
+            floors.hass.states.async_set("sensor.floor_1_power", "1500" if on else "0")
+
+    floors.hass.bus.async_listen("state_changed", follow)
+
+
+async def _running(floors: Floors) -> None:
+    """Floor 1 universal, read by its power: running at 1500 W."""
+    floors.hass.states.async_set("sensor.floor_1_power", "0")
+    _power_follows_the_switch(floors)
+    await floors.setup(capacity=3, universal=UNIVERSAL, power=POWER)
+    assert ("turn_on", "floor_1") in floors.calls
+    await _power(floors, "1500")
+    assert _reading(floors, "floor_1") is Reading.ON
+
+
+async def test_reading_follows_power_not_the_switch(floors: Floors) -> None:
+    """Its switch shows on at once, but it runs only once the power shows it."""
+    floors.hass.states.async_set("sensor.floor_1_power", "0")
+    await floors.setup(capacity=3, universal=UNIVERSAL, power=POWER)
+    assert floors.hass.states.get("switch.floor_1").state == STATE_ON
+    assert _reading(floors, "floor_1") is Reading.STARTING
+    await _power(floors, "1500", after=5)
+    assert _reading(floors, "floor_1") is Reading.STARTING
+    await _power(floors, "1500", after=6)
+    assert _reading(floors, "floor_1") is Reading.ON
+
+
+async def test_power_dip_shorter_than_the_delay_changes_nothing(
+    floors: Floors,
+) -> None:
+    """Running, 0 W for 5 s: no command, still running."""
+    await _running(floors)
+    calls = list(floors.calls)
+    await _power(floors, "0", after=5)
+    await _power(floors, "1500", after=MINUTE)
+    assert floors.calls == calls
+    assert _reading(floors, "floor_1") is Reading.ON
+
+
+async def test_no_power_data_is_switch_unavailable(floors: Floors) -> None:
+    """No power data past both tolerances: "Switch unavailable", out of the rotation."""
+    await _running(floors)
+    await _power(floors, STATE_UNAVAILABLE, after=3 * MINUTE)
+    assert floors.state("floor_1") == "switch_unavailable"
+    assert _reading(floors, "floor_1") is None
+    await _power(floors, "1500", after=3 * MINUTE)
+    assert floors.state("floor_1") == "normal"
+    await floors.tick(5 * MINUTE)
+    assert "floor_1" in floors.on()
+
+
+async def test_off_by_another_read_from_power(floors: Floors) -> None:
+    """Its power gone for good, the switch still on: off by another, no attempt."""
+    await _running(floors)
+    calls = list(floors.calls)
+    await _power(floors, "0", after=3 * MINUTE)
+    assert _reading(floors, "floor_1") is Reading.OFF
+    assert floors.calls == calls
+    attributes = _attributes(floors, "floor_1")
+    assert attributes["failed_attempts"] == 0
+    assert attributes["pause_until"] is not None
+    assert floors.state("floor_1") == "normal"

@@ -76,6 +76,8 @@ EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
 EVENT_SWITCH_OUT_OF_CONTROL = "bestiarium_climate_switch_out_of_control"
 EVENT_POWER_CUT = "bestiarium_climate_power_cut"
 SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
+# A switch read by power changed: the balancer decides again
+SIGNAL_SWITCH_CHANGED = f"{DOMAIN}_switch_changed_{{}}"
 
 # The thermostats' state the balancer keeps across restarts (Store)
 STORAGE_KEY = f"{DOMAIN}.thermostats"

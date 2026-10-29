@@ -55,6 +55,7 @@ from .const import (
     SENSOR_ZONES,
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
+    SIGNAL_SWITCH_CHANGED,
     THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -192,6 +193,13 @@ class BalancingCoordinator:
                     self._hass,
                     SIGNAL_CONTROL_CHANGED.format(control.subentry_id),
                     self._control_changed(control),
+                )
+            )
+            self._unsubscribe.append(
+                async_dispatcher_connect(
+                    self._hass,
+                    SIGNAL_SWITCH_CHANGED.format(control.subentry_id),
+                    self.async_request_balance,
                 )
             )
         self._follow_zones()
