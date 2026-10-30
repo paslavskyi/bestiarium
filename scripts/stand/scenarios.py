@@ -934,8 +934,8 @@ def _ac_scenarios(reg: Registry, reset: dict[str, Any]) -> dict[str, dict[str, A
                 room(18),
                 *mode("auto"),
                 # The room reaches 20 °C in about 3.5 minutes, then it idles
-                wait(240),
-                wait(180),
+                # for 3 minutes holding its place
+                wait(420),
                 room(21),
             ],
         },

@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
     from .faults import MockSocket
-    from .ir_ac import MockIrAc
 
 
 async def async_setup_entry(
@@ -195,10 +194,6 @@ class MockIrAcSensorOffsetNumber(MockIrAcEntity, RestoreNumber):
     _attr_native_max_value = 5.0
     _attr_native_step = 0.5
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-
-    def __init__(self, ac: MockIrAc, key: str) -> None:
-        """Initialize the knob."""
-        super().__init__(ac, key)
 
     @property
     def native_value(self) -> float:
