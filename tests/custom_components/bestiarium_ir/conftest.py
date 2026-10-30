@@ -137,8 +137,8 @@ class Clock:
 def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     """Run the pauses between frames without waiting."""
     fake = Clock()
-    monkeypatch.setattr(hisense, "monotonic", lambda: fake.now, raising=False)
-    monkeypatch.setattr(hisense, "sleep", fake.sleep, raising=False)
+    monkeypatch.setattr(hisense, "monotonic", lambda: fake.now)
+    monkeypatch.setattr(hisense, "sleep", fake.sleep)
     return fake
 
 

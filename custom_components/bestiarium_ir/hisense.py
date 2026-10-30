@@ -10,11 +10,14 @@ air conditioner.
 
 from __future__ import annotations
 
+from asyncio import Lock, sleep
 from enum import StrEnum
+from time import monotonic
 from typing import TYPE_CHECKING
 
 from homeassistant.components.infrared import async_send_command
 
+from .const import FRAME_PAUSE_SECONDS
 from .kelon168 import Kelon168Action
 
 if TYPE_CHECKING:
@@ -48,13 +51,32 @@ ACTIONS: dict[Change, Kelon168Action] = {
 
 
 class HisenseLink:
-    """Sends the frames of one air conditioner through its emitter."""
+    """
+    Sends the frames of one air conditioner through its emitter.
+
+    The unit does not carry out a frame sooner than 3 s after the previous
+    one: frames wait their turn, in order.
+    """
 
     def __init__(self, hass: HomeAssistant, emitter: str) -> None:
         """Link to the emitter's entity."""
         self.hass = hass
         self.emitter = emitter
+        self._turn = Lock()
+        self._last_sent: float | None = None
 
     async def send(self, command: Kelon168Command, context: Context | None) -> None:
-        """Send a frame."""
-        await async_send_command(self.hass, self.emitter, command, context=context)
+        """Send a frame in its turn."""
+        async with self._turn:
+            await self._send(command, context)
+
+    async def _send(self, command: Kelon168Command, context: Context | None) -> None:
+        if (
+            self._last_sent is not None
+            and (wait := self._last_sent + FRAME_PAUSE_SECONDS - monotonic()) > 0
+        ):
+            await sleep(wait)
+        try:
+            await async_send_command(self.hass, self.emitter, command, context=context)
+        finally:
+            self._last_sent = monotonic()

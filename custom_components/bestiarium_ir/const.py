@@ -22,3 +22,6 @@ ZHA_MODEL = "TS1201"
 ZOSUNG_ENDPOINT = 1
 ZOSUNG_CLUSTER = 0xE004
 ZOSUNG_SEND = 2
+
+# The unit does not carry out a frame sooner after the previous one (FEAT-025)
+FRAME_PAUSE_SECONDS = 3

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 import pytest
@@ -11,6 +13,7 @@ from homeassistant.components.climate import (
 )
 from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE
 from homeassistant.core import State
+from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
@@ -23,6 +26,7 @@ from custom_components.bestiarium_ir.kelon168 import (
 )
 
 from .conftest import (
+    Clock,
     RecordingEmitter,
     call,
     hisense_subentry,
@@ -240,3 +244,47 @@ async def test_modes_of_the_device(hass: HomeAssistant, ac: AC) -> None:
         attributes["max_temp"],
         attributes["target_temp_step"],
     ) == (16, 30, 1)
+
+
+async def test_frames_are_three_seconds_apart(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter, clock: Clock
+) -> None:
+    """Changes at once: their frames go one by one, at least 3 s apart."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    await asyncio.gather(
+        call(hass, "climate", "set_temperature", climate, temperature=25),
+        call(hass, "climate", "set_fan_mode", climate, fan_mode="high"),
+    )
+    assert len(emitter.times) == 3
+    assert all(b - a >= 3 for a, b in pairwise(emitter.times))
+    # The first frame went at once; each of the next waited out the pause
+    assert clock.sleeps == [3, 3]
+
+
+async def test_last_change_is_the_last_frame(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """Targets one after another: every one goes, in order; the last one stays."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    await asyncio.gather(
+        *(
+            call(hass, "climate", "set_temperature", climate, temperature=t)
+            for t in (25, 26, 27)
+        )
+    )
+    assert [f.temperature for f in emitter.frames[-3:]] == [25, 26, 27]
+    assert hass.states.get(climate).attributes[ATTR_TEMPERATURE] == 27
+
+
+async def test_failed_send_keeps_the_assumed_state(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """The emitter fails: the action fails, the assumed state stays."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    emitter.fail = True
+    with pytest.raises(HomeAssistantError):
+        await call(hass, "climate", "set_hvac_mode", climate, hvac_mode=HVACMode.COOL)
+    assert hass.states.get(climate).state == HVACMode.HEAT
