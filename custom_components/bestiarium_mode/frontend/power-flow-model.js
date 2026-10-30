@@ -21,7 +21,7 @@ export const DEFAULTS = {
 const THRESHOLD = 0.05;
 const DASH = "—";
 
-const KEYS = {
+export const KEYS = {
   nodes: ["grid", "sun", "inv", "home", "bat"],
   wires: ["gridInv", "gridHome", "sun", "invHome", "invBat"],
 };
@@ -82,9 +82,11 @@ export function flowModel(r) {
   const homeFromInv = r.inverterHome === true || noGrid;
   const homeFromGrid = r.inverterHome === false && !noGrid;
   const gridToInv = r.gridInverter === true && !noGrid;
-  const gridToInvKw = homeFromGrid && r.gridKw !== null && r.homeKw !== null
-    ? Math.max(0, r.gridKw - r.homeKw)
-    : homeFromGrid ? null : r.gridKw;
+  // The grid's power beyond what it feeds the home straight
+  let gridToInvKw = r.gridKw;
+  if (homeFromGrid) {
+    gridToInvKw = r.gridKw === null || r.homeKw === null ? null : Math.max(0, r.gridKw - r.homeKw);
+  }
 
   // The sensor sees a discharge only once the charge falls; with no grid
   // behind the inverter feeding the home, the battery covers what the sun lacks
@@ -94,13 +96,14 @@ export function flowModel(r) {
   }
   const discharging = flows(batKw) && batKw > 0;
   const charging = flows(batKw) && batKw < 0;
+  const sunFlows = r.sunKw > THRESHOLD;
 
   const wires = {
     gridInv: wire(gridToInv ? (flows(gridToInvKw) ? "flow" : "idle") : "off", gridToInvKw),
     gridHome: wire(homeFromGrid ? "flow" : "off", r.homeKw),
-    sun: wire(flows(r.sunKw) && r.sunKw > 0 ? "flow" : "idle", r.sunKw),
+    sun: wire(sunFlows ? "flow" : "idle", r.sunKw),
     invHome: wire(homeFromInv ? "flow" : "off", r.homeKw),
-    invBat: wire(discharging || charging ? "flow" : "idle", batKw, discharging),
+    invBat: wire(flows(batKw) ? "flow" : "idle", batKw, discharging),
   };
 
   let gridLines = [DASH];
@@ -108,7 +111,7 @@ export function flowModel(r) {
   else if (r.gridPresent) gridLines = [flows(r.gridKw) ? kw(r.gridKw) : "є"];
 
   let sunLines = [DASH];
-  if (r.sunKw !== null) sunLines = [flows(r.sunKw) && r.sunKw > 0 ? kw(r.sunKw) : "немає"];
+  if (r.sunKw !== null) sunLines = [sunFlows ? kw(r.sunKw) : "немає"];
 
   let invLines = [DASH];
   if (homeFromInv) invLines = ["живить дім"];
@@ -203,7 +206,7 @@ function node(layout, key) {
   </g>`;
 }
 
-export function skeleton(name = "wide") {
+export function skeleton(name) {
   const layout = LAYOUTS[name];
   const d = paths(layout);
   const wires = KEYS.wires
@@ -217,5 +220,3 @@ export function skeleton(name = "wide") {
     .map((key) => node(layout, key))
     .join("")}</svg>`;
 }
-
-export { KEYS };

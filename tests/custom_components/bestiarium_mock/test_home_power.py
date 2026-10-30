@@ -15,6 +15,8 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.bestiarium_mock.const import DOMAIN
 
+from .conftest import mock_entry
+
 EntityId = Callable[[str, str], str]
 
 DEFAULTS = {
@@ -107,8 +109,6 @@ async def test_home_power_knobs_survive_a_restart(
             ),
         ],
     )
-    from .conftest import mock_entry  # noqa: PLC0415
-
     entry = mock_entry()
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
