@@ -26,6 +26,7 @@ from .layout import (
     SCRIPT_PREFIX,
     STAND_DEVICES,
     THERMOSTATS,
+    UNIVERSAL_THERMOSTATS,
     YELLOW_W,
 )
 
@@ -111,9 +112,13 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         return {"delay": {"seconds": seconds}}
 
     climate = reg.stand_climate()
-    thermostats = [
+    universal = {name: reg.thermostat(name) for name, _, _ in UNIVERSAL_THERMOSTATS}
+    every_thermostat = [
         e["entity_id"] for e in climate if e["entity_id"].startswith("climate.")
     ]
+    # The scenarios before DEV-011 heat the virtual thermostats only: "heat"
+    # is the manual mode of a universal one
+    thermostats = [t for t in every_thermostat if t not in universal.values()]
     capacity = [e["entity_id"] for e in climate if e["entity_id"].startswith("number.")]
 
     def heat(hvac_mode: str) -> list[dict[str, Any]]:
@@ -176,6 +181,23 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "data": {"option": reading_profile.value},
         }
 
+    (heater, heater_room, _), (cloud, cloud_room, cloud_ac) = UNIVERSAL_THERMOSTATS
+
+    def universal_mode(name: str, hvac_mode: str) -> list[dict[str, Any]]:
+        """Put a universal thermostat in a mode, its target 21 °C."""
+        return [
+            {
+                "action": "climate.set_temperature",
+                "target": {"entity_id": universal[name]},
+                "data": {"temperature": 21},
+            },
+            {
+                "action": "climate.set_hvac_mode",
+                "target": {"entity_id": universal[name]},
+                "data": {"hvac_mode": hvac_mode},
+            },
+        ]
+
     reset = {"action": f"script.{SCRIPT_PREFIX}reset"}
     readings = [*(spec.device_id for spec in MOCK_THERMOMETERS), MOCK_GRID.device_id]
     all_sockets = [spec.device_id for spec in MOCK_DEVICES]
@@ -186,6 +208,12 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         if device.priority == LOAD_PRIORITY_ALWAYS_ON
     ]
     ir_lost = [reg.mock("switch", f"mock_{ac}_ir_lost") for _, _, ac in THERMOSTATS]
+    # Every air conditioner the stand plays IR to: the cloud AC too
+    air_conditioners = [
+        *((name, ac) for name, _, ac in THERMOSTATS),
+        (UNIVERSAL_THERMOSTATS[1][0], UNIVERSAL_THERMOSTATS[1][2]),
+    ]
+
     # The stand's own loads that a person turns on (not always on, not run by
     # a thermostat): a fault scenario does not allow them, so the load stays
     # green and the faulty air conditioner gets its start
@@ -247,7 +275,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:remote",
             "sequence": ir(ac, watts),
         }
-        for name, _, ac in THERMOSTATS
+        for name, ac in air_conditioners
         for command, label, watts in (
             ("on", "увімкнути", AC_RUNNING_W),
             ("off", "вимкнути", AC_STANDBY_W),
@@ -260,13 +288,23 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             "icon": "mdi:restore",
             "sequence": [
                 # The thermostats first: no start in a cycle the reset itself runs
-                *heat("off"),
+                {
+                    "action": "climate.set_hvac_mode",
+                    "target": {"entity_id": every_thermostat},
+                    "data": {"hvac_mode": "off"},
+                },
                 *(profile(mock_id, FaultProfile.RELIABLE) for mock_id in all_sockets),
                 *(reading(device, ReadingProfile.RELIABLE) for device in readings),
-                *(ac_power(ac, AC_STANDBY_W) for _, _, ac in THERMOSTATS),
+                *(ac_power(ac, AC_STANDBY_W) for _, ac in air_conditioners),
                 {
                     "action": "switch.turn_off",
-                    "target": {"entity_id": [*ir_lost, *ir_hangs]},
+                    "target": {
+                        "entity_id": [
+                            reg.mock("switch", f"mock_{ac}_ir_{knob}")
+                            for _, ac in air_conditioners
+                            for knob in ("lost", "hangs")
+                        ]
+                    },
                 },
                 {
                     "action": "number.set_value",
@@ -281,7 +319,10 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 # rooms at 20 °C
                 {"action": "switch.turn_on", "target": {"entity_id": loads}},
                 {"action": "switch.turn_on", "target": {"entity_id": ac_sockets}},
-                *(room(thermometer, 20) for _, thermometer, _ in THERMOSTATS),
+                *(
+                    room(thermometer, 20)
+                    for _, thermometer, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)
+                ),
                 wait(2),
             ],
         },
@@ -535,6 +576,129 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 mode("Night"),
                 wait(3),
                 turn("turn_on", "tuya_socket"),
+            ],
+        },
+        "universal_auto": {
+            "alias": "Стенд: універсальний — «авто» гріє й вимикає",
+            "icon": "mdi:thermostat-auto",
+            # Scenario 1: auto heats the cold room, then stops when it is warm
+            "sequence": [
+                reset,
+                room(heater_room, 18),
+                *universal_mode(heater, "auto"),
+                wait(120),
+                room(heater_room, 22),
+            ],
+        },
+        "universal_manual": {
+            "alias": "Стенд: універсальний — ручний поза ємністю й жовтою",
+            "icon": "mdi:hand-back-left",
+            # Scenario 1: capacity 0, then yellow: the manual heater starts
+            # and stops by itself; then off
+            "sequence": [
+                reset,
+                {
+                    "action": "number.set_value",
+                    "target": {"entity_id": capacity},
+                    "data": {"value": 0},
+                },
+                room(heater_room, 18),
+                *universal_mode(heater, "heat"),
+                wait(60),
+                *grid_at(YELLOW_W, 200),
+                wait(60),
+                room(heater_room, 22),
+                wait(60),
+                {
+                    "action": "climate.set_hvac_mode",
+                    "target": {"entity_id": universal[heater]},
+                    "data": {"hvac_mode": "off"},
+                },
+                cooker(400),
+            ],
+        },
+        "manual_red": {
+            "alias": "Стенд: ручний — червона зона вимикає першим",
+            "icon": "mdi:alert-octagon",
+            # Scenario 2: the manual heater runs; red turns its thermostat
+            # off at once (the event zone_entered); it stays off after red
+            "sequence": [
+                reset,
+                room(heater_room, 18),
+                *universal_mode(heater, "heat"),
+                wait(30),
+                *grid_at(RED_W, 300),
+                wait(60),
+                cooker(400),
+            ],
+        },
+        "manual_on_in_red": {
+            "alias": "Стенд: ручний — увімкнули в червоній",
+            "icon": "mdi:alert-octagon-outline",
+            # Scenario 2: in red, heat goes off at once (the event turned_on)
+            "sequence": [
+                reset,
+                *grid_at(RED_W, 300),
+                wait(10),
+                room(heater_room, 18),
+                *universal_mode(heater, "heat"),
+                wait(30),
+                cooker(400),
+            ],
+        },
+        "climate_coexistence": {
+            "alias": "Стенд: старі й універсальний ділять ємність",
+            "icon": "mdi:account-group",
+            # Scenario 9: AC 1, AC 2 and the heater want heat, capacity 2:
+            # two run; the rotation lets the one waiting in
+            "sequence": [
+                reset,
+                *loads_wait,
+                *(room(thermometer, 18) for _, thermometer, _ in THERMOSTATS[:2]),
+                room(heater_room, 18),
+                {
+                    "action": "climate.set_temperature",
+                    "target": {"entity_id": thermostats[:2]},
+                    "data": {"temperature": 25},
+                },
+                {
+                    "action": "climate.set_hvac_mode",
+                    "target": {"entity_id": thermostats[:2]},
+                    "data": {"hvac_mode": "heat"},
+                },
+                *universal_mode(heater, "auto"),
+            ],
+        },
+        "cloud_ac_universal": {
+            "alias": "Стенд: хмарний кондиціонер на універсальному",
+            "icon": "mdi:cloud-outline",
+            # Scenario 10: auto turns the template switch on (IR as the
+            # scenes), its power confirms it; warm, it goes off. Again on,
+            # then its IR lost: "off" three times, the event, no socket cut
+            "sequence": [
+                reset,
+                room(cloud_room, 18),
+                *universal_mode(cloud, "auto"),
+                wait(120),
+                room(cloud_room, 25),
+                wait(90),
+                room(cloud_room, 18),
+                {
+                    "wait_template": (
+                        "{{ is_state('"
+                        + reg.mock("number", f"mock_{cloud_ac}_mock_power")
+                        + f"', '{float(AC_RUNNING_W)}') }}}}"
+                    ),
+                    "timeout": {"minutes": 3},
+                    "continue_on_timeout": False,
+                },
+                {
+                    "action": "switch.turn_on",
+                    "target": {
+                        "entity_id": reg.mock("switch", f"mock_{cloud_ac}_ir_lost")
+                    },
+                },
+                room(cloud_room, 25),
             ],
         },
         "unstable_tuya": {

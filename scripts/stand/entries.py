@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from .layout import (
     CLIMATE,
+    CLOUD_AC,
+    CLOUD_AC_SWITCH,
     DEVICES,
+    HEATER_W,
     LOAD_LIMIT_W,
     MOCK,
     MODE,
@@ -21,8 +24,10 @@ from .layout import (
     RETIRED_THERMOSTATS,
     SCRIPT_PREFIX,
     STAND_DEVICES,
+    TEMPLATE,
     TEST_ENTITY_ID,
     THERMOSTATS,
+    UNIVERSAL_THERMOSTATS,
     YELLOW_PERCENT,
 )
 
@@ -193,7 +198,9 @@ async def remove_stand_climate(ha: HomeAssistant) -> None:
     the devices are made again: one relay lives in one integration, and an
     old thermostat on a floor relay would refuse its device.
     """
-    stand_thermostats = {name for name, _, _ in THERMOSTATS} | RETIRED_THERMOSTATS
+    stand_thermostats = {
+        name for name, _, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)
+    } | RETIRED_THERMOSTATS
     for entry in await ha.entries(CLIMATE):
         subentries = await ha.ws(
             "config_entries/subentries/list", entry_id=entry["entry_id"]
@@ -279,3 +286,62 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
             {},
         )
         print(f"  added {CLIMATE} thermostat: {name} on {switch}")
+    cloud_ac = await recreate_cloud_ac_switch(ha)
+    # The universal thermostats (DEV-011): a heater on its own socket, and
+    # the cloud AC on its template switch; both read by the socket's power
+    for name, thermometer, socket in UNIVERSAL_THERMOSTATS:
+        switch = (
+            cloud_ac if socket == CLOUD_AC else reg.mock("switch", f"mock_{socket}")
+        )
+        await ha.flow(
+            "subentries/flow",
+            [entry_id, "universal_thermostat"],
+            {
+                "name": name,
+                "temperature_sensor": reg.mock(
+                    "sensor", f"mock_{thermometer}_temperature"
+                ),
+                "target_switch": switch,
+                "thermostat_mode": "heating",
+                "cold_tolerance": 0.3,
+                "hot_tolerance": 0.3,
+                "min_cycle_duration": {"hours": 0, "minutes": 1, "seconds": 0},
+                **({"heater_power": HEATER_W} if socket != CLOUD_AC else {}),
+            },
+            {
+                "power_entity": reg.mock("sensor", f"mock_{socket}_power"),
+                "min_power": 20,
+                "power_tolerance_seconds": 60,
+                "power_hysteresis_percent": 20,
+                "power_delay_seconds": 10,
+            },
+            {},
+        )
+        print(f"  added {CLIMATE} universal thermostat: {name} on {switch}")
+
+
+async def recreate_cloud_ac_switch(ha: HomeAssistant) -> str:
+    """
+    Make the template switch of the cloud AC again; return its entity_id.
+
+    As the home's switch over Tuya scenes: no state of its own (optimistic),
+    its actions the IR scripts of the fourth AC.
+    """
+    for entry in await ha.entries(TEMPLATE):
+        if entry["title"] == CLOUD_AC_SWITCH:
+            await ha.remove_entry(entry)
+    result = await ha.flow(
+        "flow",
+        TEMPLATE,
+        {"next_step_id": "switch"},
+        {
+            "name": CLOUD_AC_SWITCH,
+            "turn_on": [{"action": f"script.{SCRIPT_PREFIX}ir_{CLOUD_AC}_on"}],
+            "turn_off": [{"action": f"script.{SCRIPT_PREFIX}ir_{CLOUD_AC}_off"}],
+        },
+    )
+    entry_id = result["result"]["entry_id"]
+    entities = await ha.ws("config/entity_registry/list")
+    switch = next(e["entity_id"] for e in entities if e["config_entry_id"] == entry_id)
+    print(f"  added the template switch {switch}")
+    return switch
