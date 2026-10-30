@@ -140,9 +140,9 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
 
     def _assumed(self) -> tuple[HVACMode, float, str]:
         return (
-            self._attr_hvac_mode or HVACMode.OFF,
-            self._attr_target_temperature or AUTO_TEMP,
-            self._attr_fan_mode or Kelon168Fan.AUTO.value,
+            self._attr_hvac_mode,
+            self._attr_target_temperature,
+            self._attr_fan_mode,
         )
 
     @override
@@ -257,14 +257,10 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
 
     def _display_frame(self) -> Kelon168Command | None:
         """Return the display frame of the state, None while the unit is off."""
-        if self._attr_hvac_mode in (None, HVACMode.OFF):
+        hvac_mode, temperature, fan_mode = self._assumed()
+        if hvac_mode is HVACMode.OFF:
             return None
-        return self._command(
-            self._attr_hvac_mode,
-            int(self._attr_target_temperature or AUTO_TEMP),
-            self._attr_fan_mode or Kelon168Fan.AUTO.value,
-            Change.DISPLAY,
-        )
+        return self._command(hvac_mode, int(temperature), fan_mode, Change.DISPLAY)
 
     def _command(
         self, hvac_mode: HVACMode, temperature: int, fan_mode: str, change: Change
