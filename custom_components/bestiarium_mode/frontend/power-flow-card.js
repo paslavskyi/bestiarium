@@ -22,10 +22,11 @@ const STYLE = `
   .node.dim ha-icon { color: var(--state-icon-color); }
   .node-label { font-size: 15px; font-weight: 500; fill: var(--primary-text-color); }
   .node-value { font-size: 14px; fill: var(--secondary-text-color); }
+  ha-card.narrow .title span { display: none; }
   .narrow .node-label { font-size: 24px; }
   .narrow .node-value { font-size: 22px; }
   .wire { fill: none; stroke-width: 4; stroke-linecap: round; }
-  .wire.off { stroke: var(--slider-track-color); stroke-dasharray: 2 10; }
+  .wire.off { stroke: var(--slider-track-color, var(--divider-color)); stroke-dasharray: 2 10; }
   .wire.idle { stroke: var(--primary-color); opacity: .45; }
   .wire.flow { stroke: var(--primary-color); }
   .dots { fill: none; stroke: var(--card-background-color); stroke-width: 4; stroke-linecap: round;
@@ -89,6 +90,8 @@ class BestiariumPowerFlowCard extends HTMLElement {
       return;
     }
     this._layout = layout;
+    // On a phone the tap hint would wrap the title onto two lines
+    this._card.classList.toggle("narrow", layout === "narrow");
     this._card.querySelector(".scheme").innerHTML = skeleton(layout);
     this._shown = null;
     this._update();

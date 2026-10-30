@@ -246,5 +246,7 @@ class MockHomePowerNumber(MockHomePowerEntity, RestoreNumber):
     async def async_added_to_hass(self) -> None:
         """Restore the value."""
         await super().async_added_to_hass()
-        if (last := await self.async_get_last_number_data()) is not None:
+        if (last := await self.async_get_last_number_data()) is not None and (
+            last.native_value is not None
+        ):
             self._home_power.set_number(self._key, last.native_value)
