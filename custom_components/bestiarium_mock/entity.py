@@ -11,6 +11,7 @@ from .const import DOMAIN
 
 if TYPE_CHECKING:
     from .faults import MockSocket
+    from .home_power import MockHomePower
     from .ir_ac import MockIrAc
 
 
@@ -61,3 +62,27 @@ class MockIrAcEntity(Entity):
         """Follow the air conditioner."""
         await super().async_added_to_hass()
         self.async_on_remove(self._ac.add_listener(self.async_write_ha_state))
+
+
+class MockHomePowerEntity(Entity):
+    """An entity of the stand's home power, updated on its every change."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, home_power: MockHomePower, key: str) -> None:
+        """Place the entity on the home power's device."""
+        self._home_power = home_power
+        self._attr_unique_id = f"mock_home_power_{key}"
+        self._attr_translation_key = f"home_power_{key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, "mock_home_power")},
+            translation_key="home_power",
+            manufacturer="Bestiarium",
+            model="Mock Home Power",
+        )
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the home power."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._home_power.add_listener(self.async_write_ha_state))

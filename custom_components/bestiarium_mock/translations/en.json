@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Bestiarium Mock Devices",
-        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
+        "description": "This creates the Bestiarium test stand:\n\n- Mock Grid (power monitoring)\n- {device_count} mock smart sockets, one per test scenario\n- {thermometer_count} mock thermometers (temperature set by hand)\n- Home power for the power flow card (relays, grid, sun, battery)\n\nEach socket has a switch, a power sensor and test knobs on its device page: a fault profile and its parameters."
       }
     },
     "abort": {
@@ -24,6 +24,15 @@
       },
       "ignores_off": {
         "name": "Ignores off"
+      },
+      "home_power_inverter_home": {
+        "name": "Relay inverter → home"
+      },
+      "home_power_grid_inverter": {
+        "name": "Relay grid → inverter"
+      },
+      "home_power_grid_present": {
+        "name": "Grid present"
       }
     },
     "sensor": {
@@ -83,6 +92,9 @@
             "name": "Fan speed"
           }
         }
+      },
+      "home_power_battery_hours_to_full": {
+        "name": "Battery to full"
       }
     },
     "binary_sensor": {
@@ -120,6 +132,21 @@
       },
       "sensor_offset": {
         "name": "Sensor offset"
+      },
+      "home_power_grid_power": {
+        "name": "From the grid"
+      },
+      "home_power_sun_power": {
+        "name": "Sun"
+      },
+      "home_power_battery_flow": {
+        "name": "Battery flow (+ discharge)"
+      },
+      "home_power_battery_charge": {
+        "name": "Battery charge"
+      },
+      "home_power_battery_hours_left": {
+        "name": "Battery lasts"
       }
     },
     "select": {
@@ -142,6 +169,9 @@
           "no_data": "No data",
           "frozen": "Frozen"
         }
+      },
+      "home_power_mode": {
+        "name": "Mode"
       }
     },
     "infrared": {
@@ -247,6 +277,9 @@
     },
     "thermo_6": {
       "name": "Mock Thermometer 6"
+    },
+    "home_power": {
+      "name": "Mock Home Power"
     }
   }
 }

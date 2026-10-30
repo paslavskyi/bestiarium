@@ -10,8 +10,8 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN, FaultProfile, ReadingProfile
-from .entity import MockSocketEntity
+from .const import DOMAIN, HOME_POWER_MODES, FaultProfile, ReadingProfile
+from .entity import MockHomePowerEntity, MockSocketEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
+    from .home_power import MockHomePower
     from .readings import MockReading
 
 
@@ -37,6 +38,7 @@ async def async_setup_entry(
         MockReadingProfileSelect(device_id, reading)
         for device_id, reading in coordinator.readings.items()
     )
+    async_add_entities([MockHomePowerModeSelect(coordinator.home_power)])
 
 
 class MockFaultProfileSelect(MockSocketEntity, SelectEntity, RestoreEntity):
@@ -117,3 +119,29 @@ class MockReadingProfileSelect(SelectEntity, RestoreEntity):
             self._reading.set_profile(
                 ReadingProfile(last_state.state), self._sensor_value()
             )
+
+
+class MockHomePowerModeSelect(MockHomePowerEntity, SelectEntity, RestoreEntity):
+    """The name of the home's power mode, as the card shows it."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, home_power: MockHomePower) -> None:
+        """Initialize the select."""
+        super().__init__(home_power, "mode")
+        self._attr_options = list(HOME_POWER_MODES)
+
+    @property
+    def current_option(self) -> str:
+        """Return the mode."""
+        return self._home_power.mode
+
+    async def async_select_option(self, option: str) -> None:
+        """Set the mode."""
+        self._home_power.set_mode(option)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the mode."""
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            self._home_power.set_mode(last_state.state)

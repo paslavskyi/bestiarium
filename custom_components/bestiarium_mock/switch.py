@@ -8,8 +8,8 @@ from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_ON, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
-from .const import DOMAIN
-from .entity import MockIrAcEntity, MockSocketEntity
+from .const import DOMAIN, HOME_POWER_SWITCHES
+from .entity import MockHomePowerEntity, MockIrAcEntity, MockSocketEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
     from .faults import MockSocket
+    from .home_power import MockHomePower
     from .ir_ac import MockIrAc
 
 
@@ -41,6 +42,9 @@ async def async_setup_entry(
         MockIrAcKnobSwitch(ac, knob)
         for ac in coordinator.ir_acs.values()
         for knob in ("ir_lost", "ignores_off")
+    )
+    async_add_entities(
+        MockHomePowerSwitch(coordinator.home_power, key) for key in HOME_POWER_SWITCHES
     )
 
 
@@ -136,3 +140,33 @@ class MockDeviceSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):
         await super().async_added_to_hass()
         if (last_state := await self.async_get_last_state()) is not None:
             self._socket.restore(on=last_state.state == STATE_ON)
+
+
+class MockHomePowerSwitch(MockHomePowerEntity, SwitchEntity, RestoreEntity):
+    """A relay of the stand's home, or whether its grid is there."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, home_power: MockHomePower, key: str) -> None:
+        """Initialize the switch."""
+        super().__init__(home_power, key)
+        self._key = key
+
+    @property
+    def is_on(self) -> bool:
+        """Return whether the relay is closed or the grid is there."""
+        return self._home_power.switches[self._key]
+
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Close the relay, or bring the grid back."""
+        self._home_power.set_switch(self._key, on=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Open the relay, or cut the grid."""
+        self._home_power.set_switch(self._key, on=False)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the switch."""
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            self._home_power.set_switch(self._key, on=last_state.state == STATE_ON)

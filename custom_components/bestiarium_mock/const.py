@@ -241,3 +241,42 @@ class ReadingProfile(StrEnum):
 READING_DROPOUTS_PER_HOUR = 6
 READING_DROPOUT_MIN_S = 10
 READING_DROPOUT_MAX_S = 40
+
+
+# The home power of the stand (DEV-014): what the power flow card reads in the
+# owner's home, set by hand or by the stand's scenarios
+# The names of the home's modes, as the card shows them
+HOME_POWER_MODES = (
+    "Звичайний",
+    "Потужний",
+    "Потужний + зарядка від сонця",
+    "Автономний",
+)
+# Relays and the grid: on in a calm home
+HOME_POWER_SWITCHES = ("inverter_home", "grid_inverter", "grid_present")
+
+
+@dataclass(frozen=True)
+class HomePowerNumber:
+    """A number knob of the home power: its range, step, unit and default."""
+
+    key: str
+    minimum: float
+    maximum: float
+    step: float
+    unit: str
+    default: float
+
+
+HOME_POWER_NUMBERS: tuple[HomePowerNumber, ...] = (
+    HomePowerNumber("grid_power", 0, 10000, 10, "W", 0),
+    HomePowerNumber("sun_power", 0, 10, 0.1, "kW", 0),
+    # "+" is a discharge, as the home's sensor
+    HomePowerNumber("battery_flow", -5, 5, 0.1, "kW", 0),
+    HomePowerNumber("battery_charge", 0, 100, 1, "%", 91),
+    HomePowerNumber("battery_hours_left", 0, 48, 0.5, "h", 7.5),
+)
+# The battery the time to full is estimated for
+HOME_POWER_BATTERY_KWH = 10
+# Below this flow (kW) the battery does not charge
+HOME_POWER_FLOW_THRESHOLD = 0.05
