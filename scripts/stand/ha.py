@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from .layout import (
     CLIMATE,
     DEVICES,
+    IR,
     MOCK,
     THERMOSTATS,
     TOKEN_ENV,
@@ -180,6 +181,21 @@ class Registry:
                 ):
                     return entity["entity_id"]
         msg = f"No control state of {thermostat}"
+        raise StandError(msg)
+
+    def ir_entity(self, name: str, domain: str) -> str:
+        """Return an entity of a Bestiarium IR device, by the device's name."""
+        devices = {
+            device["id"] for device in self.devices if device.get("name") == name
+        }
+        for entity in self.entities:
+            if (
+                entity["platform"] == IR
+                and entity["device_id"] in devices
+                and entity["entity_id"].startswith(f"{domain}.")
+            ):
+                return entity["entity_id"]
+        msg = f"No {domain} of {name} in Bestiarium IR"
         raise StandError(msg)
 
     def mock_device(self, mock_id: str) -> dict[str, Any]:

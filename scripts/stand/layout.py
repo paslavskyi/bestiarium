@@ -19,6 +19,7 @@ MOCK = "bestiarium_mock"
 MODE = "bestiarium_mode"
 DEVICES = "bestiarium_devices"
 CLIMATE = "bestiarium_climate"
+IR = "bestiarium_ir"
 TEMPLATE = "template"
 
 DASHBOARD = "bestiarium-stand"
@@ -74,6 +75,8 @@ STAND_DEVICES = (
         StandDevice(f"ac_{number}", LOAD_PRIORITY_ALWAYS_ON, first_queue=True)
         for number in range(1, 5)
     ),
+    # The power of the stand's Hisense (DEV-012), as of the other ACs
+    StandDevice("hisense_power", LOAD_PRIORITY_ALWAYS_ON, first_queue=True),
 )
 # One relay lives in one integration (review 18): the floors are only
 # devices; the climate thermostats run air conditioners through virtual
@@ -94,6 +97,9 @@ UNIVERSAL_THERMOSTATS = (
     ("Stand cloud AC", "thermo_5", CLOUD_AC),
 )
 HEATER_W = 1500
+# The Hisense air conditioners of Bestiarium IR (DEV-012): name, mock id; each
+# on its mock emitter
+STAND_HISENSE = (("Stand Hisense", "hisense"),)
 # The thermostats of the stand before review 18, on the floors
 RETIRED_THERMOSTATS = frozenset({"Stand floor 1", "Stand floor 2", "Stand floor 3"})
 AC_RUNNING_W = 1200

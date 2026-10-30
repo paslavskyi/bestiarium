@@ -16,6 +16,7 @@ from .layout import (
     DASHBOARD,
     MODE,
     STAND_DEVICES,
+    STAND_HISENSE,
     THERMOSTATS,
     UNIVERSAL_THERMOSTATS,
     ZONE_CHECK_SECONDS,
@@ -113,6 +114,26 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                 ),
             ],
         },
+        *(
+            {
+                "type": "grid",
+                "cards": [
+                    {"type": "heading", "heading": name},
+                    _tile(reg.ir_entity(name, "climate")),
+                    _tile(reg.ir_entity(name, "switch")),
+                    *(
+                        _tile(reg.mock(domain, f"mock_{mock_id}_{key}"))
+                        for domain, key in (
+                            ("sensor", "ac_state"),
+                            ("sensor", "last_frame"),
+                            ("infrared", "emitter"),
+                            ("sensor", "power_power"),
+                        )
+                    ),
+                ],
+            }
+            for name, mock_id in STAND_HISENSE
+        ),
         {
             "type": "grid",
             "cards": [
@@ -133,6 +154,12 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
         mode_select,
         *control_states,
         *new,
+        # Each frame of the Hisense: its emitter and what the unit did with it
+        *(
+            reg.mock(domain, f"mock_{mock_id}_{key}")
+            for _, mock_id in STAND_HISENSE
+            for domain, key in (("infrared", "emitter"), ("sensor", "last_frame"))
+        ),
     ]
     balanced = {device.mock_id for device in STAND_DEVICES}
     for spec in MOCK_DEVICES:
