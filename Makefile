@@ -1,4 +1,4 @@
-.PHONY: setup develop lint lint-check test help setup-go2rtc stand
+.PHONY: setup develop lint lint-check test test-card help setup-go2rtc stand
 
 # Default target
 help:
@@ -8,7 +8,8 @@ help:
 	@echo "  develop-debug - Start Home Assistant with remote debugger (debugpy)"
 	@echo "  lint	    - Format and fix code with ruff"
 	@echo "  lint-check - Check code without fixing (for CI)"
-	@echo "  test	    - Run unit tests with pytest"
+	@echo "  test	    - Run unit tests with pytest and the card tests"
+	@echo "  test-card  - Run the tests of the power flow card with node"
 	@echo "  test-cov   - Run tests with coverage"
 	@echo "  stand      - Set up the test stand in the running development HA"
 	@echo "  help	    - Show this help message"
@@ -46,8 +47,12 @@ lint-check:
 	ruff check .
 
 # Run unit tests
-test:
+test: test-card
 	PYTHONPATH="$${PYTHONPATH}:$(CURDIR)/custom_components" pytest tests/ -v
+
+# Run the tests of the power flow card (plain JS, no packages)
+test-card:
+	node --test "tests/frontend/*.test.mjs"
 
 # Run tests with coverage
 test-cov:
