@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import voluptuous as vol
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
     ConfigSubentry,
@@ -34,6 +35,7 @@ from custom_components.bestiarium_climate.const import (
     DOMAIN,
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
+    SUBENTRY_TYPE_AC,
     SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
 )
@@ -685,6 +687,150 @@ async def test_universal_translations_have_every_field(
     for user_input in (THERMOSTAT_INPUT, UNIVERSAL_POWER_INPUT, None):
         keys = {key.schema for key in result["data_schema"].schema}
         assert keys <= set(steps[result["step_id"]]["data"]), result["step_id"]
+        if user_input is not None:
+            result = await hass.config_entries.subentries.async_configure(
+                result["flow_id"], user_input
+            )
+
+
+AC_INPUT = {
+    "name": "Stasi AC",
+    "temperature_sensor": "sensor.temp_room",
+    "air_conditioner": "climate.hisense",
+    "setpoint_margin": 1.0,
+    "cold_tolerance": 0.3,
+    "hot_tolerance": 0.3,
+}
+AC_POWER_INPUT = {"power_entity": "sensor.ac_power"}
+
+
+async def _ac(hass: HomeAssistant, entry: MockConfigEntry, *steps: dict) -> dict:
+    """Run the air conditioner thermostat's form through its steps."""
+    return await _add(hass, entry, SUBENTRY_TYPE_AC, *steps)
+
+
+def _ac_subentry(entry: MockConfigEntry) -> ConfigSubentry:
+    return next(
+        sub
+        for sub in entry.subentries.values()
+        if sub.subentry_type == SUBENTRY_TYPE_AC
+    )
+
+
+async def test_ac_thermostat_three_steps(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """Basic, power, presets; no mode of auto in the form: an entity decides it."""
+    result = await _ac(hass, climate_entry, AC_INPUT)
+    assert result["step_id"] == "power"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], AC_POWER_INPUT
+    )
+    assert result["step_id"] == "presets"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {"sleep_temp": 19}
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    sub = _ac_subentry(climate_entry)
+    assert sub.title == "Stasi AC"
+    assert sub.data["air_conditioner"] == "climate.hisense"
+    assert sub.data["setpoint_margin"] == 1.0
+    assert sub.data["power_entity"] == "sensor.ac_power"
+    assert sub.data["min_power"] == 20.0
+    assert sub.data["power_delay_seconds"] == DEFAULT_POWER_DELAY_SECONDS
+    assert "thermostat_mode" not in sub.data
+    assert "target_switch" not in sub.data
+    assert "power_socket" not in sub.data
+
+
+async def test_ac_margin_defaults_to_one_degree(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """The margin left out is +1 °C."""
+    basic = {k: v for k, v in AC_INPUT.items() if k != "setpoint_margin"}
+    await _ac(hass, climate_entry, basic, AC_POWER_INPUT, {})
+    assert _ac_subentry(climate_entry).data["setpoint_margin"] == 1.0
+
+
+async def test_ac_thermostat_needs_a_power_sensor(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """It confirms by power: the sensor is required."""
+    result = await _ac(hass, climate_entry, AC_INPUT)
+    field = next(k for k in result["data_schema"].schema if k.schema == "power_entity")
+    assert isinstance(field, vol.Required)
+
+
+async def test_ac_thermostat_socket_is_optional_and_cleared(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """A socket chosen is kept; cleared in a reconfigure, it goes."""
+    await _ac(
+        hass,
+        climate_entry,
+        AC_INPUT,
+        {**AC_POWER_INPUT, "power_socket": "switch.ac_socket"},
+        {},
+    )
+    sub = _ac_subentry(climate_entry)
+    assert sub.data["power_socket"] == "switch.ac_socket"
+    result = await _run_subentry_flow(
+        hass,
+        climate_entry,
+        SUBENTRY_TYPE_AC,
+        {"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id},
+        [AC_INPUT, AC_POWER_INPUT, {}],
+    )
+    assert result["reason"] == "reconfigure_successful"
+    assert "power_socket" not in _ac_subentry(climate_entry).data
+
+
+async def test_ac_thermostat_refuses_a_taken_air_conditioner(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """One air conditioner, one thermostat; its own is not taken in a reconfigure."""
+    await _ac(hass, climate_entry, AC_INPUT, AC_POWER_INPUT, {})
+    result = await _ac(hass, climate_entry, {**AC_INPUT, "name": "Second"})
+    assert result["errors"] == {"air_conditioner": "ac_taken"}
+    sub = _ac_subentry(climate_entry)
+    result = await _run_subentry_flow(
+        hass,
+        climate_entry,
+        SUBENTRY_TYPE_AC,
+        {"source": SOURCE_RECONFIGURE, "subentry_id": sub.subentry_id},
+        [AC_INPUT, AC_POWER_INPUT, {}],
+    )
+    assert result["reason"] == "reconfigure_successful"
+
+
+async def test_ac_selector_offers_no_climate_thermostat(
+    hass: HomeAssistant, climate_entry: MockConfigEntry
+) -> None:
+    """The thermostats of Climate are no air conditioners."""
+    er.async_get(hass).async_get_or_create(
+        "climate", DOMAIN, "floor", suggested_object_id="floor_thermostat"
+    )
+    result = await _ac(hass, climate_entry)
+    selector = _selector_of(result, "air_conditioner")
+    assert selector.config["domain"] == ["climate"]
+    assert selector.config["exclude_entities"] == ["climate.floor_thermostat"]
+
+
+@pytest.mark.parametrize("language", ["en", "uk"])
+async def test_ac_translations_have_every_field(
+    hass: HomeAssistant, climate_entry: MockConfigEntry, language: str
+) -> None:
+    """Every field of the three steps, and the new error, have a text."""
+    path = Path(climate.__file__).parent / "translations" / f"{language}.json"
+    texts = json.loads(path.read_text(encoding="utf-8"))
+    ac = texts["config_subentries"][SUBENTRY_TYPE_AC]
+    assert "ac_taken" in ac["error"]
+    result = await _ac(hass, climate_entry)
+    for user_input in (AC_INPUT, AC_POWER_INPUT, None):
+        keys = {key.schema for key in result["data_schema"].schema}
+        step = ac["step"][result["step_id"]]
+        assert keys <= set(step["data"]), result["step_id"]
+        assert keys <= set(step.get("data_description", keys)), result["step_id"]
         if user_input is not None:
             result = await hass.config_entries.subentries.async_configure(
                 result["flow_id"], user_input

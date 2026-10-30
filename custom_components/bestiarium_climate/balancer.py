@@ -37,7 +37,6 @@ from .const import (
     CAPACITY_MAX,
     CAPACITY_MIN,
     CONF_MIN_WORKING_TIME,
-    CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
     DOMAIN,
     DOMAIN_BESTIARIUM_DEVICES,
@@ -57,6 +56,7 @@ from .const import (
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     SIGNAL_SWITCH_CHANGED,
+    SUBENTRY_TYPE_AC,
     THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -73,6 +73,7 @@ from .devices import (
 )
 from .repairs import set_issue
 from .stepwise_actions import StepwiseActions
+from .switch_source import controlled_entity
 from .util import duration_dict_to_timedelta
 from .zone_rules import Candidate, ZoneInput, arrange_zone
 
@@ -89,7 +90,7 @@ if TYPE_CHECKING:
 def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[str]:
     """Return the switches more than one thermostat controls (any climate entry)."""
     targets = Counter(
-        subentry.data.get(CONF_TARGET_SWITCH)
+        controlled_entity(subentry.data)
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id != besides
         for subentry in entry.subentries.values()
@@ -182,7 +183,9 @@ class BalancingCoordinator:
                 self._hass, self._entry, subentry, memory, zone=self._zone
             )
             for subentry in self._entry.subentries.values()
+            # The air conditioner thermostat comes with its climate entity
             if subentry.subentry_type in THERMOSTAT_TYPES
+            and subentry.subentry_type != SUBENTRY_TYPE_AC
         }
 
     def start(self) -> None:

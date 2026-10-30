@@ -31,7 +31,6 @@ from .const import (
     CONF_HEATING_ACTION,
     CONF_OFF_ACTION,
     CONF_POWER_ENTITY,
-    CONF_TARGET_SWITCH,
     CONF_THERMOSTAT_MODE,
     DOMAIN,
     ISSUE_INVALID_ACTION,
@@ -41,6 +40,7 @@ from .const import (
     ClimateMode,
 )
 from .power_reading import PowerReading, PowerThresholds
+from .switch_source import controlled_entity
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -84,13 +84,17 @@ def virtual_switch(
 def thermostats_of(
     hass: HomeAssistant, switch: str, *, besides: str | None = None
 ) -> list[ConfigSubentry]:
-    """Return the thermostats (of any climate entry) that control the switch."""
+    """
+    Return the thermostats (of any climate entry) that control the switch.
+
+    The switch is any entity a thermostat controls: an air conditioner too.
+    """
     return [
         subentry
         for entry in hass.config_entries.async_entries(DOMAIN)
         for subentry in entry.subentries.values()
         if subentry.subentry_type in THERMOSTAT_TYPES
-        and subentry.data.get(CONF_TARGET_SWITCH) == switch
+        and controlled_entity(subentry.data) == switch
         and subentry.subentry_id != besides
     ]
 

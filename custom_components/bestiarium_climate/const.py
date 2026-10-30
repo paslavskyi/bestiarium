@@ -22,7 +22,9 @@ SUBENTRY_TYPE_SWITCH = "switch"
 SUBENTRY_TYPE_THERMOSTAT = "thermostat"
 # Any switch, read by its power sensor if it has one; auto, off and manual
 SUBENTRY_TYPE_UNIVERSAL = "universal_thermostat"
-THERMOSTAT_TYPES = (SUBENTRY_TYPE_THERMOSTAT, SUBENTRY_TYPE_UNIVERSAL)
+# Any climate of an air conditioner, read by its power sensor (DEV-013)
+SUBENTRY_TYPE_AC = "ac_thermostat"
+THERMOSTAT_TYPES = (SUBENTRY_TYPE_THERMOSTAT, SUBENTRY_TYPE_UNIVERSAL, SUBENTRY_TYPE_AC)
 
 # Config keys — entry-level
 CONF_CAPACITY = "capacity"
@@ -58,6 +60,12 @@ CONF_COLD_TOLERANCE = "cold_tolerance"
 CONF_HOT_TOLERANCE = "hot_tolerance"
 CONF_MIN_CYCLE_DURATION = "min_cycle_duration"
 CONF_HEATER_POWER = "heater_power"
+
+# Config keys — air conditioner thermostat subentry
+CONF_AIR_CONDITIONER = "air_conditioner"
+# Auto heats to the target plus it, cools to the target minus it
+CONF_SETPOINT_MARGIN = "setpoint_margin"
+DEFAULT_SETPOINT_MARGIN = 1.0
 
 # Defaults
 DEFAULT_CAPACITY = 1

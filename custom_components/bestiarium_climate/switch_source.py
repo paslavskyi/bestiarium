@@ -11,13 +11,14 @@ when what it reads changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
+    CONF_AIR_CONDITIONER,
     CONF_POWER_ENTITY,
     CONF_TARGET_SWITCH,
     DEFAULT_UNIVERSAL_MIN_POWER,
@@ -25,7 +26,7 @@ from .const import (
 from .power_reading import PowerReading, PowerThresholds
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
     from datetime import datetime
 
     from homeassistant.config_entries import ConfigSubentry
@@ -35,6 +36,11 @@ if TYPE_CHECKING:
         EventStateChangedData,
         HomeAssistant,
     )
+
+
+def controlled_entity(data: Mapping[str, Any]) -> str | None:
+    """Return what a thermostat controls: its air conditioner or its switch."""
+    return data.get(CONF_AIR_CONDITIONER) or data.get(CONF_TARGET_SWITCH)
 
 
 @dataclass(frozen=True)
