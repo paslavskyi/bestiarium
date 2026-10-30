@@ -136,7 +136,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         # What the person wants: a frame is built from it in its turn, so a
         # change queued behind another carries both; the attributes are what
         # was sent (the assumed state)
-        self._wanted = self._assumed()
+        self._wanted = self._built = self._assumed()
 
     def _assumed(self) -> tuple[HVACMode, float, str]:
         return (
@@ -160,7 +160,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
                 self._attr_target_temperature = float(stored["temperature"])
             if stored.get("last_active_hvac_mode") in _MODES:
                 self._last_active = HVACMode(stored["last_active_hvac_mode"])
-        self._wanted = self._assumed()
+        self._wanted = self._built = self._assumed()
 
     @property
     @override
@@ -173,25 +173,20 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
     @override
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Turn off, on in a mode, or change the mode; always sends its frame."""
-        await self._apply(self._mode_change(hvac_mode), hvac_mode=hvac_mode)
+        await self._apply(hvac_mode=hvac_mode)
 
     @override
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set the target, with a mode when one is given."""
-        temperature = float(round(kwargs[ATTR_TEMPERATURE]))
-        if (hvac_mode := kwargs.get(ATTR_HVAC_MODE)) is not None:
-            await self._apply(
-                self._mode_change(hvac_mode),
-                hvac_mode=hvac_mode,
-                temperature=temperature,
-            )
-        else:
-            await self._apply(Change.TEMPERATURE, temperature=temperature)
+        await self._apply(
+            hvac_mode=kwargs.get(ATTR_HVAC_MODE),
+            temperature=float(round(kwargs[ATTR_TEMPERATURE])),
+        )
 
     @override
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set the fan speed."""
-        await self._apply(Change.FAN, fan_mode=fan_mode)
+        await self._apply(fan_mode=fan_mode)
 
     @override
     async def async_turn_on(self) -> None:
@@ -203,24 +198,38 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         """Turn off."""
         await self.async_set_hvac_mode(HVACMode.OFF)
 
-    def _mode_change(self, hvac_mode: HVACMode) -> Change:
-        if hvac_mode is HVACMode.OFF:
+    @staticmethod
+    def _change(
+        before: tuple[HVACMode, float, str], after: tuple[HVACMode, float, str]
+    ) -> Change:
+        """Return what a frame changes on the unit, which picks its button."""
+        if after[0] is HVACMode.OFF:
             return Change.OFF
-        if hvac_mode is HVACMode.AUTO:
+        if after[0] is HVACMode.AUTO:
             return Change.OWN_AUTO
-        if self._wanted[0] is HVACMode.OFF:
+        if before[0] is HVACMode.OFF:
             return Change.TURN_ON
-        return Change.MODE
+        if after[0] is not before[0]:
+            return Change.MODE
+        if after[2] != before[2]:
+            return Change.FAN
+        return Change.TEMPERATURE
 
     async def _apply(
         self,
-        change: Change,
         *,
         hvac_mode: HVACMode | None = None,
         temperature: float | None = None,
         fan_mode: str | None = None,
     ) -> None:
-        """Want the change; send its frame in its turn, then show what was sent."""
+        """
+        Want the change; send its frame in its turn, then show what was sent.
+
+        The frame and its button are built in its turn, from the state the
+        frame before it sent to the one wanted now: changes queued within the
+        pause never pair a button with a state it does not set (DEV-012
+        review 1, P1).
+        """
         wanted_mode, wanted_temperature, wanted_fan = self._wanted
         self._wanted = (
             hvac_mode or wanted_mode,
@@ -228,10 +237,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             fan_mode or wanted_fan,
         )
         # A target or a speed of a unit off or in its own auto waits for later
-        if change in (Change.TEMPERATURE, Change.FAN) and self._wanted[0] in (
-            HVACMode.OFF,
-            HVACMode.AUTO,
-        ):
+        if hvac_mode is None and self._wanted[0] in (HVACMode.OFF, HVACMode.AUTO):
             self._attr_target_temperature = self._wanted[1]
             self._attr_fan_mode = self._wanted[2]
             self.async_write_ha_state()
@@ -242,13 +248,15 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         def build() -> Kelon168Command:
             nonlocal sent
             sent = self._wanted
+            change = self._change(self._built, sent)
+            self._built = sent
             return self._command(sent[0], int(sent[1]), sent[2], change)
 
         try:
             await self._link.send(build, self._context)
         except Exception:
             # Nothing reached the unit: what is wanted is what was sent before
-            self._wanted = self._assumed()
+            self._wanted = self._built = self._assumed()
             raise
         self._attr_hvac_mode, self._attr_target_temperature, self._attr_fan_mode = sent
         if sent[0] is not HVACMode.OFF:

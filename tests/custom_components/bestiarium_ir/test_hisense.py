@@ -410,3 +410,58 @@ async def test_a_reload_keeps_the_assumed_state_on_its_own_blaster(
         "low",
     )
     assert hass.states.get("switch.stasi_ac_display").state == "on"
+
+
+def _button_fits(frame: object) -> bool:
+    """Return whether the power button goes with "off" and only with it."""
+    return (frame.action is Kelon168Action.POWER) is (not frame.power)
+
+
+async def test_off_then_heat_within_the_pause(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """Off queued, heat right after: no power button on a running unit."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    await asyncio.gather(
+        call(hass, "climate", "set_temperature", climate, temperature=25),
+        call(hass, "climate", "turn_off", climate),
+        call(hass, "climate", "set_hvac_mode", climate, hvac_mode=HVACMode.HEAT),
+    )
+    assert all(_button_fits(f) for f in emitter.frames)
+    assert _state(emitter.frames[-1]) == (True, Kelon168Mode.HEAT, 25, Kelon168Fan.AUTO)
+    assert hass.states.get(climate).state == HVACMode.HEAT
+
+
+async def test_heat_then_off_within_the_pause(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """A mode queued, off right after: no state button turns the unit off."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    await asyncio.gather(
+        call(hass, "climate", "set_temperature", climate, temperature=25),
+        call(hass, "climate", "set_hvac_mode", climate, hvac_mode=HVACMode.COOL),
+        call(hass, "climate", "turn_off", climate),
+    )
+    assert all(_button_fits(f) for f in emitter.frames)
+    assert emitter.frames[-1].power is False
+    assert hass.states.get(climate).state == HVACMode.OFF
+
+
+async def test_target_with_the_same_mode_is_the_temperature_button(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """A target sent with the mode the unit is in: the button checked at home."""
+    _, climate = ac
+    await _heat_24(hass, climate)
+    await call(
+        hass,
+        "climate",
+        "set_temperature",
+        climate,
+        temperature=26,
+        hvac_mode=HVACMode.HEAT,
+    )
+    assert emitter.frames[-1].action is ACTIONS[Change.TEMPERATURE]
+    assert emitter.frames[-1].temperature == 26
