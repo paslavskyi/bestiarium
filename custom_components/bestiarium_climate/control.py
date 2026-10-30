@@ -225,6 +225,8 @@ class ThermostatControl:
         # and the thermostat's minimum cycle (FR-028)
         self._manual: bool | None = None
         self._manual_sent: bool | None = None
+        # An air conditioner's setting of the last manual "on"
+        self._manual_setting: AcSetting | None = None
         self._manual_cycle = timedelta()
         self._memory = memory
         kept = memory.get(self.subentry_id)
@@ -486,11 +488,14 @@ class ThermostatControl:
         thermostat's own minimum cycle duration. Return whether it left the
         manual mode with its switch running: the balancer keeps it running
         if it has a place (keep_running).
+
+        An air conditioner's setting as it shows counts as the last one sent.
         """
         left_running = False
         if (demand is None) != (self._manual is None):
             running = self.reading(now) is Reading.ON
             self._manual_sent = running if demand is not None else None
+            self._manual_setting = self.source.setting() if demand is not None else None
             if demand is not None:
                 self.expected_on, self.expected_changed_at = False, now
                 self._stepwise = StepwiseOff()
@@ -512,11 +517,22 @@ class ThermostatControl:
 
         As a thermostat of HA: no attempts, no "Not responding", no stepwise
         "off"; the switch changes no sooner than the minimum cycle after its
-        last change.
+        last change. An air conditioner on gets its setting again once for
+        each change of it (a person's mode, target or speed), at once; a
+        change made past the thermostat is the person's.
         """
         demand = self._manual
-        if demand is None or demand is self._manual_sent:
+        if demand is None:
             return None
+        if demand is self._manual_sent:
+            wanted = self.source.wanted()
+            return (
+                True
+                if demand
+                and wanted is not None
+                and not wanted.matches(self._manual_setting)
+                else None
+            )
         state = self.source.state()
         if state is not None and now - state.changed_at < self._manual_cycle:
             return None
@@ -600,6 +616,7 @@ class ThermostatControl:
             self._off_owed = False
         if self.manual and target is None:
             self._manual_sent = on
+            self._manual_setting = self.source.wanted() if on else None
         self._keep()
         self._refresh(now)
         return command

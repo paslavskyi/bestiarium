@@ -13,7 +13,7 @@ Core capabilities:
 
 The integration uses **HA subentries** — switches and thermostats are added as subentries under a single parent config entry.
 
-**Two kinds of thermostats** share one entry, one capacity and one balancer: the virtual thermostat (on a virtual switch or any switch, heat or cool) and, since DEV-011, the [universal thermostat](#universal-thermostat-dev-011) (any switch, read by its power sensor if it has one; auto, off and a manual mode).
+**Three kinds of thermostats** share one entry, one capacity and one balancer: the virtual thermostat (on a virtual switch or any switch, heat or cool), since DEV-011 the [universal thermostat](#universal-thermostat-dev-011) (any switch, read by its power sensor if it has one; auto, off and a manual mode) and, since DEV-013, the [air conditioner thermostat](#air-conditioner-thermostat-dev-013) (any `climate` of an air conditioner, read by its power sensor; auto, off and the air conditioner's manual modes).
 
 **Automation events**: The balancer fires HA bus events at device rotation in a deficit; the thermostat's control state tells switch and temperature problems. See [Automation Events](events.md) for event types, payloads, and automation examples.
 
@@ -29,13 +29,15 @@ custom_components/bestiarium_climate/
 ├── data.py              # Type aliases and TypedDicts for config data
 ├── config_flow.py       # Main config flow + switch/thermostat subentry flows
 ├── util.py              # duration_dict_to_timedelta helper
-├── climate.py           # VirtualThermostat, UniversalThermostat (ClimateEntity + RestoreEntity)
+├── climate.py           # VirtualThermostat, UniversalThermostat, AirConditionerThermostat (ClimateEntity + RestoreEntity)
 ├── switch.py            # VirtualSwitch entity (SwitchEntity)
 ├── number.py            # CapacityNumber entity (NumberEntity + RestoreEntity)
 ├── sensor.py            # ControlStateSensor — "Control state" of each thermostat
+├── select.py            # AutoModeSelect — "Auto mode" of an air conditioner thermostat (DEV-013)
 ├── command.py           # SwitchCommand, SwitchCommands — the commands to a switch and their series
 ├── stepwise.py          # StepwiseOff — the stepwise "off" of a switch that does not turn off (DEV-010)
 ├── control.py           # ThermostatControl, ThermostatMemory (Store)
+├── switch_source.py     # SwitchSource — where a thermostat reads its switch (or air conditioner) and sends it commands
 ├── balancer.py          # BalancingCoordinator — the cycle, the zone, the one path of the commands
 ├── rotation.py          # arrange() — who should heat, without the zone (decision 32)
 ├── zone_rules.py        # arrange_zone() — the zone's rules on the arrangement, no timers (pure)
@@ -62,7 +64,10 @@ tests/custom_components/bestiarium_climate/
 ├── test_stepwise_off.py
 ├── test_power_reading.py
 ├── test_universal.py
-└── test_manual.py
+├── test_manual.py
+├── test_switch_source.py
+├── test_ac_thermostat.py
+└── test_ac_manual.py
 ```
 
 ---
@@ -70,7 +75,7 @@ tests/custom_components/bestiarium_climate/
 ## Platforms
 
 ```python
-PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
 ```
 
 ---
@@ -150,6 +155,28 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH
     "power_tolerance_seconds": int,      # as the virtual switch (default 60)
 }
 ```
+
+### Air Conditioner Thermostat Subentry (`subentry_type: "ac_thermostat"`, DEV-013)
+
+```python
+{
+    "name": str,
+    "temperature_sensor": str,           # the room's temperature sensor
+    "air_conditioner": str,              # any climate entity of an air conditioner
+    "setpoint_margin": float,            # °C, default 1.0: auto heats to target + it, cools to target - it
+    # the thermostat's tolerances, min_cycle_duration, min/max_temp,
+    # heater_power and presets, as the thermostat subentry above
+    "power_entity": str,                 # Required — the air conditioner's power sensor
+    "min_power": float,                  # W, at or above = running (default 20)
+    "power_hysteresis_percent": int,     # default 20
+    "power_delay_seconds": int,          # default 10
+    "power_tolerance_seconds": int,      # default 60
+    "power_socket": str,                 # Optional — cut by the stepwise "off"
+}
+```
+
+The auto mode (heat or cool) is no field: it is the entity "Auto mode", kept
+with the thermostats' memory (`auto_mode`, default `heating`).
 
 ### Key Constants (`const.py`)
 
@@ -306,9 +333,45 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 
 **Necessity** ([necessity](concepts/necessity.md)): the subentry type — the only interface to the balancing of any switch with a manual mode; the power fields — the algorithm's parameters (configuration, settings-vs-entities); the event — the integration's own decision (it turned a person's thermostat off), on the transition only, which the climate entity's "off" does not tell. No new entity or attribute.
 
+## Air conditioner thermostat (DEV-013)
+
+`AirConditionerThermostat(VirtualThermostat)` — one per `ac_thermostat` subentry, device model "Air Conditioner Thermostat". The third thermostat of FEAT-066: Bestiarium Climate knows only the `climate` of HA, never the language of a remote — an IR air conditioner of [Bestiarium IR](bestiarium_ir.md), Gree, LG, a cloud one alike.
+
+**Settings** (its form: basic → power → presets). Basic: the name, the room's temperature sensor, the air conditioner (any `climate` but the thermostats of Climate; one air conditioner, one thermostat of any kind: `ac_taken`), the **setpoint margin** (default +1 °C; it replaces the `input_number`s of the home's IR packages), the tolerances, the minimum cycle, min/max, the power for the fit check. Power: the power sensor (**required**: a start is confirmed by power), the minimum power (default 20 W), hysteresis, delay and tolerance as the universal thermostat's, and the socket (optional; any switch but the virtual switches of Climate). **The minimum power** lies between what the unit draws when off and its lowest idle at the setpoint — see the sensor's history (the home's units: off below 10 W, idle at times 10–20 W, so 10 W there). Presets as the virtual thermostat's.
+
+**Entities on its device:** the thermostat, its "Control state" and **"Auto mode"** (`select`, `heating` / `cooling`, «Гріти» / «Охолоджувати»): what auto does, switched by an automation of the home with the season (FEAT-057).
+
+**Modes:** `auto` and `off` always, and of `heat`, `cool`, `dry`, `fan_only` those the air conditioner's `hvac_modes` has (read from its state, as its `fan_modes`). The fan speeds are the air conditioner's; until a person chooses one here, the air conditioner keeps its own.
+
+**What it sets the air conditioner to** (`AcSetting`): auto heating — `heat`, the target **plus** the margin; auto cooling — `cool`, the target **minus** the margin; a manual mode — that mode and the target as it is (`fan_only`: no target); and the speed chosen here. The setpoint is rounded to the air conditioner's `target_temp_step` and clamped to its `min_temp`/`max_temp`, so that it shows what was sent. "On" is `climate.set_temperature` with the mode (`set_hvac_mode` for `fan_only`), then `set_fan_mode` if its speed differs; "off" is `set_hvac_mode: off`.
+
+**Auto** is balanced as the virtual thermostat: the capacity, the zones, the rotation, the fit, the attempts, "Not responding", the pause, the stepwise "off". Whether it runs is read **by power only**: an IR unit's state is assumed, a cloud one's late. Auto without the air conditioner's mode of it (no `heat` to heat) has nothing to do (`idle`). A new target or preset is sent to a running air conditioner at once.
+
+**Idling at the setpoint.** An air conditioner at its setpoint draws little (the home: 10–70 W, for 3–5 minutes): above the minimum power it simply runs — it holds its place and frees only what it draws for the fit check. Below it, wanted on, it is off by another only after a **whole step** (`off_interval_seconds`, default 5 minutes; the other thermostats: the tolerance); its pause runs from the "off" it saw. The stepwise "off" ends only after a whole step without power (DEV-010 R1).
+
+**Auto restores what it wants.** While it runs and is wanted on, an air conditioner that does not show the thermostat's setting gets it again — **once for each change** of the wanted setting or of what the air conditioner shows, not every cycle: a person changed the target, the speed or the auto mode; another changed the air conditioner from a dashboard, by voice, by an automation. It is an "on" to a unit that runs, answered at once: no failed attempt, no "Not responding". After a restart with the air conditioner already so, nothing is sent (a display off at night stays off). A physical remote is not seen by HA: turned off with it, the power tells (off by another after a step, then a new start); its mode or setpoint changed without turning it off is not seen until the thermostat sends a setting of its own (design 6, scenario 8).
+
+**To run an air conditioner by hand, use the thermostat's manual modes, not the air conditioner's card.** With the thermostat `off`, an air conditioner turned on past it works against it: it is turned off stepwise (`off` × the attempts, the event `switch_out_of_control`, the socket if set, the event `power_cut`); in auto the thermostat restores its own setting.
+
+**The manual modes** (`heat`, `cool`, `dry`, `fan_only`; FR-028): outside the capacity and the zones until red, their commands not counted (no attempts, no "Not responding", no stepwise "off"). The setting goes once on entering a manual mode (nothing if the air conditioner already shows it) and once for each change a person makes on the thermostat, at once; the minimum cycle holds only from off to on. A change made past the thermostat is left alone. Back to auto with the air conditioner running: a running heater if a place is free, which then gets its setting with the margin; without a place, the stepwise "off". Red and the overload turn it off first, as the universal thermostat's manual mode (`manual_off`, the event `bestiarium_climate_manual_turned_off`).
+
+**Events:** none new; in the existing ones `switch_entity_id` of an air conditioner thermostat is its `climate`.
+
+**Necessity** ([necessity](concepts/necessity.md)):
+
+| Element | Case |
+|---|---|
+| The subentry type `ac_thermostat` | necessary: the balancing of an air conditioner over its `climate` (FEAT-066) |
+| `air_conditioner`, `setpoint_margin`, `power_socket` | necessary: what it controls, the setpoint of heating (instead of the packages' `input_number`), the step "socket" of FR-027 |
+| `select` "Auto mode" | the only interface: an automation switches what auto does with the season; a `climate` of HA has no mode "auto, but only heat" |
+| The thermostat's fan speed | the only interface in auto: the thermostat's settings carry the speed (design 2) |
+| New events, attributes, services | none |
+
 ## Thermostat control (`control.py`) and "Control state" (`sensor.py`)
 
 `ThermostatControl` — one per thermostat, made by the coordinator; the pattern of `bestiarium_devices` DEV-007 ([stability](concepts/stability.md)):
+
+- **Its source** (`switch_source.py`, DR-9f67ab61), chosen once when it is made: `EntitySwitch` (a switch by its own state: the virtual thermostat, a universal one without a power sensor), `PoweredSwitch` (a switch by its power sensor: a universal one with it) or `AirConditioner` (a `climate` by its power sensor). The source reads on/off and when it last changed (or nothing while gone), tells its control of each change (the control asks the balancer to decide again), and carries out "on" and "off"; an air conditioner has a setting too.
 
 - It follows the thermostat's switch and temperature sensor; their availability counts only once HA has started.
 - **Switch unavailable / no temperature**: gone (unavailable, unknown, missing; for the temperature also not a number) for longer than `tolerance_seconds` → a confirmed problem; it ends after `hysteresis_seconds` without it.
@@ -487,6 +550,17 @@ Coverage:
 ### `test_manual.py`
 - The manual mode heats by temperature alone, holds no place, is left alone in yellow, the pause and no data; one command per change of demand, never "Not responding"; its minimum cycle; back to auto with or without a place
 - Red and the overload turn it off first, its mode off, the event; it stays off after red; turned on in red it goes off at once (`turned_on`); the pause between red and the overload is no entry; restored in red; a switch that goes on running is turned off stepwise
+
+### `test_switch_source.py`
+- A switch by its own state, by its power (an optimistic switch unknown is not gone; gone without power data or the switch); one change told per change; the switch's services; the source of each kind of subentry
+
+### `test_ac_thermostat.py`
+- Auto heats to the target plus the margin, cools to the target minus it ("Auto mode", kept across a restart); the modes and speeds are the air conditioner's; auto without its mode is idle
+- The speed goes with "on"; a start not confirmed by power is an attempt; the setpoint rounded and clamped; a setting it never takes goes once, "normal"; a new target at once; a change past the thermostat restored; nothing after a restart; the air conditioner unavailable; one capacity with the old thermostat; a renamed air conditioner followed
+- Idling at 40 W holds the place; a dip below the threshold shorter than a step changes nothing, a whole step is off by another; idling does not end the stepwise "off"; the socket cut; off with the air conditioner turned on past it; a gone socket is the AC thermostat's issue
+
+### `test_ac_manual.py`
+- Each manual mode once with the person's target; no place, no attempts; a change past the thermostat left alone; a new target at once; nothing when the air conditioner already shows it; back to auto with or without a place; red turns it off first; turned on in red it goes off at once
 
 ### `test_stepwise_off.py`
 - "Off" three times 5 minutes apart, the event at 15, the socket and its event at 20; without a socket only the event

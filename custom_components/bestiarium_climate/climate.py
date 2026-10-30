@@ -536,6 +536,11 @@ class AirConditionerThermostat(VirtualThermostat):
         return self._attr_hvac_mode in MANUAL_ACTIONS
 
     @property
+    def manual_demand(self) -> bool | None:
+        """Return on in a manual mode: the air conditioner keeps it by itself."""
+        return True if self.manual else None
+
+    @property
     def _auto_mode(self) -> HVACMode:
         """Return the air conditioner's mode in auto."""
         return HVACMode.COOL if self._ac_mode else HVACMode.HEAT
