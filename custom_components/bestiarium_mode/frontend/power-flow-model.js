@@ -132,8 +132,23 @@ export function flowModel(r) {
   };
 }
 
-// The scheme of the mockup: node centres in a 900 × 370 viewBox
-const CENTRES = { grid: [230, 70], sun: [670, 70], inv: [450, 190], home: [230, 310], bat: [670, 310] };
+// The scheme of the mockup, and a narrower one for a phone whose captions sit
+// above and below the circles: node centres, the viewBox, where each caption goes
+const LAYOUTS = {
+  wide: {
+    viewBox: [900, 370],
+    centres: { grid: [230, 70], sun: [670, 70], inv: [450, 190], home: [230, 310], bat: [670, 310] },
+    // Beside the circle, away from the wires: the left column to the left
+    captions: { grid: "left", sun: "right", inv: "right", home: "left", bat: "right" },
+    lineHeight: 19,
+  },
+  narrow: {
+    viewBox: [600, 550],
+    centres: { grid: [130, 100], sun: [470, 100], inv: [300, 250], home: [130, 400], bat: [470, 400] },
+    captions: { grid: "above", sun: "above", inv: "right", home: "below", bat: "below" },
+    lineHeight: 26,
+  },
+};
 const RADIUS = 34;
 const ICONS = {
   grid: "mdi:transmission-tower",
@@ -143,11 +158,11 @@ const ICONS = {
   bat: "mdi:battery-high",
 };
 const NAMES = { grid: "Мережа", sun: "Сонце", inv: "Інвертор", home: "Дім", bat: "Батарея" };
-// Value lines under a name: the battery needs three
-const LINES = 3;
+// Value lines under a name: the battery needs two
+const LINES = 2;
 
-function paths() {
-  const [g, s, i, h, b] = KEYS.nodes.map((key) => CENTRES[key]);
+function paths({ centres }) {
+  const [g, s, i, h, b] = KEYS.nodes.map((key) => centres[key]);
   const r = RADIUS;
   return {
     gridInv: `M ${g[0] + r} ${g[1]} L ${i[0] - 20} ${g[1]} Q ${i[0]} ${g[1]} ${i[0]} ${i[1] - r}`,
@@ -158,34 +173,49 @@ function paths() {
   };
 }
 
-function node(key) {
-  const [x, y] = CENTRES[key];
-  // Captions sit beside the circle, away from the wires: the left column to
-  // the left, the rest to the right
-  const left = key === "grid" || key === "home";
-  const tx = left ? x - 48 : x + 48;
-  const anchor = left ? "end" : "start";
-  const lines = Array.from(
-    { length: LINES },
-    (_, n) => `<text class="node-value" id="node-${key}-line-${n}" x="${tx}" text-anchor="${anchor}" data-y="${y}" data-n="${n}"></text>`,
-  ).join("");
+// Where a node's caption starts (x, the label's baseline) and how it is anchored
+function caption(layout, key) {
+  const [x, y] = layout.centres[key];
+  const step = layout.lineHeight;
+  switch (layout.captions[key]) {
+    case "left":
+      return { x: x - 48, y: y - 2, anchor: "end" };
+    case "right":
+      return { x: x + 48, y: y - 2, anchor: "start" };
+    // A name and one value above the circle: the top nodes have one value line
+    case "above":
+      return { x, y: y - RADIUS - 14 - step, anchor: "middle" };
+    default:
+      return { x, y: y + RADIUS + step + 4, anchor: "middle" };
+  }
+}
+
+function node(layout, key) {
+  const [x, y] = layout.centres[key];
+  const { x: tx, y: ty, anchor } = caption(layout, key);
+  const text = (cls, id, n, content = "") =>
+    `<text class="${cls}" id="${id}" x="${tx}" y="${ty + n * layout.lineHeight}" text-anchor="${anchor}">${content}</text>`;
+  const lines = Array.from({ length: LINES }, (_, n) => text("node-value", `node-${key}-line-${n}`, n + 1)).join("");
   return `<g class="node" id="node-${key}">
     <circle cx="${x}" cy="${y}" r="${RADIUS}"/>
     <foreignObject x="${x - 20}" y="${y - 20}" width="40" height="40"><ha-icon icon="${ICONS[key]}"></ha-icon></foreignObject>
-    <text class="node-label" id="node-${key}-label" x="${tx}" text-anchor="${anchor}" data-y="${y}">${NAMES[key]}</text>
-    ${lines}
+    ${text("node-label", `node-${key}-label`, 0, NAMES[key])}${lines}
   </g>`;
 }
 
-export function skeleton() {
-  const d = paths();
+export function skeleton(name = "wide") {
+  const layout = LAYOUTS[name];
+  const d = paths(layout);
   const wires = KEYS.wires
     .map(
       (key) => `<path class="wire" id="wire-${key}" d="${d[key]}"/>
     <path class="dots${key === "sun" ? " sun" : ""}" id="dots-${key}" d="${d[key]}"/>`,
     )
     .join("");
-  return `<svg viewBox="0 0 900 370" xmlns="http://www.w3.org/2000/svg">${wires}${KEYS.nodes.map(node).join("")}</svg>`;
+  const [width, height] = layout.viewBox;
+  return `<svg class="${name}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">${wires}${KEYS.nodes
+    .map((key) => node(layout, key))
+    .join("")}</svg>`;
 }
 
 export { KEYS };

@@ -205,13 +205,20 @@ test("speed follows the power", () => {
   assert.equal(model({}).wires.sun.speed, null);
 });
 
-test("skeleton has every wire and node", () => {
-  const svg = skeleton();
-  for (const key of ["gridInv", "gridHome", "sun", "invHome", "invBat"]) {
-    assert.match(svg, new RegExp(`id="wire-${key}"`));
-    assert.match(svg, new RegExp(`id="dots-${key}"`));
-  }
-  for (const key of ["grid", "sun", "inv", "home", "bat"]) {
-    assert.match(svg, new RegExp(`id="node-${key}"`));
-  }
-});
+for (const [layout, viewBox] of [
+  ["wide", "0 0 900 370"],
+  ["narrow", "0 0 600 550"],
+]) {
+  test(`${layout} skeleton has every wire and node`, () => {
+    const svg = skeleton(layout);
+    assert.match(svg, new RegExp(`viewBox="${viewBox}"`));
+    for (const key of ["gridInv", "gridHome", "sun", "invHome", "invBat"]) {
+      assert.match(svg, new RegExp(`id="wire-${key}"`));
+      assert.match(svg, new RegExp(`id="dots-${key}"`));
+    }
+    for (const key of ["grid", "sun", "inv", "home", "bat"]) {
+      assert.match(svg, new RegExp(`id="node-${key}"`));
+      assert.match(svg, new RegExp(`id="node-${key}-line-1"`));
+    }
+  });
+}
