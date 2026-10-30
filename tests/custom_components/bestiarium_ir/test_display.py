@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING
 from homeassistant.components.climate import HVACMode
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import State
-from pytest_homeassistant_custom_component.common import mock_restore_cache
+from pytest_homeassistant_custom_component.common import (
+    mock_restore_cache_with_extra_data,
+)
 
 from custom_components.bestiarium_ir.kelon168 import Kelon168Action
 
@@ -142,7 +144,9 @@ async def test_display_is_restored(
     hass: HomeAssistant, emitter: RecordingEmitter
 ) -> None:
     """The display off before a restart: the next state frame goes twice."""
-    mock_restore_cache(hass, [State("switch.stasi_ac_display", STATE_OFF)])
+    mock_restore_cache_with_extra_data(
+        hass, [(State("switch.stasi_ac_display", STATE_OFF), {"display_on": False})]
+    )
     entry = ir_entry(hisense_subentry())
     await set_up(hass, entry)
     display = subentry_entity(hass, entry, "switch", "_display")

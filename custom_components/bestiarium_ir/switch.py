@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, override
 
 from homeassistant.components.infrared import InfraredEmitterConsumerEntity
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import STATE_ON
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
 
 from .climate import hisense_device
 from .const import CONF_EMITTER, SUBENTRY_TYPE_HISENSE
@@ -39,6 +39,17 @@ async def async_setup_entry(
             )
 
 
+@dataclass
+class _DisplayStoredData(ExtraStoredData):
+    """The assumed display, apart from the visible state (see the climate's)."""
+
+    display_on: bool
+
+    @override
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class HisenseDisplaySwitch(InfraredEmitterConsumerEntity, SwitchEntity, RestoreEntity):
     """
     The display of the unit, as HA assumes it.
@@ -62,9 +73,16 @@ class HisenseDisplaySwitch(InfraredEmitterConsumerEntity, SwitchEntity, RestoreE
     async def async_added_to_hass(self) -> None:
         """Restore the display; follow it."""
         await super().async_added_to_hass()
-        if (last := await self.async_get_last_state()) is not None:
-            self._link.display_on = last.state == STATE_ON
+        if (extra := await self.async_get_last_extra_data()) is not None and (
+            isinstance(display_on := extra.as_dict().get("display_on"), bool)
+        ):
+            self._link.display_on = display_on
         self.async_on_remove(self._link.add_listener(self.async_write_ha_state))
+
+    @property
+    @override
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        return _DisplayStoredData(self._link.display_on)
 
     @property
     @override

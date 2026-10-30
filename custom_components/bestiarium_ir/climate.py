@@ -8,11 +8,10 @@ is any infrared entity of HA.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, override
 
 from homeassistant.components.climate import (
-    ATTR_FAN_MODE,
     ATTR_HVAC_MODE,
     ClimateEntity,
     ClimateEntityFeature,
@@ -21,8 +20,6 @@ from homeassistant.components.climate import (
 from homeassistant.components.infrared import InfraredEmitterConsumerEntity
 from homeassistant.const import (
     ATTR_TEMPERATURE,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
     UnitOfTemperature,
 )
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -83,13 +80,22 @@ def hisense_device(subentry: ConfigSubentry) -> DeviceInfo:
 
 @dataclass
 class _HisenseExtraStoredData(ExtraStoredData):
-    """The mode the unit was last on in: "on" goes back to it after a restart."""
+    """
+    The assumed state, and the mode "on" goes back to.
 
+    Kept apart from the visible state: an air conditioner on the entry's own
+    blaster goes unavailable before a reload removes it, and that is the
+    state HA stores then.
+    """
+
+    hvac_mode: str
+    temperature: float
+    fan_mode: str
     last_active_hvac_mode: str
 
     @override
     def as_dict(self) -> dict[str, Any]:
-        return {"last_active_hvac_mode": self.last_active_hvac_mode}
+        return asdict(self)
 
 
 class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity):
@@ -127,31 +133,42 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         self._attr_target_temperature = float(AUTO_TEMP)
         self._attr_fan_mode = Kelon168Fan.AUTO.value
         self._last_active = HVACMode.HEAT
+        # What the person wants: a frame is built from it in its turn, so a
+        # change queued behind another carries both; the attributes are what
+        # was sent (the assumed state)
+        self._wanted = self._assumed()
+
+    def _assumed(self) -> tuple[HVACMode, float, str]:
+        return (
+            self._attr_hvac_mode or HVACMode.OFF,
+            self._attr_target_temperature or AUTO_TEMP,
+            self._attr_fan_mode or Kelon168Fan.AUTO.value,
+        )
 
     @override
     async def async_added_to_hass(self) -> None:
         """Restore the assumed state; give the display its frames."""
         await super().async_added_to_hass()
         self._link.display_frame = self._display_frame
-        last = await self.async_get_last_state()
-        if last is not None and last.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-            if last.state in self._attr_hvac_modes:
-                self._attr_hvac_mode = HVACMode(last.state)
-            if last.attributes.get(ATTR_FAN_MODE) in self._attr_fan_modes:
-                self._attr_fan_mode = last.attributes[ATTR_FAN_MODE]
-            if (temperature := last.attributes.get(ATTR_TEMPERATURE)) is not None:
-                self._attr_target_temperature = float(round(float(temperature)))
-        if self._attr_hvac_mode is not HVACMode.OFF:
-            self._last_active = self._attr_hvac_mode
-        elif (extra := await self.async_get_last_extra_data()) is not None and (
-            mode := extra.as_dict().get("last_active_hvac_mode")
-        ) in _MODES:
-            self._last_active = HVACMode(mode)
+        if (extra := await self.async_get_last_extra_data()) is not None:
+            stored = extra.as_dict()
+            if stored.get("hvac_mode") in self._attr_hvac_modes:
+                self._attr_hvac_mode = HVACMode(stored["hvac_mode"])
+            if stored.get("fan_mode") in self._attr_fan_modes:
+                self._attr_fan_mode = stored["fan_mode"]
+            if isinstance(stored.get("temperature"), (int, float)):
+                self._attr_target_temperature = float(stored["temperature"])
+            if stored.get("last_active_hvac_mode") in _MODES:
+                self._last_active = HVACMode(stored["last_active_hvac_mode"])
+        self._wanted = self._assumed()
 
     @property
     @override
     def extra_restore_state_data(self) -> ExtraStoredData:
-        return _HisenseExtraStoredData(self._last_active.value)
+        hvac_mode, temperature, fan_mode = self._assumed()
+        return _HisenseExtraStoredData(
+            hvac_mode.value, temperature, fan_mode, self._last_active.value
+        )
 
     @override
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
@@ -191,7 +208,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             return Change.OFF
         if hvac_mode is HVACMode.AUTO:
             return Change.OWN_AUTO
-        if self._attr_hvac_mode is HVACMode.OFF:
+        if self._wanted[0] is HVACMode.OFF:
             return Change.TURN_ON
         return Change.MODE
 
@@ -203,24 +220,39 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         temperature: float | None = None,
         fan_mode: str | None = None,
     ) -> None:
-        """Send the frame of the change, then show the new state."""
-        hvac_mode = hvac_mode or self._attr_hvac_mode or HVACMode.OFF
-        temperature = temperature or self._attr_target_temperature or AUTO_TEMP
-        fan_mode = fan_mode or self._attr_fan_mode or Kelon168Fan.AUTO.value
+        """Want the change; send its frame in its turn, then show what was sent."""
+        wanted_mode, wanted_temperature, wanted_fan = self._wanted
+        self._wanted = (
+            hvac_mode or wanted_mode,
+            temperature or wanted_temperature,
+            fan_mode or wanted_fan,
+        )
         # A target or a speed of a unit off or in its own auto waits for later
-        if change not in (Change.TEMPERATURE, Change.FAN) or hvac_mode not in (
+        if change in (Change.TEMPERATURE, Change.FAN) and self._wanted[0] in (
             HVACMode.OFF,
             HVACMode.AUTO,
         ):
-            await self._link.send(
-                self._command(hvac_mode, int(temperature), fan_mode, change),
-                self._context,
-            )
-        self._attr_hvac_mode = hvac_mode
-        self._attr_target_temperature = temperature
-        self._attr_fan_mode = fan_mode
-        if hvac_mode is not HVACMode.OFF:
-            self._last_active = hvac_mode
+            self._attr_target_temperature = self._wanted[1]
+            self._attr_fan_mode = self._wanted[2]
+            self.async_write_ha_state()
+            return
+
+        sent = self._wanted
+
+        def build() -> Kelon168Command:
+            nonlocal sent
+            sent = self._wanted
+            return self._command(sent[0], int(sent[1]), sent[2], change)
+
+        try:
+            await self._link.send(build, self._context)
+        except Exception:
+            # Nothing reached the unit: what is wanted is what was sent before
+            self._wanted = self._assumed()
+            raise
+        self._attr_hvac_mode, self._attr_target_temperature, self._attr_fan_mode = sent
+        if sent[0] is not HVACMode.OFF:
+            self._last_active = sent[0]
         self.async_write_ha_state()
 
     def _display_frame(self) -> Kelon168Command | None:

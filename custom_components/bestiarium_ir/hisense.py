@@ -76,6 +76,8 @@ class HisenseLink:
         self.display_frame: Callable[[], Kelon168Command | None] = lambda: None
         self._turn = Lock()
         self._last_sent: float | None = None
+        self._frames_sent = 0
+        self._last_frame = b""
         self._listeners: list[Callable[[], None]] = []
 
     def add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
@@ -88,9 +90,21 @@ class HisenseLink:
         for listener in self._listeners:
             listener()
 
-    async def send(self, command: Kelon168Command, context: Context | None) -> None:
-        """Send a frame in its turn; twice while the display is off."""
+    async def send(
+        self, build: Callable[[], Kelon168Command], context: Context | None
+    ) -> None:
+        """
+        Send a frame in its turn; twice while the display is off.
+
+        The frame is built when its turn comes, so it carries the latest state;
+        one that a frame sent meanwhile already carried is not sent again (the
+        unit beeps less; DEV-012 review, U2).
+        """
+        queued_after = self._frames_sent
         async with self._turn:
+            command = build()
+            if self._frames_sent > queued_after and command.frame() == self._last_frame:
+                return
             await self._send(command, context)
             if command.power and not self.display_on:
                 self._set_display(on=True)
@@ -115,3 +129,5 @@ class HisenseLink:
             await async_send_command(self.hass, self.emitter, command, context=context)
         finally:
             self._last_sent = monotonic()
+        self._frames_sent += 1
+        self._last_frame = command.frame()

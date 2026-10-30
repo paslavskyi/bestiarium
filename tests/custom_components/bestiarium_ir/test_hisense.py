@@ -11,13 +11,21 @@ from homeassistant.components.climate import (
     ATTR_FAN_MODE,
     HVACMode,
 )
+from homeassistant.config_entries import ConfigSubentry, ConfigSubentryData
 from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
 
+from custom_components.bestiarium_ir.const import (
+    CONF_EMITTER,
+    CONF_ZHA_DEVICE,
+    SUBENTRY_TYPE_BLASTER,
+    SUBENTRY_TYPE_HISENSE,
+)
 from custom_components.bestiarium_ir.hisense import ACTIONS, Change
 from custom_components.bestiarium_ir.kelon168 import (
     Kelon168Action,
@@ -199,12 +207,13 @@ async def test_assumed_state_is_restored(
         hass,
         [
             (
-                State(
-                    "climate.stasi_ac",
-                    HVACMode.OFF,
-                    {ATTR_TEMPERATURE: 22, ATTR_FAN_MODE: "low"},
-                ),
-                {"last_active_hvac_mode": HVACMode.COOL},
+                State("climate.stasi_ac", STATE_UNAVAILABLE),
+                {
+                    "hvac_mode": HVACMode.OFF,
+                    "temperature": 22,
+                    "fan_mode": "low",
+                    "last_active_hvac_mode": HVACMode.COOL,
+                },
             )
         ],
     )
@@ -265,7 +274,12 @@ async def test_frames_are_three_seconds_apart(
 async def test_last_change_is_the_last_frame(
     hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
 ) -> None:
-    """Targets one after another: every one goes, in order; the last one stays."""
+    """
+    Targets one after another: the last one goes, none twice.
+
+    A queued frame is built in its turn from the latest target; one already
+    carried by a frame sent meanwhile is not sent again (DEV-012 review, U2).
+    """
     _, climate = ac
     await _heat_24(hass, climate)
     await asyncio.gather(
@@ -274,7 +288,7 @@ async def test_last_change_is_the_last_frame(
             for t in (25, 26, 27)
         )
     )
-    assert [f.temperature for f in emitter.frames[-3:]] == [25, 26, 27]
+    assert [f.temperature for f in emitter.frames[1:]] == [25, 27]
     assert hass.states.get(climate).attributes[ATTR_TEMPERATURE] == 27
 
 
@@ -288,3 +302,111 @@ async def test_failed_send_keeps_the_assumed_state(
     with pytest.raises(HomeAssistantError):
         await call(hass, "climate", "set_hvac_mode", climate, hvac_mode=HVACMode.COOL)
     assert hass.states.get(climate).state == HVACMode.HEAT
+
+
+async def test_a_mode_right_after_a_target_keeps_both(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """A mode queued behind a target: its frame carries the new target too."""
+    _, climate = ac
+    await call(
+        hass,
+        "climate",
+        "set_temperature",
+        climate,
+        temperature=22,
+        hvac_mode=HVACMode.HEAT,
+    )
+    await asyncio.gather(
+        call(hass, "climate", "set_temperature", climate, temperature=25),
+        call(hass, "climate", "set_hvac_mode", climate, hvac_mode=HVACMode.COOL),
+    )
+    assert _state(emitter.frames[-1]) == (True, Kelon168Mode.COOL, 25, Kelon168Fan.AUTO)
+    state = hass.states.get(climate)
+    assert (state.state, state.attributes[ATTR_TEMPERATURE]) == (HVACMode.COOL, 25)
+
+
+async def test_a_speed_right_after_a_target_keeps_both(
+    hass: HomeAssistant, ac: AC, emitter: RecordingEmitter
+) -> None:
+    """A speed queued behind a target: the last frame has the target and the speed."""
+    _, climate = ac
+    await call(
+        hass,
+        "climate",
+        "set_temperature",
+        climate,
+        temperature=22,
+        hvac_mode=HVACMode.HEAT,
+    )
+    await asyncio.gather(
+        call(hass, "climate", "set_temperature", climate, temperature=25),
+        call(hass, "climate", "set_fan_mode", climate, fan_mode="high"),
+    )
+    assert _state(emitter.frames[-1]) == (True, Kelon168Mode.HEAT, 25, Kelon168Fan.HIGH)
+    state = hass.states.get(climate)
+    assert (state.attributes[ATTR_TEMPERATURE], state.attributes[ATTR_FAN_MODE]) == (
+        25,
+        "high",
+    )
+
+
+async def test_a_reload_keeps_the_assumed_state_on_its_own_blaster(
+    hass: HomeAssistant,
+    zha_device: object,
+    zha_calls: object,  # noqa: ARG001
+) -> None:
+    """
+    A Hisense on the entry's own blaster: a reload keeps its state and display.
+
+    The emitter is unloaded first and the air conditioner goes unavailable
+    before it is removed; a subentry added later reloads the entry.
+    """
+    entry = ir_entry(
+        ConfigSubentryData(
+            data={CONF_ZHA_DEVICE: zha_device.id},
+            subentry_type=SUBENTRY_TYPE_BLASTER,
+            title="IR black",
+            unique_id=zha_device.id,
+        )
+    )
+    await set_up(hass, entry)
+    emitter_id = next(
+        e.entity_id
+        for e in er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
+        if e.domain == "infrared"
+    )
+    hass.config_entries.async_add_subentry(
+        entry,
+        ConfigSubentry(
+            data={CONF_EMITTER: emitter_id},
+            subentry_type=SUBENTRY_TYPE_HISENSE,
+            title="Stasi AC",
+            unique_id=None,
+        ),
+    )
+    await hass.async_block_till_done()
+    await call(
+        hass,
+        "climate",
+        "set_temperature",
+        "climate.stasi_ac",
+        temperature=24,
+        hvac_mode=HVACMode.HEAT,
+    )
+    await call(hass, "climate", "set_fan_mode", "climate.stasi_ac", fan_mode="low")
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    state = hass.states.get("climate.stasi_ac")
+    assert (
+        state.state,
+        state.attributes[ATTR_TEMPERATURE],
+        state.attributes[ATTR_FAN_MODE],
+    ) == (
+        HVACMode.HEAT,
+        24,
+        "low",
+    )
+    assert hass.states.get("switch.stasi_ac_display").state == "on"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, override
 
 import pytest
@@ -128,9 +129,10 @@ class Clock:
         self.sleeps: list[float] = []
 
     async def sleep(self, seconds: float) -> None:
-        """Move the clock instead of waiting."""
+        """Move the clock instead of waiting; let other tasks run, as a wait does."""
         self.sleeps.append(seconds)
         self.now += seconds
+        await asyncio.sleep(0)
 
 
 @pytest.fixture
@@ -157,7 +159,8 @@ class RecordingEmitter(InfraredEmitterEntity):
         self.fail = False
 
     async def async_send_command(self, command: Command) -> None:
-        """Record the frame, or fail as a broken emitter."""
+        """Record the frame, or fail as a broken emitter; it yields, as I/O does."""
+        await asyncio.sleep(0)
         if self.fail:
             msg = "the emitter is broken"
             raise HomeAssistantError(msg)
