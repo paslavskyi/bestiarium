@@ -3,8 +3,9 @@ The power flow card, served by Bestiarium Mode (DEV-014).
 
 The power modes are Mode's subject, so the card that shows where the home is
 fed from lives here. Its files are a static path; every page of HA loads its
-module, so the owner only adds the card to a dashboard. The URL carries a
-digest of the files: an update of Bestiarium is a new URL, not a stale cache.
+module, so the owner only adds the card to a dashboard. The card's URL
+carries a digest of the files: an update of Bestiarium is a new URL. Its
+import of the model has none, so the files are served without a long cache.
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ async def async_register_card(hass: HomeAssistant) -> None:
     if "frontend" not in hass.config.components:
         return
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(CARD_DIR), cache_headers=True)]
+        [StaticPathConfig(CARD_URL, str(CARD_DIR), cache_headers=False)]
     )
     version = await hass.async_add_executor_job(_digest)
     add_extra_js_url(hass, f"{CARD_URL}/power-flow-card.js?v={version}")

@@ -33,12 +33,16 @@ def frontend(hass: HomeAssistant) -> Mock:
 async def test_card_is_served_and_loaded_with_the_frontend(
     hass: HomeAssistant, frontend: Mock
 ) -> None:
-    """The folder is a static path; every page of HA loads the card's module."""
+    """
+    The folder is a static path; every page of HA loads the card's module.
+
+    No long cache: the card's URL is versioned, its import of the model is not.
+    """
     with patch(ADD_JS) as add_js:
         assert await async_setup_component(hass, DOMAIN, {})
 
     frontend.async_register_static_paths.assert_awaited_once_with(
-        [StaticPathConfig(CARD_URL, str(FRONTEND), cache_headers=True)]
+        [StaticPathConfig(CARD_URL, str(FRONTEND), cache_headers=False)]
     )
     add_js.assert_called_once()
     url = add_js.call_args.args[1]
