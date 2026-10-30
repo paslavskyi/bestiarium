@@ -103,6 +103,9 @@
         },
         "abort": {
           "subentry_removed": "The blaster was removed."
+        },
+        "error": {
+          "already_configured": "This TS1201 is already another blaster."
         }
       }
     },

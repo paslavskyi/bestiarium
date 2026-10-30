@@ -52,6 +52,24 @@ def device_selector(hass: HomeAssistant, subentry_type: str) -> selector.Selecto
     )
 
 
+def blaster_taken(
+    entry: ConfigEntry, device_id: str, subentry: ConfigSubentry | None
+) -> bool:
+    """Return whether another blaster of the entry already uses the TS1201."""
+    return any(
+        other.subentry_type == SUBENTRY_TYPE_BLASTER
+        and other.data[CONF_ZHA_DEVICE] == device_id
+        and other is not subentry
+        for other in entry.subentries.values()
+    )
+
+
+def blaster_title(hass: HomeAssistant, device_id: str) -> str:
+    """Return the name of a blaster: its TS1201's in ZHA."""
+    device = dr.async_get(hass).async_get(device_id)
+    return (device.name_by_user or device.name or device_id) if device else device_id
+
+
 class BestiariumIrFlowHandler(ConfigFlow, domain=DOMAIN):
     """The entry of Bestiarium IR: made at once, the devices are its subentries."""
 
@@ -100,10 +118,9 @@ class BlasterSubentryFlow(ConfigSubentryFlow):
         )
         if user_input is not None:
             device_id = user_input[CONF_ZHA_DEVICE]
-            if self._taken(device_id, subentry):
+            if blaster_taken(self._get_entry(), device_id, subentry):
                 return self.async_abort(reason="already_configured")
-            device = dr.async_get(self.hass).async_get(device_id)
-            title = (device.name_by_user or device.name) if device else device_id
+            title = blaster_title(self.hass, device_id)
             data = {CONF_ZHA_DEVICE: device_id}
             if subentry is None:
                 return self.async_create_entry(
@@ -130,15 +147,6 @@ class BlasterSubentryFlow(ConfigSubentryFlow):
                     ): device_selector(self.hass, SUBENTRY_TYPE_BLASTER)
                 }
             ),
-        )
-
-    def _taken(self, device_id: str, subentry: ConfigSubentry | None) -> bool:
-        """Return whether another blaster already uses the device."""
-        return any(
-            other.subentry_type == SUBENTRY_TYPE_BLASTER
-            and other.data[CONF_ZHA_DEVICE] == device_id
-            and other is not subentry
-            for other in self._get_entry().subentries.values()
         )
 
 

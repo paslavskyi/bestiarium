@@ -103,6 +103,9 @@
         },
         "abort": {
           "subentry_removed": "Бластер видалено."
+        },
+        "error": {
+          "already_configured": "Цей TS1201 уже інший бластер."
         }
       }
     },

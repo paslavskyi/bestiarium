@@ -17,7 +17,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
 
-from .config_flow import device_selector
+from .config_flow import blaster_taken, blaster_title, device_selector
 from .const import (
     CONF_EMITTER,
     CONF_ZHA_DEVICE,
@@ -108,16 +108,32 @@ class SubentryFieldRepairFlow(RepairsFlow):
             if subentry.subentry_type == SUBENTRY_TYPE_BLASTER
             else CONF_EMITTER
         )
+        errors: dict[str, str] = {}
         # The first step gets the issue_id from HA's repairs, not a field
         if user_input is not None and key in user_input:
-            self.hass.config_entries.async_update_subentry(
-                entry, subentry, data={**subentry.data, key: user_input[key]}
-            )
-            return self.async_create_entry(data={})
+            value = user_input[key]
+            if key == CONF_EMITTER:
+                self.hass.config_entries.async_update_subentry(
+                    entry, subentry, data={**subentry.data, key: value}
+                )
+                return self.async_create_entry(data={})
+            # As the blaster's reconfigure form: one TS1201, one blaster
+            if blaster_taken(entry, value, subentry):
+                errors[key] = "already_configured"
+            else:
+                self.hass.config_entries.async_update_subentry(
+                    entry,
+                    subentry,
+                    data={**subentry.data, key: value},
+                    title=blaster_title(self.hass, value),
+                    unique_id=value,
+                )
+                return self.async_create_entry(data={})
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {vol.Required(key): device_selector(self.hass, subentry.subentry_type)}
             ),
+            errors=errors,
             description_placeholders={"name": subentry.title},
         )

@@ -729,16 +729,17 @@ def _hisense_reset(reg: Registry) -> list[dict[str, Any]]:
     """
     Return the reset's steps of the stand's Hisense (DEV-012).
 
-    Off, then the display on: assumed only, no frame (DEV-012 review, U3);
-    its knobs back.
+    The display on while the unit may still run (a display frame then; of a
+    unit that is off, assumed only: DEV-012 review, U3), so the stand's
+    display and the one HA assumes agree; then off; its knobs back.
     """
     ((name, mock_id),) = STAND_HISENSE
     return [
-        _hisense_mode(reg.ir_entity(name, "climate"), "off"),
         {
             "action": "switch.turn_on",
             "target": {"entity_id": reg.ir_entity(name, "switch")},
         },
+        _hisense_mode(reg.ir_entity(name, "climate"), "off"),
         {
             "action": "switch.turn_off",
             "target": {

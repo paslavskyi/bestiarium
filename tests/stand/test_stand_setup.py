@@ -581,7 +581,8 @@ def test_the_hisense_has_its_scenarios() -> None:
         if step.get("action") == "switch.turn_off"
         for entity in step["target"]["entity_id"]
     }
-    # The display on after the Hisense is off: no frame (DEV-012 review, U3)
+    # The display on while the Hisense may still run (a frame then), before
+    # it goes off: the stand's display and HA's assumed one agree
     display_on = next(
         n
         for n, step in enumerate(reset)
@@ -596,7 +597,7 @@ def test_the_hisense_has_its_scenarios() -> None:
         for n, step in enumerate(reset)
         if step.get("target", {}).get("entity_id") == "climate.stand_hisense"
     )
-    assert hisense_off < display_on
+    assert display_on < hisense_off
     assert "climate.stand_hisense" in off
 
     manual = scripts["hisense_manual_modes"]["sequence"]

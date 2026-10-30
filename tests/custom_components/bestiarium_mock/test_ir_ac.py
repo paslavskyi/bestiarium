@@ -258,6 +258,33 @@ async def test_state_and_knobs_are_restored(
     assert (ac.ignores_off, ac.ir_lost) == (True, False)
 
 
+async def test_restored_behind_a_socket_off_it_is_off(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,  # noqa: ARG001
+) -> None:
+    """The unit restored "cool" behind its socket restored off: it is off."""
+    mock_restore_cache(
+        hass,
+        [
+            State(
+                "sensor.mock_hisense_air_conditioner_state",
+                "cool",
+                {"temperature": 22, "fan": "low", "display": True},
+            ),
+            State("switch.mock_hisense_power_switch", STATE_OFF),
+        ],
+    )
+    entry = MockConfigEntry(
+        domain="bestiarium_mock", unique_id="bestiarium_mock", data={}, version=2
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    ac = hass.data["bestiarium_mock"][entry.entry_id].ir_acs["hisense"]
+    assert ac.power is False
+    assert ac.state == "off"
+
+
 async def test_hisense_on_the_stand_emitter_end_to_end(
     hass: HomeAssistant,
     stand: MockDevicesCoordinator,
@@ -294,3 +321,19 @@ async def test_hisense_on_the_stand_emitter_end_to_end(
         24,
         1200,
     )
+
+
+async def test_socket_restored_off_after_the_unit_turns_it_off(
+    stand: MockDevicesCoordinator, ac: MockIrAc
+) -> None:
+    """The socket restored off after the unit (platforms load together): off."""
+    ac.restore(
+        power=True,
+        mode=Kelon168Mode.COOL,
+        temperature=22,
+        fan=Kelon168Fan.AUTO,
+        display_on=True,
+    )
+    assert ac.power is True
+    stand.sockets["hisense_power"].restore(on=False)
+    assert ac.power is False

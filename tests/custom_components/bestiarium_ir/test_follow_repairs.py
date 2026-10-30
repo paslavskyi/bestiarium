@@ -85,14 +85,14 @@ async def test_gone_zha_device_is_a_repairs_issue(
         ConfigSubentryData(
             data={CONF_ZHA_DEVICE: "gone"},
             subentry_type=SUBENTRY_TYPE_BLASTER,
-            title="IR black",
+            title="Old blaster",
             unique_id="gone",
         )
     )
     await set_up(hass, entry)
     issue = _issue(hass, "blaster_device_gone", entry)
     assert issue is not None
-    assert issue.translation_placeholders == {"name": "IR black"}
+    assert issue.translation_placeholders == {"name": "Old blaster"}
 
     assert await async_setup_component(hass, "repairs", {})
     flows = hass.data["repairs"]["flow_manager"]
@@ -103,6 +103,41 @@ async def test_gone_zha_device_is_a_repairs_issue(
     assert result["type"] == "create_entry"
     await hass.async_block_till_done()
     assert _issue(hass, "blaster_device_gone", entry) is None
+    # As its reconfigure form: named as the TS1201, unique by it
+    (subentry,) = entry.subentries.values()
+    assert (subentry.title, subentry.unique_id) == ("IR black", zha_device.id)
+
+
+async def test_repair_refuses_a_ts1201_of_another_blaster(
+    hass: HomeAssistant, zha_device: dr.DeviceEntry
+) -> None:
+    """One TS1201, one blaster: the repair cannot point a second one at it."""
+    entry = ir_entry(
+        ConfigSubentryData(
+            data={CONF_ZHA_DEVICE: zha_device.id},
+            subentry_type=SUBENTRY_TYPE_BLASTER,
+            title="IR black",
+            unique_id=zha_device.id,
+        ),
+        ConfigSubentryData(
+            data={CONF_ZHA_DEVICE: "gone"},
+            subentry_type=SUBENTRY_TYPE_BLASTER,
+            title="Old blaster",
+            unique_id="gone",
+        ),
+    )
+    await set_up(hass, entry)
+    gone = next(s for s in entry.subentries.values() if s.title == "Old blaster")
+    assert await async_setup_component(hass, "repairs", {})
+    flows = hass.data["repairs"]["flow_manager"]
+    result = await flows.async_init(
+        DOMAIN, context={"issue_id": f"blaster_device_gone_{gone.subentry_id}"}
+    )
+    result = await flows.async_configure(
+        result["flow_id"], {CONF_ZHA_DEVICE: zha_device.id}
+    )
+    assert result["errors"] == {CONF_ZHA_DEVICE: "already_configured"}
+    assert entry.subentries[gone.subentry_id].data[CONF_ZHA_DEVICE] == "gone"
 
 
 async def test_issue_goes_when_fixed_by_reconfigure(
