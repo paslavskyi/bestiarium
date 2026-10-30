@@ -230,10 +230,12 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
     ]
     # The stand's loads not allowed (the reset allows them again)
     loads_wait = [{"action": "switch.turn_off", "target": {"entity_id": loads}}]
-    # The power sockets of the air conditioners' virtual switches: the
-    # stepwise "off" cuts one, the reset allows them again
+    # The power sockets of the air conditioners' virtual switches and of the
+    # air conditioner thermostat: the stepwise "off" cuts one, the reset
+    # allows them again
     ac_sockets = [
-        reg.control(reg.mock_device(ac)["id"], "allowed") for _, _, ac in THERMOSTATS
+        reg.control(reg.mock_device(ac)["id"], "allowed")
+        for ac in (*(ac for _, _, ac in THERMOSTATS), AC_THERMOSTAT[3])
     ]
 
     def room(thermometer: str, celsius: float) -> dict[str, Any]:

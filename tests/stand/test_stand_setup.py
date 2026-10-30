@@ -473,7 +473,11 @@ def test_a_fault_scenario_shows_its_fault_first() -> None:
 def test_the_stepwise_off_has_its_scenarios() -> None:
     """DEV-010: the reset gives the ACs their power back; the stuck AC loses its IR."""
     scripts = scenario_scripts(_Registry())
-    sockets = [f"switch.{ac}_allowed" for _, _, ac in THERMOSTATS]
+    # DEV-013: and the air conditioner thermostat's socket
+    sockets = [
+        *(f"switch.{ac}_allowed" for _, _, ac in THERMOSTATS),
+        "switch.hisense_2_power_allowed",
+    ]
     assert {
         "action": "switch.turn_on",
         "target": {"entity_id": sockets},
@@ -699,6 +703,8 @@ def test_the_ac_thermostat_has_its_scenarios() -> None:
         for step in reset
         if step.get("action") == "select.select_option"
     ]
+    # The socket the stepwise "off" of scenario 7 cut is allowed again
+    assert "switch.hisense_2_power_allowed" in _targets(reset, "switch.turn_on")
     assert "number.mock_hisense_2_sensor_offset" in _targets(reset, "number.set_value")
     assert "number.mock_thermo_6_mock_temperature" in _targets(
         reset, "number.set_value"

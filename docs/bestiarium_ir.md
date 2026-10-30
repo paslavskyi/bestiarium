@@ -189,5 +189,8 @@ followed, not reported. No events, no notifications.
 The stand ([bestiarium_mock.md](bestiarium_mock.md)) has a Hisense of its own
 ("Stand Hisense") on the mock emitter `infrared.mock_hisense_emitter`: the
 mock air conditioner recognises the frames with `kelon168.py` and behaves as
-the real unit (scenarios 5 and 6). The TS1201 itself is not on the stand: its
+the real unit (scenarios 5 and 6). A second one, "Stand Hisense 2" on
+`infrared.mock_hisense_2_emitter`, warms or cools its room and idles at its
+setpoint, under the air conditioner thermostat of Bestiarium Climate
+(scenarios 3, 4, 7, 8, DEV-013). The TS1201 itself is not on the stand: its
 tests are the 61 codes of the home's packages, and the home.

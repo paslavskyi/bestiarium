@@ -272,16 +272,23 @@ the script fails if HA did not load them.
    the template switch "Stand cloud AC switch" made by the template
    helper's own form, whose actions are the IR scripts of `ac_4`, as the
    home's switches over Tuya scenes; made again on each run).
-   Then the stand's Hisense (DEV-012): Bestiarium IR is added if missing, and
-   its subentry "Stand Hisense" made again on the emitter
-   `infrared.mock_hisense_emitter`; the other subentries of Bestiarium IR are
-   kept.
+   The stand's Hisense units (DEV-012, DEV-013) come **before** the climate
+   entry (its air conditioner thermostat needs one): Bestiarium IR is added
+   if missing, and its subentries "Stand Hisense" and "Stand Hisense 2" made
+   again on the emitters `infrared.mock_hisense_emitter` and
+   `infrared.mock_hisense_2_emitter`; the other subentries of Bestiarium IR
+   are kept. Since DEV-013 the climate entry has the air conditioner
+   thermostat "Stand AC thermostat" on "Stand Hisense 2": thermometer 6,
+   margin +1 °C, the same minimum cycle, read by the power of
+   `hisense_2_power` (20 W), its socket the "Allowed" of that socket's
+   device. "Stand Hisense" stays driven by hand (scenarios 5, 6): under a
+   thermostat in "off" it would be turned off as working against it.
 
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway); the stand's loads allowed again (explicitly: a restart of HA in between changes nothing), the air conditioners' power sockets ("Allowed") on again, the three rooms at 20 °C; the Hisense off, then its display on (assumed only, no frame) and its knobs off |
+   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway); the stand's loads allowed again (explicitly: a restart of HA in between changes nothing), the air conditioners' power sockets ("Allowed", the AC thermostat's too) on again, the rooms at 20 °C; each Hisense off, then its display on (assumed only, no frame) and its knobs off; "Auto mode" "Heat", "Sensor offset" 0 |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |
@@ -308,11 +315,20 @@ the script fails if HA did not load them.
    | `climate_coexistence` | scenario 9: reset; the stand's loads not allowed; AC 1 and AC 2 (virtual thermostats) and "Stand heater" (auto) want heat, capacity 2: two run; after the minimum cycle the rotation lets the waiting one in |
    | `hisense_manual_modes` | scenario 5 (DEV-012): reset; the Hisense heats to 24 °C, 10 s later cools to 22 °C, then dry, fan only, the fan speed high, off: each a frame of its own (one in the emitter's logbook) and its power (1200, 1200, 300, 40, 40, 5 W) |
    | `hisense_display` | scenario 6 (DEV-012): reset; heat 24 °C; the display off (one display frame); the target 26 °C: two frames 3 s apart, the first only lights the display ("Last frame": only lit the display, then carried out); off: one frame |
+   | `ac_auto` | scenario 3 (DEV-013): reset; room 6 at 18 °C, target 21, "Stand AC thermostat" in auto: one frame "heat 22 °C" (the margin), 1200 W, "Normal"; the room rises 0.6 °C a minute; at about 20.7 °C a frame "off", 5 W |
+   | `ac_idle` | scenario 3: reset; "Sensor offset" 2; the same start; at a room of 20 °C the unit idles (40 W), the room stays; for 3 minutes the thermostat still heats, no frame, "Normal"; then the room at 21 °C: a frame "off" |
+   | `ac_auto_cool` | scenario 4: reset; "Auto mode" "Cool"; room 26 °C, target 23, auto: a frame "cool 22 °C", the room falls; at about 23.3 °C "off" |
+   | `ac_stepwise` | scenario 7: reset; auto, running; the knob "Ignores off"; the room at 23 °C: "off" three times a minute apart (ignored, the unit runs or idles), "Does not turn off", the event "out of control", then the socket cut (0 W) and the event "power cut" |
+   | `ac_off_against` | scenario 7: reset (the thermostat off); "Stand Hisense 2" set to heat 24 °C from its own card: it runs against the thermostat, which sends "off" at once |
+   | `ac_remote` | scenario 8: reset; auto, running; "Remote: off": HA still shows heat (assumed), 5 W; a step later off by another, after the pause a new frame "heat 22 °C"; then "Stand Hisense 2" set to cool 20 °C from its card: within a cycle "heat 22 °C" again |
+   | `ac_manual_alone` | scenario 8: reset; the thermostat in "heat" (manual): one frame "heat 21 °C"; "Stand Hisense 2" set to cool from its card: the thermostat leaves it alone |
    | `cloud_ac_universal` | scenario 10: reset; "Stand cloud AC" in auto, its room at 18 °C: the template switch runs the IR script, 1200 W, it runs by its power; the room at 25 °C: off (5 W); cold again and running, its IR lost and the room warm: "off" three times a minute apart, "Does not turn off", the event "out of control" — no socket is cut (it has none) |
 
 5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode
-   and zones; a section of the Hisense (its climate, display, state, last
-   frame, emitter and power); the scenario buttons; a section per socket
+   and zones; a section "Термостат кондиціонера" (the thermostat, "Auto mode",
+   its control state, room 6, the power, the knobs "Ignores off", "IR lost",
+   "Sensor offset", "Remote: off"); a section per Hisense (its climate,
+   display, state, last frame, emitter and power); the scenario buttons; a section per socket
    (switch, power, profile, control state; the heading and the switch tile
    open the device page with its knobs; the free Matter socket has no control
    state); a logbook of the sockets, zones, mode and the Hisense's frames.
