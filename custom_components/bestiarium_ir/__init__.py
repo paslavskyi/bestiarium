@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
     from .data import BestiariumIrConfigEntry
 
-PLATFORMS: list[Platform] = [Platform.INFRARED, Platform.CLIMATE]
+PLATFORMS: list[Platform] = [Platform.INFRARED, Platform.CLIMATE, Platform.SWITCH]
 
 
 async def async_setup_entry(

@@ -21,7 +21,9 @@ from .const import FRAME_PAUSE_SECONDS
 from .kelon168 import Kelon168Action
 
 if TYPE_CHECKING:
-    from homeassistant.core import Context, HomeAssistant
+    from collections.abc import Callable
+
+    from homeassistant.core import CALLBACK_TYPE, Context, HomeAssistant
 
     from .kelon168 import Kelon168Command
 
@@ -56,19 +58,52 @@ class HisenseLink:
 
     The unit does not carry out a frame sooner than 3 s after the previous
     one: frames wait their turn, in order.
+
+    The display is assumed (design 10): while it is off, a frame only lights
+    it, so a frame of a running state goes twice; "off" works with the
+    display off (the home, 2026-10-28) and goes once. The display of a unit
+    that is off goes out by itself: switching it sends nothing (DEV-012
+    review, U3).
     """
 
     def __init__(self, hass: HomeAssistant, emitter: str) -> None:
         """Link to the emitter's entity."""
         self.hass = hass
         self.emitter = emitter
+        self.display_on = True
+        # The display frame of the state, None while the unit is off; set by
+        # the climate entity
+        self.display_frame: Callable[[], Kelon168Command | None] = lambda: None
         self._turn = Lock()
         self._last_sent: float | None = None
+        self._listeners: list[Callable[[], None]] = []
+
+    def add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
+        """Call the listener when the display changes."""
+        self._listeners.append(listener)
+        return lambda: self._listeners.remove(listener)
+
+    def _set_display(self, *, on: bool) -> None:
+        self.display_on = on
+        for listener in self._listeners:
+            listener()
 
     async def send(self, command: Kelon168Command, context: Context | None) -> None:
-        """Send a frame in its turn."""
+        """Send a frame in its turn; twice while the display is off."""
         async with self._turn:
             await self._send(command, context)
+            if command.power and not self.display_on:
+                self._set_display(on=True)
+                await self._send(command, context)
+
+    async def set_display(self, *, on: bool, context: Context | None) -> None:
+        """Switch the display; a display frame only while the unit runs."""
+        async with self._turn:
+            if on is self.display_on:
+                return
+            if (frame := self.display_frame()) is not None:
+                await self._send(frame, context)
+            self._set_display(on=on)
 
     async def _send(self, command: Kelon168Command, context: Context | None) -> None:
         if (

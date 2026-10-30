@@ -81,6 +81,11 @@
           }
         }
       }
+    },
+    "switch": {
+      "display": {
+        "name": "Display"
+      }
     }
   }
 }

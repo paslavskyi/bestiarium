@@ -130,8 +130,9 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
 
     @override
     async def async_added_to_hass(self) -> None:
-        """Restore the assumed state."""
+        """Restore the assumed state; give the display its frames."""
         await super().async_added_to_hass()
+        self._link.display_frame = self._display_frame
         last = await self.async_get_last_state()
         if last is not None and last.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             if last.state in self._attr_hvac_modes:
@@ -212,7 +213,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             HVACMode.AUTO,
         ):
             await self._link.send(
-                self.command(hvac_mode, int(temperature), fan_mode, change),
+                self._command(hvac_mode, int(temperature), fan_mode, change),
                 self._context,
             )
         self._attr_hvac_mode = hvac_mode
@@ -222,7 +223,18 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             self._last_active = hvac_mode
         self.async_write_ha_state()
 
-    def command(
+    def _display_frame(self) -> Kelon168Command | None:
+        """Return the display frame of the state, None while the unit is off."""
+        if self._attr_hvac_mode in (None, HVACMode.OFF):
+            return None
+        return self._command(
+            self._attr_hvac_mode,
+            int(self._attr_target_temperature or AUTO_TEMP),
+            self._attr_fan_mode or Kelon168Fan.AUTO.value,
+            Change.DISPLAY,
+        )
+
+    def _command(
         self, hvac_mode: HVACMode, temperature: int, fan_mode: str, change: Change
     ) -> Kelon168Command:
         """Return the frame of a state; the unit's auto runs 23 °C, fan auto."""
