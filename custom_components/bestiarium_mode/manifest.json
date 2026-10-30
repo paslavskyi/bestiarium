@@ -1,6 +1,10 @@
 {
   "domain": "bestiarium_mode",
   "name": "Bestiarium Mode",
+  "after_dependencies": [
+    "frontend",
+    "http"
+  ],
   "codeowners": [
     "@paslavskyi"
   ],

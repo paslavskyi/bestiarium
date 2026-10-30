@@ -22,7 +22,7 @@ from .const import (
     IrFrameOutcome,
     MockThermometerSpec,
 )
-from .entity import MockIrAcEntity, MockSocketEntity
+from .entity import MockHomePowerEntity, MockIrAcEntity, MockSocketEntity
 from .ir_ac import STATES
 
 if TYPE_CHECKING:
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
+    from .home_power import MockHomePower
     from .readings import MockReading
 
 
@@ -65,6 +66,7 @@ async def async_setup_entry(
         entities.append(MockIrAcStateSensor(ac, "ac_state"))
         entities.append(MockIrAcLastFrameSensor(ac, "last_frame"))
 
+    entities.append(MockHomePowerHoursToFullSensor(coordinator.home_power))
     async_add_entities(entities)
 
 
@@ -252,3 +254,18 @@ class MockIrAcLastFrameSensor(MockIrAcEntity, SensorEntity):
             "temperature": frame.temperature,
             "fan": frame.fan.value,
         }
+
+
+class MockHomePowerHoursToFullSensor(MockHomePowerEntity, SensorEntity):
+    """How long the stand's battery charges to full; unknown unless it charges."""
+
+    _attr_native_unit_of_measurement = "h"
+
+    def __init__(self, home_power: MockHomePower) -> None:
+        """Initialize the sensor."""
+        super().__init__(home_power, "battery_hours_to_full")
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the hours to full."""
+        return self._home_power.hours_to_full

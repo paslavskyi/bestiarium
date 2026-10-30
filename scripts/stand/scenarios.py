@@ -10,6 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from custom_components.bestiarium_devices.const import LOAD_PRIORITY_ALWAYS_ON
 from custom_components.bestiarium_mock.const import (
+    HOME_POWER_MODES,
+    HOME_POWER_NUMBERS,
+    HOME_POWER_SWITCHES,
     MOCK_DEVICES,
     MOCK_GRID,
     MOCK_THERMOMETERS,
@@ -333,6 +336,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                     for _, thermometer, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)
                 ),
                 *_ac_reset(reg),
+                *_home_power(reg, HOME_POWER_MODES[0]),
                 wait(2),
             ],
         },
@@ -713,6 +717,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         },
         **_hisense_scenarios(reg, reset),
         **_ac_scenarios(reg, reset),
+        **_power_scenarios(reg, reset),
         "unstable_tuya": {
             "alias": "Стенд: нестабільна Tuya",
             "icon": "mdi:wifi-strength-alert-outline",
@@ -997,6 +1002,109 @@ def _ac_scenarios(reg: Registry, reset: dict[str, Any]) -> dict[str, dict[str, A
                 _hisense_mode(unit, "cool", temperature=20),
             ],
         },
+    }
+
+
+def _home_power(
+    reg: Registry, mode: str, *, off: tuple[str, ...] = (), **numbers: float
+) -> list[dict[str, Any]]:
+    """
+    Set the stand's home power: its mode, relays and numbers (DEV-014).
+
+    Every switch on but those in off; every number its default but those given.
+    """
+    values = {number.key: number.default for number in HOME_POWER_NUMBERS} | numbers
+
+    def switches(service: str, keys: list[str]) -> list[dict[str, Any]]:
+        if not keys:
+            return []
+        entity_ids = [reg.mock("switch", f"mock_home_power_{key}") for key in keys]
+        return [{"action": f"switch.{service}", "target": {"entity_id": entity_ids}}]
+
+    return [
+        {
+            "action": "select.select_option",
+            "target": {"entity_id": reg.mock("select", "mock_home_power_mode")},
+            "data": {"option": mode},
+        },
+        *switches("turn_on", [key for key in HOME_POWER_SWITCHES if key not in off]),
+        *switches("turn_off", list(off)),
+        *(
+            {
+                "action": "number.set_value",
+                "target": {"entity_id": reg.mock("number", f"mock_home_power_{key}")},
+                "data": {"value": value},
+            }
+            for key, value in values.items()
+        ),
+    ]
+
+
+def _power_scenarios(reg: Registry, reset: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """
+    Return the scenarios of the power flow card (DEV-014): one per criterion.
+
+    The home's power on the stand is the stand's grid (its sockets, about
+    0.5 kW after the reset); the rest is the home power's knobs.
+    """
+    normal, powerful, solar, autonomous = HOME_POWER_MODES
+
+    def scenario(alias: str, *steps: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "alias": f"Стенд: живлення — {alias}",
+            "icon": "mdi:transmission-tower",
+            "sequence": [reset, *steps],
+        }
+
+    return {
+        "power_normal": scenario(
+            "звичайний, надлишок сонця, батарея стоїть",
+            *_home_power(reg, normal, grid_power=1000, sun_power=1.8),
+        ),
+        "power_powerful": scenario(
+            "потужний",
+            *_home_power(reg, powerful, off=("inverter_home",), grid_power=1000),
+        ),
+        "power_solar_charging": scenario(
+            "потужний + зарядка від сонця",
+            *_home_power(
+                reg,
+                solar,
+                off=("inverter_home", "grid_inverter"),
+                grid_power=500,
+                sun_power=1.8,
+                battery_flow=-0.6,
+            ),
+        ),
+        "power_autonomous": scenario(
+            "автономний, без сонця, батарея віддає",
+            *_home_power(reg, autonomous, off=("grid_inverter",), battery_flow=0.9),
+        ),
+        "power_outage": scenario(
+            "світла немає",
+            *_home_power(
+                reg, powerful, off=("inverter_home", "grid_present"), battery_flow=1.1
+            ),
+        ),
+        # The review's exception (DEV-014-03, 1): the sensor sees a discharge
+        # only once the charge falls; the card shows it at once
+        "power_outage_sensor_lags": scenario(
+            "автономний, світла немає, датчик батареї ще 0",
+            *_home_power(reg, autonomous, off=("grid_inverter", "grid_present")),
+        ),
+        "power_no_data": scenario(
+            "немає даних про споживання дому",
+            *_home_power(reg, normal, grid_power=1000, sun_power=1.8),
+            {
+                "action": "select.select_option",
+                "target": {
+                    "entity_id": reg.mock(
+                        "select", f"mock_{MOCK_GRID.device_id}_reading_profile"
+                    )
+                },
+                "data": {"option": ReadingProfile.NO_DATA.value},
+            },
+        ),
     }
 
 

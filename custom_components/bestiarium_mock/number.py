@@ -13,11 +13,12 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .const import (
     DOMAIN,
     FAULT_PARAMS,
+    HOME_POWER_NUMBERS,
     LOGGER,
     MOCK_THERMOMETERS,
     MockThermometerSpec,
 )
-from .entity import MockIrAcEntity, MockSocketEntity
+from .entity import MockHomePowerEntity, MockIrAcEntity, MockSocketEntity
 
 if TYPE_CHECKING:
     from dataclasses import Field
@@ -25,9 +26,11 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+    from .const import HomePowerNumber
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
     from .faults import MockSocket
+    from .home_power import MockHomePower
 
 
 async def async_setup_entry(
@@ -55,6 +58,9 @@ async def async_setup_entry(
     entities.extend(
         MockIrAcSensorOffsetNumber(ac, "sensor_offset")
         for ac in coordinator.ir_acs.values()
+    )
+    entities.extend(
+        MockHomePowerNumber(coordinator.home_power, spec) for spec in HOME_POWER_NUMBERS
     )
     async_add_entities(entities)
 
@@ -211,3 +217,34 @@ class MockIrAcSensorOffsetNumber(MockIrAcEntity, RestoreNumber):
             last.native_value is not None
         ):
             self._ac.set_sensor_offset(last.native_value)
+
+
+class MockHomePowerNumber(MockHomePowerEntity, RestoreNumber):
+    """A power, the charge or the hours left of the stand's home."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, home_power: MockHomePower, spec: HomePowerNumber) -> None:
+        """Initialize the number from its spec."""
+        super().__init__(home_power, spec.key)
+        self._key = spec.key
+        self._attr_native_min_value = spec.minimum
+        self._attr_native_max_value = spec.maximum
+        self._attr_native_step = spec.step
+        self._attr_native_unit_of_measurement = spec.unit
+
+    @property
+    def native_value(self) -> float:
+        """Return the value."""
+        return self._home_power.numbers[self._key]
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the value."""
+        self._home_power.set_number(self._key, value)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the value."""
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_number_data()) is not None:
+            self._home_power.set_number(self._key, last.native_value)

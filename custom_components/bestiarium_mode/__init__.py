@@ -10,9 +10,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_registry as er
 
 from .binary_sensor import ZONE_ICONS
+from .card import async_register_card
 from .const import DOMAIN, LOGGER
 from .data import power_load_monitoring_configured
 from .repairs import async_watch_power_sensor
@@ -20,6 +22,7 @@ from .zones import ZoneTracker
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
+    from homeassistant.helpers.typing import ConfigType
 
     from .data import BestiariumModeConfigEntry
 
@@ -28,6 +31,14 @@ PLATFORMS: list[Platform] = [
     Platform.NUMBER,
     Platform.SELECT,
 ]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001
+    """Serve the power flow card (DEV-014)."""
+    await async_register_card(hass)
+    return True
 
 
 # https://developers.home-assistant.io/docs/config_entries_index/#setting-up-an-entry

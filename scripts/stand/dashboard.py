@@ -9,13 +9,18 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from custom_components.bestiarium_mock.const import MOCK_DEVICES
+from custom_components.bestiarium_mock.const import (
+    HOME_POWER_NUMBERS,
+    HOME_POWER_SWITCHES,
+    MOCK_DEVICES,
+)
 
 from .ha import StandError
 from .layout import (
     AC_THERMOSTAT,
     DASHBOARD,
     MODE,
+    POWER_FLOW_CARD,
     STAND_DEVICES,
     STAND_HISENSE,
     THERMOSTATS,
@@ -30,6 +35,51 @@ if TYPE_CHECKING:
 
 def _tile(entity_id: str, **options: Any) -> dict[str, Any]:
     return {"type": "tile", "entity": entity_id, **options}
+
+
+def _power_flow_section(reg: Registry) -> dict[str, Any]:
+    """
+    Return the section of the power flow card (DEV-014) and its knobs.
+
+    The card reads the stand's home power; the home's power is the stand's
+    grid, so its "No data" is an unavailable sensor (criterion 7).
+    """
+    home = "mock_home_power"
+    entities = {
+        "mode": reg.mock("select", f"{home}_mode"),
+        "inverter_home_relay": reg.mock("switch", f"{home}_inverter_home"),
+        "grid_inverter_relay": reg.mock("switch", f"{home}_grid_inverter"),
+        "grid_present": reg.mock("switch", f"{home}_grid_present"),
+        "home_power": reg.mock("sensor", "mock_grid_power"),
+        "grid_power": reg.mock("number", f"{home}_grid_power"),
+        "sun_power": reg.mock("number", f"{home}_sun_power"),
+        "battery_flow": reg.mock("number", f"{home}_battery_flow"),
+        "battery_charge": reg.mock("number", f"{home}_battery_charge"),
+        "battery_hours_left": reg.mock("number", f"{home}_battery_hours_left"),
+        "battery_hours_to_full": reg.mock("sensor", f"{home}_battery_hours_to_full"),
+    }
+    return {
+        "type": "grid",
+        "column_span": 2,
+        "cards": [
+            {
+                "type": POWER_FLOW_CARD,
+                "navigation_path": f"/{DASHBOARD}/stand",
+                "entities": entities,
+            },
+            _tile(entities["mode"], features=[{"type": "select-options"}]),
+            *(
+                _tile(reg.mock("switch", f"{home}_{key}"))
+                for key in HOME_POWER_SWITCHES
+            ),
+            *(
+                _tile(reg.mock("number", f"{home}_{number.key}"))
+                for number in HOME_POWER_NUMBERS
+            ),
+            _tile(entities["battery_hours_to_full"]),
+            _tile(reg.mock("select", "mock_grid_reading_profile")),
+        ],
+    }
 
 
 def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
@@ -76,6 +126,7 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
     mode_select = reg.entity_id("select", MODE, "select")
     run = {"action": "perform-action", "perform_action": "script.turn_on"}
     sections: list[dict[str, Any]] = [
+        _power_flow_section(reg),
         {
             "type": "grid",
             "cards": [

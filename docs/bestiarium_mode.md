@@ -16,7 +16,7 @@ The integration is singleton — only one config entry is allowed (unique_id: `"
 
 ```
 custom_components/bestiarium_mode/
-├── __init__.py          # Entry setup/unload/reload
+├── __init__.py          # Entry setup/unload/reload; serves the power flow card
 ├── manifest.json        # Integration metadata
 ├── const.py             # Constants, config keys, defaults
 ├── data.py              # ConfigEntry type alias, power_load_monitoring_configured()
@@ -26,6 +26,10 @@ custom_components/bestiarium_mode/
 ├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones, views of the zone)
 ├── repairs.py           # Repairs: the zones' power sensor is gone, its fix flow
 ├── number.py            # PowerLoadLimitNumber entity (runtime load limit)
+├── card.py              # Serves the power flow card (static path, extra JS URL)
+├── frontend/
+│   ├── power-flow-card.js   # The card's element
+│   └── power-flow-model.js  # What it shows: pure functions
 └── translations/
     ├── en.json           # English translations
     └── uk.json           # Ukrainian translations
@@ -36,7 +40,10 @@ tests/custom_components/bestiarium_mode/
 ├── test_binary_sensor.py
 ├── test_zones.py
 ├── test_number.py
-└── test_select.py
+├── test_select.py
+└── test_card.py
+
+tests/frontend/power-flow-model.test.mjs   # node --test: the card's model
 ```
 
 ---
@@ -281,6 +288,91 @@ Created only when power load monitoring is configured (same rule as the binary s
 4. Fires `bestiarium_mode_load_limit_changed` (`limit_w`, `previous_limit_w`); the zone sensors recalculate in its dispatch.
 
 There is no `RestoreEntity`: restoring asynchronously would let the zone sensors compute their first state with a stale limit at startup (e.g. a spurious overload and emergency shutdown in `bestiarium_devices`).
+
+---
+
+## Power flow card (`card.py`, `frontend/`)
+
+A Lovelace card, `custom:bestiarium-power-flow-card` (DEV-014, FEAT-045):
+where the home is fed from now — the grid straight to the home, through the
+inverter, the sun, the battery. Five nodes (Мережа, Сонце, Інвертор, Дім,
+Батарея), five wires, the mode's name above the scheme ("… · світла немає"
+without the grid); a tap opens `navigation_path` when it is set.
+
+**Why in Mode.** The power modes are Mode's subject, and Mode is always set up
+in the home. `async_setup` (the integration's, not an entry's) serves
+`frontend/` as the static path `/bestiarium_mode/frontend/<digest of its
+files>` and adds its `power-flow-card.js` to every page of HA
+(`frontend.add_extra_js_url`), only when HA's frontend is loaded
+(`after_dependencies: ["frontend", "http"]`). An update of Bestiarium is a new
+URL for the card and for the model it imports, so both are cached for long;
+an update of HA does not touch the files. Nothing to do but
+add the card to a dashboard (it is in the card picker). No HACS, no card-mod,
+no CDN: icons are HA's own `ha-icon`.
+
+**Files.** `power-flow-model.js` — pure functions (`readings`, `flowModel`,
+`kw`, `hours`, `skeleton`), tested with `node --test` (`make test-card`, part
+of `make test` and of CI). `power-flow-card.js` — the element: it builds the
+scheme once and on each state update only switches classes, a CSS speed and
+texts; the dots run by a CSS animation (`stroke-dashoffset`), no JS per
+frame. Below 760 px of card width (where the wide captions would be under
+11 px) it uses a narrower scheme (captions above
+and below the circles), so a phone reads them. Colours are the theme's
+variables (`--primary-color`, `--card-background-color`,
+`--primary-text-color`, `--secondary-text-color`, `--state-icon-color`,
+`--state-light-active-color`, `--slider-track-color`).
+
+**Configuration.** Every entity has a default — the owner's home — and
+`entities` overrides any of them (an unknown key is an error):
+
+| Key | Default | Note |
+|---|---|---|
+| `mode` | `sensor.zhyvlennia_rezhym` | its state is the mode's name |
+| `inverter_home_relay` | `switch.rele_invertor_dim` | `on`: the home from the inverter |
+| `grid_inverter_relay` | `switch.serverna_rele_invertor` | `on`: the grid into the inverter |
+| `grid_present` | `binary_sensor.zhyvlennia_merezha_ye` | `off`: no grid, the home on the inverter whatever the relays |
+| `home_power` | `sensor.grid_main_load_em0_power` | what the home draws |
+| `grid_power` | `sensor.grid_main_load_em1_power` | all that comes from the grid |
+| `sun_power` | `sensor.livoltek_pv_power` | |
+| `battery_flow` | `sensor.zhyvlennia_batareia_potuzhnist_skhema` | kW, "+" a discharge; not the inverter's own battery power |
+| `battery_charge` | `sensor.zhyvlennia_zariad` | % |
+| `battery_hours_left` | `sensor.zhyvlennia_batareia_hodyn` | shown while discharging |
+| `battery_hours_to_full` | `sensor.batareia_do_povnogo_zariadu` | shown while charging, if known |
+
+Powers are read in kW, or in W by their `unit_of_measurement`.
+
+**Flows** (below 0.05 kW nothing flows):
+
+- The home is fed from the inverter when its relay is `on` or there is no
+  grid; from the grid when the relay is `off` and the grid is there; an
+  unknown relay shows both home wires open and "—" under the inverter.
+- "Мережа → Дім" carries the home's power; "Мережа → Інвертор" (connected
+  when its relay is `on` and the grid is there) all of the grid's power while
+  the home is on the inverter, else `max(grid − home, 0)`.
+- "Сонце → Інвертор" flows above the threshold.
+- The battery follows its flow sensor, which sees a flow only once the
+  charge changes. One exception: the inverter feeding the home with no grid
+  behind it (no grid, or the grid relay open) is a sure discharge,
+  `max(sensor, home − sun)` (DEV-014-03, 1). A charge comes from the sensor
+  only: the sun's surplus may meet a full battery.
+- A flowing wire's dots run faster with more power:
+  `max(0.35, 1.6 − kW × 0.35)` s, in 0.05 s steps.
+- An unavailable or missing entity is "—" on its node and no flow on its
+  wire; the rest of the card works.
+
+**In the home** (the "Живлення" screen, at its top, instead of the three
+state tiles):
+
+```yaml
+type: custom:bestiarium-power-flow-card
+```
+
+and elsewhere, to open that screen on a tap:
+
+```yaml
+type: custom:bestiarium-power-flow-card
+navigation_path: /<dashboard>/<the power screen>
+```
 
 ---
 

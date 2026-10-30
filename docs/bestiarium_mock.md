@@ -32,6 +32,7 @@ custom_components/bestiarium_mock/
 ├── faults.py            # MockSocket — physical and reported state, the fault model
 ├── ir_ac.py             # MockIrAc — the stand's Hisense: hears its emitter, draws by its state, warms its room
 ├── button.py            # "Remote: off" of each IR air conditioner (DEV-013)
+├── home_power.py        # MockHomePower — the home power the power flow card reads (DEV-014)
 ├── infrared.py          # MockIrEmitter — the emitter of the IR air conditioner
 ├── coordinator.py       # MockDevicesCoordinator — sockets, thermometers, grid
 ├── entity.py            # MockSocketEntity, MockIrAcEntity — entities follow their device
@@ -145,6 +146,16 @@ Per socket (device `mock_<device_id>`, model "Mock Smart Socket"):
 Per thermometer: `sensor` "Temperature" (`mock_<id>_temperature`), `number`
 "Set Temperature" (`mock_<id>_mock_temperature`, `config`) and `select` "Fault
 profile" (`mock_<id>_reading_profile`, `config`).
+
+Home power (device `mock_home_power`, DEV-014): what the power flow card of
+Bestiarium Mode reads in the owner's home, as knobs (`config`): `select`
+"Mode" (the home's four mode names), `switch` "Relay inverter → home",
+"Relay grid → inverter", "Grid present" (all on), `number` "From the grid"
+(W), "Sun" (kW), "Battery flow" (kW, "+" a discharge), "Battery charge"
+(%, 91), "Battery lasts" (h, 7.5); and `sensor` "Battery to full" (h):
+unknown unless the flow charges, else the missing charge of 10 kWh at the
+flow, in half hours. Nothing follows from the relays: the scenarios set
+them together. The home's own power on the stand is the grid's below.
 
 Grid: `sensor` "Grid Power" (`mock_grid_power`) and `select` "Fault profile"
 (`mock_grid_reading_profile`, `config`).
@@ -308,6 +319,15 @@ the script fails if HA did not load them.
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |
    | `unstable_tuya` | reset; the Tuya socket "Unstable" and on |
+   | `power_normal` | DEV-014, criteria 1, 6: reset; "Звичайний", both relays on, 1000 W from the grid, sun 1.8 kW, battery flow 0: the home through the inverter, the battery idle |
+   | `power_powerful` | criterion 2: "Потужний", the inverter relay off: the home from the grid, the inverter in reserve |
+   | `power_solar_charging` | criteria 3, 10: "Потужний + зарядка від сонця", both relays off, sun 1.8, flow −0.6: the battery charges, "до повного" |
+   | `power_autonomous` | criteria 4, 10: "Автономний", the grid relay off, no sun, flow 0.9: the battery gives, "вистачить" |
+   | `power_outage` | criterion 5: "Потужний", no grid: the home on the inverter whatever the relays, "· світла немає" |
+   | `power_outage_sensor_lags` | the review's exception (DEV-014-03, 1): "Автономний", no grid, no sun, flow 0: the battery gives all the same |
+   | `power_no_data` | criterion 7: as `power_normal`, the grid "No data": the home "—", the rest works |
+
+   The reset brings the home power back to a calm home (the defaults).
    | `universal_auto` | scenario 1 (DEV-011): reset; the heater's room at 18 °C, "Stand heater" in auto to 21 °C: it starts; 2 minutes later the room at 22 °C: it stops |
    | `universal_manual` | scenario 1: reset; capacity 0; "Stand heater" in manual ("heat"): it starts all the same; a minute later the cooker pushes the grid into yellow: it goes on; a minute later the room at 22 °C: it stops by itself; then off |
    | `manual_red` | scenario 2: reset; "Stand heater" manual and running; the cooker pushes the grid 300 W into red: the thermostat is off at once, its heater the first to go off, the event `manual_turned_off` (`zone_entered`); the cooker back: the thermostat stays off |
@@ -324,7 +344,9 @@ the script fails if HA did not load them.
    | `ac_manual_alone` | scenario 8: reset; the thermostat in "heat" (manual): one frame "heat 21 °C"; "Stand Hisense 2" set to cool from its card: the thermostat leaves it alone |
    | `cloud_ac_universal` | scenario 10: reset; "Stand cloud AC" in auto, its room at 18 °C: the template switch runs the IR script, 1200 W, it runs by its power; the room at 25 °C: off (5 W); cold again and running, its IR lost and the room warm: "off" three times a minute apart, "Does not turn off", the event "out of control" — no socket is cut (it has none) |
 
-5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode
+5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): first the
+   power flow card on the home power (its home's power the stand's grid,
+   a tap back to the stand) with its knobs; grid, mode
    and zones; a section "Термостат кондиціонера" (the thermostat, "Auto mode",
    its control state, room 6, the power, the knobs "Ignores off", "IR lost",
    "Sensor offset", "Remote: off"); a section per Hisense (its climate,

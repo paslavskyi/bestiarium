@@ -21,6 +21,7 @@ from .const import (
     MOCK_THERMOMETERS,
 )
 from .faults import MockSocket
+from .home_power import MockHomePower
 from .ir_ac import MockIrAc
 from .readings import MockReading
 
@@ -56,6 +57,7 @@ class MockDevicesCoordinator:
             spec.device_id: MockIrAc(spec, self.sockets[spec.socket])
             for spec in MOCK_IR_ACS
         }
+        self.home_power = MockHomePower()
         self._grid_power_sensor: MockGridPowerSensor | None = None
         # What HA sees of the thermometers and the grid, by device id
         self.readings: dict[str, MockReading] = {
