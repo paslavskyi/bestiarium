@@ -2,6 +2,7 @@
 
 # ruff: noqa: S101
 
+import re
 import shutil
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_devices.const import DOMAIN as DEVICES
 from custom_components.bestiarium_mock.const import DOMAIN as MOCK
+from scripts.stand.dashboard import _power_flow_section
 from scripts.stand.ha import Registry
 from scripts.stand.layout import (
     CLIMATE,
@@ -373,7 +375,12 @@ def test_reset_leaves_always_on_devices_on() -> None:
             switched.setdefault(step["action"], set()).update(
                 step["target"]["entity_id"]
             )
-    sockets = {e for e in switched["switch.turn_on"] if e.startswith("switch.mock_")}
+    # The sockets: not the relays of the stand's home power (DEV-014)
+    sockets = {
+        e
+        for e in switched["switch.turn_on"]
+        if e.startswith("switch.mock_") and not e.startswith("switch.mock_home_power_")
+    }
     assert sockets == {
         "switch.mock_cooker",
         "switch.mock_fridge",
@@ -735,3 +742,76 @@ def test_hisense_scenarios_drive_only_the_first_hisense() -> None:
     scripts = scenario_scripts(_Registry())
     for name in ("hisense_manual_modes", "hisense_display"):
         assert HISENSE_2 not in str(scripts[name]["sequence"])
+
+
+POWER_SCENARIOS = {
+    "power_normal",
+    "power_powerful",
+    "power_solar_charging",
+    "power_autonomous",
+    "power_outage",
+    "power_outage_sensor_lags",
+    "power_no_data",
+}
+
+
+def _numbers(sequence: list[dict]) -> dict[str, float]:
+    """Return the value each number of a sequence is set to."""
+    return {
+        step["target"]["entity_id"]: step["data"]["value"]
+        for step in sequence
+        if step.get("action") == "number.set_value"
+        and isinstance(step["target"]["entity_id"], str)
+    }
+
+
+def test_the_power_flow_card_has_its_scenarios() -> None:
+    """DEV-014: one scenario per criterion; the reset brings a calm home back."""
+    scripts = scenario_scripts(_Registry())
+    assert set(scripts) >= POWER_SCENARIOS
+    relays = {
+        "switch.mock_home_power_inverter_home",
+        "switch.mock_home_power_grid_inverter",
+        "switch.mock_home_power_grid_present",
+    }
+    reset = scripts["reset"]["sequence"]
+    assert relays <= _targets(reset, "switch.turn_on")
+    assert _numbers(reset)["number.mock_home_power_battery_flow"] == 0
+    assert _numbers(reset)["number.mock_home_power_battery_charge"] == 91  # noqa: PLR2004
+
+    outage = scripts["power_outage"]["sequence"]
+    assert "switch.mock_home_power_grid_present" in _targets(outage, "switch.turn_off")
+    # The review's exception (DEV-014-03, 1): the sensor has not seen it yet
+    lags = scripts["power_outage_sensor_lags"]["sequence"]
+    assert "switch.mock_home_power_grid_present" in _targets(lags, "switch.turn_off")
+    assert _numbers(lags)["number.mock_home_power_battery_flow"] == 0
+    assert _numbers(lags)["number.mock_home_power_sun_power"] == 0
+    charging = _numbers(scripts["power_solar_charging"]["sequence"])
+    assert charging["number.mock_home_power_battery_flow"] < 0
+    no_data = scripts["power_no_data"]["sequence"]
+    assert {
+        "entity_id": "select.mock_grid_reading_profile",
+        "option": "no_data",
+    } in [
+        {"entity_id": step["target"]["entity_id"], "option": step["data"]["option"]}
+        for step in no_data
+        if step.get("action") == "select.select_option"
+    ]
+
+
+def test_the_stand_dashboard_has_the_power_flow_card() -> None:
+    """The card reads the stand's home power; the home is the stand's grid."""
+    section = _power_flow_section(_Registry())
+    card = section["cards"][0]
+    assert card["type"] == "custom:bestiarium-power-flow-card"
+    assert card["entities"]["home_power"] == "sensor.mock_grid_power"
+    assert card["entities"]["mode"] == "select.mock_home_power_mode"
+    # Every entity the card reads, by the keys of the card's defaults
+    model = (
+        Path(__file__).parents[2]
+        / "custom_components/bestiarium_mode/frontend/power-flow-model.js"
+    ).read_text(encoding="utf-8")
+    defaults = model.split("export const DEFAULTS = {")[1].split("};")[0]
+    assert set(card["entities"]) == set(
+        re.findall(r'^\s+(\w+): "', defaults, re.MULTILINE)
+    )

@@ -23,6 +23,8 @@ IR = "bestiarium_ir"
 TEMPLATE = "template"
 
 DASHBOARD = "bestiarium-stand"
+# The card of Bestiarium Mode (DEV-014) on the stand dashboard
+POWER_FLOW_CARD = "custom:bestiarium-power-flow-card"
 SCRIPT_PREFIX = "bestiarium_stand_"
 ZONES = ("green", "yellow", "red", "overload")
 ZONE_CHECK_SECONDS = 15
