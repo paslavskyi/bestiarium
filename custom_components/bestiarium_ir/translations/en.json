@@ -87,5 +87,41 @@
         "name": "Display"
       }
     }
+  },
+  "issues": {
+    "blaster_device_gone": {
+      "title": "The TS1201 of the blaster {name} is gone",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Blaster {name}",
+            "description": "The TS1201 device of this blaster is no longer in ZHA. Choose the TS1201 it now is.",
+            "data": {
+              "zha_device": "TS1201 device"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "The blaster was removed."
+        }
+      }
+    },
+    "emitter_gone": {
+      "title": "The infrared emitter of {name} is gone",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Air conditioner {name}",
+            "description": "The infrared emitter of this air conditioner is no longer in Home Assistant. Choose the emitter that reaches it.",
+            "data": {
+              "emitter": "Infrared emitter"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "The air conditioner was removed."
+        }
+      }
+    }
   }
 }

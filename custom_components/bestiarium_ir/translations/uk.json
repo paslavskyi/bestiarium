@@ -87,5 +87,41 @@
         "name": "Екран"
       }
     }
+  },
+  "issues": {
+    "blaster_device_gone": {
+      "title": "Зник TS1201 бластера {name}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Бластер {name}",
+            "description": "Пристрою TS1201 цього бластера більше немає в ZHA. Виберіть TS1201, яким він є тепер.",
+            "data": {
+              "zha_device": "Пристрій TS1201"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "Бластер видалено."
+        }
+      }
+    },
+    "emitter_gone": {
+      "title": "Зник ІЧ-передавач {name}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Кондиціонер {name}",
+            "description": "ІЧ-передавача цього кондиціонера більше немає в Home Assistant. Виберіть передавач, що до нього дістає.",
+            "data": {
+              "emitter": "ІЧ-передавач"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "Кондиціонер видалено."
+        }
+      }
+    }
   }
 }

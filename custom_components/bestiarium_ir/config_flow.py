@@ -32,6 +32,24 @@ from .const import (
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigSubentry
+    from homeassistant.core import HomeAssistant
+
+
+def device_selector(hass: HomeAssistant, subentry_type: str) -> selector.Selector:
+    """Return the selector of what a subentry runs on: a TS1201, or an emitter."""
+    if subentry_type == SUBENTRY_TYPE_BLASTER:
+        return selector.DeviceSelector(
+            selector.DeviceSelectorConfig(
+                filter=selector.DeviceFilterSelectorConfig(
+                    integration=ZHA_DOMAIN, model=ZHA_MODEL
+                )
+            )
+        )
+    return selector.EntitySelector(
+        selector.EntitySelectorConfig(
+            domain=INFRARED_DOMAIN, include_entities=async_get_emitters(hass)
+        )
+    )
 
 
 class BestiariumIrFlowHandler(ConfigFlow, domain=DOMAIN):
@@ -109,13 +127,7 @@ class BlasterSubentryFlow(ConfigSubentryFlow):
                             if subentry
                             else vol.UNDEFINED
                         ),
-                    ): selector.DeviceSelector(
-                        selector.DeviceSelectorConfig(
-                            filter=selector.DeviceFilterSelectorConfig(
-                                integration=ZHA_DOMAIN, model=ZHA_MODEL
-                            )
-                        )
-                    )
+                    ): device_selector(self.hass, SUBENTRY_TYPE_BLASTER)
                 }
             ),
         )
@@ -151,8 +163,7 @@ class HisenseSubentryFlow(ConfigSubentryFlow):
         subentry = (
             None if self.source == SOURCE_USER else self._get_reconfigure_subentry()
         )
-        emitters = async_get_emitters(self.hass)
-        if not emitters:
+        if not async_get_emitters(self.hass):
             return self.async_abort(reason="no_emitters")
         if user_input is not None:
             title = user_input[CONF_NAME].strip()
@@ -174,11 +185,7 @@ class HisenseSubentryFlow(ConfigSubentryFlow):
                         default=(
                             subentry.data[CONF_EMITTER] if subentry else vol.UNDEFINED
                         ),
-                    ): selector.EntitySelector(
-                        selector.EntitySelectorConfig(
-                            domain=INFRARED_DOMAIN, include_entities=emitters
-                        )
-                    ),
+                    ): device_selector(self.hass, SUBENTRY_TYPE_HISENSE),
                 }
             ),
         )

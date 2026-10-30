@@ -14,6 +14,9 @@ SUBENTRY_TYPE_HISENSE = "hisense"
 CONF_ZHA_DEVICE = "zha_device"
 CONF_EMITTER = "emitter"
 
+ISSUE_BLASTER_DEVICE_GONE = "blaster_device_gone"
+ISSUE_EMITTER_GONE = "emitter_gone"
+
 # The IR command of a Zosung blaster (TS1201) in ZHA, as the home's scripts
 # send it
 ZHA_DOMAIN = "zha"

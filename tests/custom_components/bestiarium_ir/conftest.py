@@ -146,6 +146,7 @@ class RecordingEmitter(InfraredEmitterEntity):
     """An emitter of another integration: records the Kelon168 frames sent."""
 
     _attr_name = "Test emitter"
+    _attr_unique_id = "test_emitter"
 
     def __init__(self, clock: Clock) -> None:
         """Record on the clock."""
