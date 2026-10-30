@@ -256,15 +256,16 @@ class BalancingCoordinator:
 
     def _follow_power(self) -> bool:
         """
-        Follow the switches and what powers them now; return whether it changed.
+        Follow what powers the switches now; return whether it changed.
 
         What powers them is found once (devices.PowerSupply), and again when
         a Bestiarium device is added, removed or changed (its relay renamed).
 
-        Decide at once when a power relay or a switch changes its state, not
-        its attributes: the rotation changes, a virtual switch shows its "on"
-        late, a person turns one on or off (an "off" by another gets no
-        command until the tolerance confirms it).
+        Decide at once when a power relay changes its state, not its
+        attributes. A switch's own change is its control's (SIGNAL_SWITCH_CHANGED):
+        the rotation changes, a virtual switch shows its "on" late, a person
+        turns one on or off (an "off" by another gets no command until the
+        tolerance confirms it).
         """
         # Every control finds its power again, not only up to the first change
         changed = [c for c in self.controls.values() if c.follow_power()]
@@ -272,10 +273,7 @@ class BalancingCoordinator:
             self._power_unsubscribe()
         self._power_unsubscribe = async_track_state_change_event(
             self._hass,
-            [
-                *(r for c in self.controls.values() for r in c.power.relays),
-                *(c.switch for c in self.controls.values()),
-            ],
+            [r for c in self.controls.values() for r in c.power.relays],
             self._on_changed,
         )
         return bool(changed)
@@ -813,11 +811,6 @@ class BalancingCoordinator:
         lasting problem, so the refusal itself is only a debug line.
         """
         try:
-            await self._hass.services.async_call(
-                "switch",
-                "turn_on" if on else "turn_off",
-                {"entity_id": control.switch},
-                blocking=True,
-            )
+            await control.source.async_turn(on=on)
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
