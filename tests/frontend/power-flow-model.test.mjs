@@ -133,6 +133,36 @@ test("the scheme is narrow while the wide captions would be under 11 px", () => 
   assert.equal(layoutFor(0), null);
 });
 
+test("without the grid an unknown sun counts as none: the battery gives", () => {
+  // No light, often no internet: the cloud's sun and battery flow go unavailable
+  const states = {
+    ...CALM_STATES,
+    [DEFAULTS.mode]: { state: "Автономний", attributes: {} },
+    [DEFAULTS.grid_inverter_relay]: { state: "off", attributes: {} },
+    [DEFAULTS.grid_present]: { state: "off", attributes: {} },
+    [DEFAULTS.sun_power]: { state: "unavailable", attributes: {} },
+    [DEFAULTS.battery_flow]: { state: "unavailable", attributes: {} },
+  };
+  const m = flowModel(readings(states, DEFAULTS));
+  assert.equal(m.wires.invBat.status, "flow");
+  assert.equal(m.wires.invBat.reverse, true);
+  assert.equal(m.nodes.bat.lines[0], "91 % · віддає");
+  // The grid behind the inverter may cover the home
+  const backed = flowModel(
+    readings(
+      {
+        ...states,
+        [DEFAULTS.grid_inverter_relay]: { state: "on", attributes: {} },
+        [DEFAULTS.grid_present]: { state: "on", attributes: {} },
+      },
+      DEFAULTS,
+    ),
+  );
+  assert.equal(backed.wires.invBat.status, "idle");
+  // An unknown home: no exception
+  assert.equal(model({ gridPresent: false, homeKw: null, sunKw: null }).wires.invBat.status, "idle");
+});
+
 test("criterion 5: no grid feeds the home from the inverter whatever the relays", () => {
   const m = model({ mode: "Потужний", gridPresent: false, inverterHome: false, homeKw: 1.2 });
   assert.equal(m.wires.invHome.status, "flow");

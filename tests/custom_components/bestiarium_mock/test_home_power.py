@@ -119,6 +119,41 @@ async def test_home_power_knobs_survive_a_restart(
     assert _state(hass, entity_id, "number", "sun_power") == "1.8"
 
 
+async def test_an_empty_restored_number_keeps_its_default(
+    hass: HomeAssistant,
+    enable_custom_integrations: None,  # noqa: ARG001
+    entity_id: EntityId,
+) -> None:
+    """A number stored without a value starts at its default; to full still works."""
+    unique_id = "mock_home_power_battery_charge"
+    er.async_get(hass).async_get_or_create(
+        "number", DOMAIN, unique_id, suggested_object_id=unique_id
+    )
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State(f"number.{unique_id}", "unknown"),
+                {
+                    "native_value": None,
+                    "native_min_value": 0,
+                    "native_max_value": 100,
+                    "native_step": 1,
+                    "native_unit_of_measurement": "%",
+                },
+            )
+        ],
+    )
+    entry = mock_entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert _state(hass, entity_id, "number", "battery_charge") == "91"
+    await _set(hass, entity_id, "battery_flow", -0.9)
+    assert hass.states.get(entity_id(*TO_FULL)).state == "1.0"
+
+
 @pytest.mark.usefixtures("stand")
 async def test_home_power_device(hass: HomeAssistant) -> None:
     """The knobs are one device of the stand."""

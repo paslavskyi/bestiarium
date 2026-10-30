@@ -89,9 +89,10 @@ export function flowModel(r) {
   }
 
   // The sensor sees a discharge only once the charge falls; with no grid
-  // behind the inverter feeding the home, the battery covers what the sun lacks
+  // behind the inverter feeding the home, the battery covers what the sun lacks.
+  // Without the grid the cloud's sun often goes too: unknown counts as none
   let batKw = r.batteryKw;
-  const lacking = r.homeKw !== null && r.sunKw !== null ? r.homeKw - r.sunKw : null;
+  const lacking = r.homeKw === null ? null : r.homeKw - (r.sunKw ?? 0);
   // A charge only from the sensor
   if (homeFromInv && (noGrid || r.gridInverter === false) && lacking > THRESHOLD) {
     batKw = Math.max(r.batteryKw ?? 0, lacking);
