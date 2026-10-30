@@ -353,7 +353,9 @@ Powers are read in kW, or in W by their `unit_of_measurement`.
 - The battery follows its flow sensor, which sees a flow only once the
   charge changes. One exception: the inverter feeding the home with no grid
   behind it (no grid, or the grid relay open) is a sure discharge,
-  `max(sensor, home − sun)` (DEV-014-03, 1). A charge comes from the sensor
+  `max(sensor, home − sun)` when the home lacks sun (DEV-014-03, 1); an
+  unknown sun counts as none, since the cloud often goes with the grid
+  (DEV-014-06, 1). A charge comes from the sensor
   only: the sun's surplus may meet a full battery.
 - A flowing wire's dots run faster with more power:
   `max(0.35, 1.6 − kW × 0.35)` s, in 0.05 s steps.
