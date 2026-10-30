@@ -1,0 +1,40 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Bestiarium IR уже налаштовано: додавайте до нього бластери й кондиціонери."
+    }
+  },
+  "config_subentries": {
+    "blaster": {
+      "entry_type": "Zigbee ІЧ-бластер",
+      "initiate_flow": {
+        "user": "Додати Zigbee ІЧ-бластер",
+        "reconfigure": "Переналаштувати Zigbee ІЧ-бластер"
+      },
+      "step": {
+        "user": {
+          "title": "Zigbee ІЧ-бластер",
+          "description": "ІЧ-бластер Tuya/Zosung TS1201 у ZHA стає ІЧ-передавачем Home Assistant.",
+          "data": {
+            "zha_device": "Пристрій TS1201"
+          }
+        },
+        "reconfigure": {
+          "title": "Zigbee ІЧ-бластер",
+          "data": {
+            "zha_device": "Пристрій TS1201"
+          }
+        }
+      },
+      "abort": {
+        "already_configured": "Цей TS1201 уже бластер.",
+        "reconfigure_successful": "Бластер переналаштовано."
+      }
+    }
+  },
+  "exceptions": {
+    "timing_too_long": {
+      "message": "TS1201 не може надіслати цю ІЧ-команду: {error}."
+    }
+  }
+}
