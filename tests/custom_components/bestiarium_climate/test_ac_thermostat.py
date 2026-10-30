@@ -19,6 +19,7 @@ from homeassistant.config_entries import ConfigEntryDisabler, ConfigSubentryData
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, ServiceRegistry, callback
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_fire_time_changed,
@@ -567,3 +568,99 @@ async def test_air_conditioner_rename_is_followed(
     assert units.entry.subentries["ac_1"].data["air_conditioner"] == (
         "climate.ac_1_new"
     )
+
+
+# Idling at the setpoint and the stepwise "off" (design 10)
+
+STEP = 5 * MINUTE
+
+
+async def test_idle_at_40_w_holds_the_place(units: Units) -> None:
+    """Idling at 40 W for half an hour: still running, normal, no frame."""
+    await units.setup(capacity=1)
+    units.idling.add("ac_1")
+    units.draw("ac_1")
+    await units.tick(30 * MINUTE)
+    assert units.frames("ac_1") == [HEAT_22]
+    assert units.state("ac_1") == "normal"
+    assert units.attributes("ac_1")["failed_attempts"] == 0
+
+
+async def test_idle_dip_shorter_than_a_step_holds_the_place(units: Units) -> None:
+    """Below the threshold for 4 minutes of a 5-minute step: no frame, no pause."""
+    await units.setup()
+    await units.power("ac_1", 10)
+    await units.tick(4 * MINUTE)
+    assert units.frames("ac_1") == [HEAT_22]
+    assert units.attributes("ac_1")["pause_until"] is None
+    await units.power("ac_1", RUNNING_W)
+    await units.tick(STEP)
+    assert units.frames("ac_1") == [HEAT_22]
+    assert units.attributes("ac_1")["pause_until"] is None
+
+
+async def test_no_power_for_a_whole_step_is_off_by_another(units: Units) -> None:
+    """
+    5 W for a whole step: off by another, no failed attempt; then a new start.
+
+    Its pause runs from the "off" it saw, so the step has already served it.
+    """
+    await units.setup()
+    await units.power("ac_1", OFF_W)
+    await units.tick(STEP - MINUTE)
+    assert units.frames("ac_1") == [HEAT_22]
+    await units.tick(2 * MINUTE)
+    assert units.frames("ac_1") == [HEAT_22, HEAT_22]
+    assert units.attributes("ac_1")["failed_attempts"] == 0
+
+
+async def test_idle_does_not_end_the_stepwise_off(units: Units) -> None:
+    """Ignoring "off" and idling at 40 W: three "off"s a step apart, then the event."""
+    await units.setup()
+    units.stuck.add("ac_1")
+    units.idling.add("ac_1")
+    units.draw("ac_1")
+    await units.temperatures(ac_1="22")
+    await units.tick(3 * STEP + MINUTE)
+    assert units.frames("ac_1").count(OFF) == 3
+    assert units.events.count("bestiarium_climate_switch_out_of_control") == 1
+    assert units.state("ac_1") == "not_turning_off"
+
+
+async def test_stepwise_off_cuts_the_socket(units: Units) -> None:
+    """With a socket: after the event, the socket is cut and the event tells it."""
+    await units.setup(socket=True)
+    units.stuck.add("ac_1")
+    await units.temperatures(ac_1="22")
+    await units.tick(4 * STEP + MINUTE)
+    assert ("turn_off", "switch.ac_1_socket", {}) in units.calls
+    assert units.payloads["bestiarium_climate_power_cut"] == [
+        {
+            "thermostat": units.climate("ac_1"),
+            "switch_entity_id": "climate.ac_1",
+            "socket_entity_id": "switch.ac_1_socket",
+        }
+    ]
+
+
+async def test_off_thermostat_turns_a_running_ac_off_stepwise(units: Units) -> None:
+    """Off, the AC turned on from a dashboard: it works against: "off" at once."""
+    await units.setup()
+    await units.hvac("ac_1", "off")
+    await units.tick(STEP)
+    await units.change_past_the_thermostat("ac_1", "heat", temperature=25)
+    await units.tick(15, step=5)
+    assert units.frames("ac_1")[-1] == OFF
+    assert units.running() == set()
+
+
+async def test_a_gone_socket_is_a_repairs_issue_of_the_ac_thermostat(
+    hass: HomeAssistant, units: Units
+) -> None:
+    """The socket gone from HA: the issue opens the AC thermostat's socket."""
+    await units.setup(socket=True)
+    hass.states.async_remove("switch.ac_1_socket")
+    await units.tick(MINUTE)
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, "socket_gone_ac_1")
+    assert issue is not None
+    assert issue.data == {"entry_id": units.entry.entry_id, "subentry_id": "ac_1"}
