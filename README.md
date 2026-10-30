@@ -4,7 +4,7 @@ A set of [Home Assistant](https://www.home-assistant.io/) custom integrations fo
 
 ## Integrations
 
-The project ships four custom components that work together:
+The project ships five custom components that work together:
 
 ### bestiarium_mode
 
@@ -36,9 +36,17 @@ Provides **capacity-limited rotation** of heating/cooling devices through virtua
 
 Depends on `bestiarium_mode`.
 
+### bestiarium_ir
+
+IR devices as ordinary devices of HA, without scripts of pre-generated codes.
+
+- A Zigbee TS1201 blaster (ZHA) becomes an `infrared` emitter of HA.
+- A Hisense air conditioner (remote DG11R2-01, protocol Kelon168) becomes a `climate` device with a "Display" switch, on any `infrared` emitter; its state is assumed and restored.
+- Uses HA subentries — blasters and air conditioners are added under a single config entry.
+
 ### bestiarium_mock
 
-Standalone test stand that simulates **16 smart sockets** (three of them the power of air conditioners run by Bestiarium Climate through virtual switches) (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **4 thermometers**, and a **grid power monitor**, with reading fault profiles for the thermometers and the grid. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
+Test stand that simulates **19 smart sockets** (three of them the power of air conditioners run by Bestiarium Climate through virtual switches) (one per test scenario, each with a fault profile: reliable, slow cloud, unstable, stuck state, unresponsive or custom), **5 thermometers**, and a **grid power monitor**, with reading fault profiles for the thermometers and the grid. Its IR air conditioner (a Hisense behind a socket) hears its own emitter and recognises the frames with the Kelon168 module of `bestiarium_ir`. No physical hardware required. `make stand` sets up the stand and its dashboard in the development HA.
 
 ## Installation
 
@@ -49,6 +57,7 @@ custom_components/
 ├── bestiarium_mode/
 ├── bestiarium_devices/
 ├── bestiarium_climate/
+├── bestiarium_ir/
 └── bestiarium_mock/
 ```
 
@@ -79,6 +88,7 @@ Detailed per-integration documentation (file structure, config schemas, entity s
 - [`docs/bestiarium_mode.md`](docs/bestiarium_mode.md)
 - [`docs/bestiarium_devices.md`](docs/bestiarium_devices.md)
 - [`docs/bestiarium_climate.md`](docs/bestiarium_climate.md)
+- [`docs/bestiarium_ir.md`](docs/bestiarium_ir.md)
 - [`docs/bestiarium_mock.md`](docs/bestiarium_mock.md)
 
 ## Brand assets
