@@ -30,7 +30,8 @@ custom_components/bestiarium_mock/
 ├── __init__.py          # Entry setup/unload, migration 1 → 2
 ├── const.py             # Device set, fault profiles and parameters, grid constants
 ├── faults.py            # MockSocket — physical and reported state, the fault model
-├── ir_ac.py             # MockIrAc — the stand's Hisense: hears its emitter, draws by its state
+├── ir_ac.py             # MockIrAc — the stand's Hisense: hears its emitter, draws by its state, warms its room
+├── button.py            # "Remote: off" of each IR air conditioner (DEV-013)
 ├── infrared.py          # MockIrEmitter — the emitter of the IR air conditioner
 ├── coordinator.py       # MockDevicesCoordinator — sockets, thermometers, grid
 ├── entity.py            # MockSocketEntity, MockIrAcEntity — entities follow their device
@@ -80,7 +81,8 @@ Device names are translated (`device` in the translations, `translation_key`
 | `heater` | Mock Heater | 1500 W | Reliable | no Bestiarium device: the switch of the universal thermostat "Stand heater" (DEV-011), read by its power |
 | `ac_1..4` | Mock AC 1–4 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7). `ac_4` is the cloud air conditioner of the universal thermostat "Stand cloud AC" (DEV-011): its template switch runs `ac_4`'s IR scripts as the home's Tuya scenes |
 | `hisense_power` | Mock Hisense Power | 5–1200 W | Reliable | the power of the stand's Hisense (DEV-012): what it draws is set by the air conditioner `hisense` by its state; an "always on" device in the first queue, as `ac_1..4` |
-| `thermo_1..5` | Mock Thermometer 1–5 | — | — | thermostat inputs |
+| `hisense_2_power` | Mock Hisense 2 Power | 5–1200 W | Reliable | the power of the second Hisense (DEV-013), the air conditioner thermostat's; as `hisense_power` |
+| `thermo_1..6` | Mock Thermometer 1–6 | — | — | thermostat inputs; `thermo_6` is the room of `hisense_2`, which warms or cools it |
 
 ---
 
@@ -147,10 +149,11 @@ profile" (`mock_<id>_reading_profile`, `config`).
 Grid: `sensor` "Grid Power" (`mock_grid_power`) and `select` "Fault profile"
 (`mock_grid_reading_profile`, `config`).
 
-### The IR air conditioner (DEV-012)
+### The IR air conditioners (DEV-012, DEV-013)
 
 The device `mock_hisense` ("Mock Hisense", model "Mock IR Air Conditioner") is
-a Hisense behind the socket `hisense_power`. It hears its emitter and
+a Hisense behind the socket `hisense_power`; `mock_hisense_2` ("Mock Hisense
+2") the same behind `hisense_2_power`, with a room. Each hears its emitter and
 recognises each frame with `bestiarium_ir/kelon168.py`, as the real unit:
 
 - a frame sets the whole state (mode, target, fan, on/off);
@@ -160,7 +163,13 @@ recognises each frame with `bestiarium_ir/kelon168.py`, as the real unit:
 - the socket cut: the unit is off and hears nothing; the power back: still off.
 
 It draws by its state: heat, cool, auto 1200 W, dry 300 W, fan only 40 W,
-off 5 W (idling at the target and a room that reacts are stage 4).
+off 5 W.
+
+**Its room** (DEV-013; `hisense_2` and `thermo_6`): every 10 s, heating or
+cooling, it moves the room 0.1 °C (0.6 °C a minute) until its own sensor —
+the room plus the knob "Sensor offset" — reaches its setpoint; then it
+**idles** at 40 W and the room stays. The room's temperature is set as by
+a tester (its number), so a scenario may set it too. `hisense` has no room.
 
 | Entity | Unique ID | Category | Notes |
 |---|---|---|---|
@@ -169,6 +178,10 @@ off 5 W (idling at the target and a room that reacts are stage 4).
 | `sensor` "Last frame" | `mock_hisense_last_frame` | diagnostic | carried out, only lit the display, off ignored, not recognised; attributes `action` (the button), `power`, `mode`, `temperature`, `fan` |
 | `switch` "IR lost" | `mock_hisense_ir_lost` | config | no frame reaches the unit |
 | `switch` "Ignores off" | `mock_hisense_ignores_off` | config | the unit runs on after "off" |
+| `number` "Sensor offset" | `mock_hisense_sensor_offset` | config | −5…5 °C, default 0: how much warmer than the room its own sensor reads (it idles sooner); restored |
+| `button` "Remote: off" | `mock_hisense_remote_off` | config | the unit turned off with its remote: no frame, HA's assumed state stays as it was (scenario 8) |
+
+The entities of `mock_hisense_2` are the same, `mock_hisense_2_…`.
 
 
 The reading profiles of the thermometers and the grid (`readings.py`,

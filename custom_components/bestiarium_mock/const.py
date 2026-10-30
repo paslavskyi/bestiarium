@@ -151,6 +151,8 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     # The power of the stand's IR air conditioner (DEV-012): what it draws is
     # set by the unit (MockIrAc), not by a knob
     MockDeviceSpec(device_id="hisense_power", power_w=5),
+    # The power of the second, under the air conditioner thermostat (DEV-013)
+    MockDeviceSpec(device_id="hisense_2_power", power_w=5),
     # The power of four air conditioners: 5 W on standby; the stand's IR
     # scripts set 1200 W when one runs (review 18: as in the owner's home).
     # The fourth is the cloud AC of a universal thermostat (DEV-011)
@@ -173,10 +175,19 @@ class MockIrAcSpec:
 
     device_id: str
     socket: str
+    # The thermometer of its room: it warms or cools it (DEV-013)
+    room: str | None = None
 
 
-# The Hisense of the stand (DEV-012): it hears its emitter's Kelon168 frames
-MOCK_IR_ACS: tuple[MockIrAcSpec, ...] = (MockIrAcSpec("hisense", "hisense_power"),)
+# The Hisense of the stand (DEV-012): it hears its emitter's Kelon168 frames.
+# The second is the air conditioner thermostat's (DEV-013): its room follows it
+MOCK_IR_ACS: tuple[MockIrAcSpec, ...] = (
+    MockIrAcSpec("hisense", "hisense_power"),
+    MockIrAcSpec("hisense_2", "hisense_2_power", room="thermo_6"),
+)
+# How fast an air conditioner moves its room's temperature
+IR_AC_ROOM_STEP_C = 0.1
+IR_AC_ROOM_INTERVAL_SECONDS = 10
 
 # What the stand's air conditioner draws, by its state (design 6)
 IR_AC_POWER_W: dict[str, float] = {
@@ -186,6 +197,8 @@ IR_AC_POWER_W: dict[str, float] = {
     "auto": 1200,
     "dry": 300,
     "fan_only": 40,
+    # Heating or cooling with its own sensor at the setpoint
+    "idle": 40,
 }
 
 
@@ -205,6 +218,7 @@ MOCK_THERMOMETERS: tuple[MockThermometerSpec, ...] = (
     MockThermometerSpec(device_id="thermo_3"),
     MockThermometerSpec(device_id="thermo_4"),
     MockThermometerSpec(device_id="thermo_5"),
+    MockThermometerSpec(device_id="thermo_6"),
 )
 
 # Grid device (special - not a smart socket)

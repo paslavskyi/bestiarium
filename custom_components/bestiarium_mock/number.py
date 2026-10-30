@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from homeassistant.components.number import NumberEntity, NumberMode, RestoreNumber
 from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -16,7 +17,7 @@ from .const import (
     MOCK_THERMOMETERS,
     MockThermometerSpec,
 )
-from .entity import MockSocketEntity
+from .entity import MockIrAcEntity, MockSocketEntity
 
 if TYPE_CHECKING:
     from dataclasses import Field
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
     from .faults import MockSocket
+    from .ir_ac import MockIrAc
 
 
 async def async_setup_entry(
@@ -51,6 +53,10 @@ async def async_setup_entry(
         coordinator.register_temperature_number(thermo_spec.device_id, number)
         entities.append(number)
 
+    entities.extend(
+        MockIrAcSensorOffsetNumber(ac, "sensor_offset")
+        for ac in coordinator.ir_acs.values()
+    )
     async_add_entities(entities)
 
 
@@ -158,6 +164,11 @@ class MockTemperatureNumber(NumberEntity, RestoreEntity):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the native value."""
+        self.set_temperature(value)
+
+    @callback
+    def set_temperature(self, value: float) -> None:
+        """Set the temperature: a tester, or the air conditioner of the room."""
         self._attr_native_value = value
         self.async_write_ha_state()
         self._coordinator.notify_temperature_number_changed(self._thermo_spec.device_id)
@@ -173,3 +184,35 @@ class MockTemperatureNumber(NumberEntity, RestoreEntity):
                     self._attr_native_value = value
             except (ValueError, TypeError):
                 pass
+
+
+class MockIrAcSensorOffsetNumber(MockIrAcEntity, RestoreNumber):
+    """How much warmer than the room the air conditioner's own sensor reads."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = -5.0
+    _attr_native_max_value = 5.0
+    _attr_native_step = 0.5
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+
+    def __init__(self, ac: MockIrAc, key: str) -> None:
+        """Initialize the knob."""
+        super().__init__(ac, key)
+
+    @property
+    def native_value(self) -> float:
+        """Return the offset."""
+        return self._ac.sensor_offset
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the offset."""
+        self._ac.set_sensor_offset(value)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the offset."""
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_number_data()) is not None and (
+            last.native_value is not None
+        ):
+            self._ac.set_sensor_offset(last.native_value)

@@ -117,6 +117,9 @@
       },
       "dropout_max_s": {
         "name": "Тривалість зникнення до"
+      },
+      "sensor_offset": {
+        "name": "Зсув датчика"
       }
     },
     "select": {
@@ -144,6 +147,11 @@
     "infrared": {
       "emitter": {
         "name": "ІЧ-передавач"
+      }
+    },
+    "button": {
+      "remote_off": {
+        "name": "Пульт: вимкнути"
       }
     }
   },
@@ -230,6 +238,15 @@
     },
     "hisense_power": {
       "name": "Живлення Hisense стенда"
+    },
+    "hisense_2": {
+      "name": "Hisense 2 стенда"
+    },
+    "hisense_2_power": {
+      "name": "Живлення Hisense 2 стенда"
+    },
+    "thermo_6": {
+      "name": "Термометр 6"
     }
   }
 }

@@ -24,7 +24,10 @@ from custom_components.bestiarium_ir.kelon168 import (
     Kelon168Fan,
     Kelon168Mode,
 )
-from custom_components.bestiarium_mock.const import IrFrameOutcome
+from custom_components.bestiarium_mock.const import (
+    MOCK_THERMOMETERS,
+    IrFrameOutcome,
+)
 
 if TYPE_CHECKING:
     from custom_components.bestiarium_mock.coordinator import MockDevicesCoordinator
@@ -337,3 +340,151 @@ async def test_socket_restored_off_after_the_unit_turns_it_off(
     assert ac.power is True
     stand.sockets["hisense_power"].restore(on=False)
     assert ac.power is False
+
+
+# The second air conditioner: its room, its idle, its knobs (DEV-013)
+
+HISENSE_2 = "mock_hisense_2_emitter"
+
+
+@pytest.fixture
+async def ac2(
+    hass: HomeAssistant,
+    stand: MockDevicesCoordinator,
+    entity_id: EntityId,
+    advance: Advance,
+) -> MockIrAc:
+    """Return the second air conditioner, its socket on, its room at 20 °C."""
+    await hass.services.async_call(
+        "switch",
+        "turn_on",
+        {"entity_id": entity_id("switch", "mock_hisense_2_power")},
+        blocking=True,
+    )
+    await _room(hass, entity_id, 20)
+    await advance(2)
+    return stand.ir_acs["hisense_2"]
+
+
+async def _room(hass: HomeAssistant, entity_id: EntityId, value: float) -> None:
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {
+            "entity_id": entity_id("number", "mock_thermo_6_mock_temperature"),
+            "value": value,
+        },
+        blocking=True,
+    )
+
+
+def _room_now(hass: HomeAssistant, entity_id: EntityId) -> float:
+    return float(
+        hass.states.get(entity_id("sensor", "mock_thermo_6_temperature")).state
+    )
+
+
+async def _steps(advance: Advance, seconds: int) -> None:
+    """Let the room follow its air conditioner, step by step."""
+    for _ in range(seconds // 10):
+        await advance(10)
+
+
+async def _send_2(hass: HomeAssistant, entity_id: EntityId, command: object) -> None:
+    await async_send_command(hass, entity_id("infrared", HISENSE_2), command)
+    await hass.async_block_till_done()
+
+
+async def test_heat_warms_the_room_then_idles(
+    hass: HomeAssistant,
+    stand: MockDevicesCoordinator,
+    ac2: MockIrAc,  # noqa: ARG001
+    entity_id: EntityId,
+    advance: Advance,
+) -> None:
+    """Heat 22 at 20 °C: +0.1 °C each 10 s at 1200 W; at 22 it idles, the room stays."""
+    await _send_2(hass, entity_id, _heat(22))
+    await advance(10)
+    assert _room_now(hass, entity_id) == 20.1
+    assert stand.sockets["hisense_2_power"].power == 1200
+    await _steps(advance, 200)
+    assert _room_now(hass, entity_id) == 22.0
+    assert stand.sockets["hisense_2_power"].power == 40
+    await _steps(advance, 60)
+    assert _room_now(hass, entity_id) == 22.0
+
+
+async def test_cool_cools_the_room(
+    hass: HomeAssistant,
+    ac2: MockIrAc,  # noqa: ARG001
+    entity_id: EntityId,
+    advance: Advance,
+) -> None:
+    """Cool 18 at 20 °C: the room goes down."""
+    await _send_2(
+        hass, entity_id, Kelon168Command(mode=Kelon168Mode.COOL, temperature=18)
+    )
+    await _steps(advance, 30)
+    assert _room_now(hass, entity_id) == 19.7
+
+
+async def test_sensor_offset_idles_sooner(
+    hass: HomeAssistant,
+    stand: MockDevicesCoordinator,
+    ac2: MockIrAc,  # noqa: ARG001
+    entity_id: EntityId,
+    advance: Advance,
+) -> None:
+    """Its sensor 2 °C warmer: heat 22 idles at a room of 20."""
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": entity_id("number", "mock_hisense_2_sensor_offset"), "value": 2},
+        blocking=True,
+    )
+    await _send_2(hass, entity_id, _heat(22))
+    await _steps(advance, 60)
+    assert _room_now(hass, entity_id) == 20.0
+    assert stand.sockets["hisense_2_power"].power == 40
+
+
+async def test_remote_off_turns_the_unit_off_without_a_frame(
+    hass: HomeAssistant,
+    stand: MockDevicesCoordinator,
+    ac2: MockIrAc,
+    entity_id: EntityId,
+) -> None:
+    """The remote's off: the unit off, 5 W; the last frame stays as it was."""
+    await _send_2(hass, entity_id, _heat(22))
+    frame = ac2.last_frame
+    await hass.services.async_call(
+        "button",
+        "press",
+        {"entity_id": entity_id("button", "mock_hisense_2_remote_off")},
+        blocking=True,
+    )
+    assert (ac2.power, ac2.last_frame) == (False, frame)
+    assert stand.sockets["hisense_2_power"].power == 5
+
+
+async def test_the_room_of_a_unit_without_one_is_untouched(
+    hass: HomeAssistant,
+    ac: MockIrAc,  # noqa: ARG001
+    entity_id: EntityId,
+    advance: Advance,
+) -> None:
+    """The first Hisense has no room: heating changes no thermometer."""
+    before = {
+        spec.device_id: hass.states.get(
+            entity_id("sensor", f"mock_{spec.device_id}_temperature")
+        ).state
+        for spec in MOCK_THERMOMETERS
+    }
+    await _send(hass, entity_id, _heat(30))
+    await advance(60)
+    assert before == {
+        spec.device_id: hass.states.get(
+            entity_id("sensor", f"mock_{spec.device_id}_temperature")
+        ).state
+        for spec in MOCK_THERMOMETERS
+    }
