@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .layout import (
+    AC_THERMOSTAT,
     CLIMATE,
     DEVICES,
     IR,
@@ -131,7 +132,10 @@ class Registry:
 
         The stand's entry is the one whose devices are the stand thermostats.
         """
-        names = {name for name, _, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)}
+        names = {
+            AC_THERMOSTAT[0],
+            *(name for name, _, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)),
+        }
         entry_ids = {
             entry_id
             for device in self.devices

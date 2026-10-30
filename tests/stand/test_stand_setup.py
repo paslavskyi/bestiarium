@@ -143,8 +143,9 @@ async def test_stand_setup_is_repeatable(
     assert len(climate) == 1
     # Each thermostat runs an air conditioner through its own virtual switch,
     # whose power socket is the "Allowed" of the AC socket's device (DEV-010)
-    assert len(climate[0].subentries) == 2 * len(THERMOSTATS) + len(
-        UNIVERSAL_THERMOSTATS
+    assert (
+        len(climate[0].subentries)
+        == 2 * len(THERMOSTATS) + len(UNIVERSAL_THERMOSTATS) + 1
     )
     sockets = [
         subentry.data["power_socket"]
@@ -177,12 +178,34 @@ async def test_stand_setup_is_repeatable(
     assert templates[0].options["turn_on"] == [
         {"action": f"script.{SCRIPT_PREFIX}ir_ac_4_on"}
     ]
-    # DEV-012: the stand's Hisense on its mock emitter
+    # DEV-012: the stand's Hisense on its mock emitter; DEV-013: a second one,
+    # once, under the air conditioner thermostat
     (ir_entry,) = hass.config_entries.async_entries("bestiarium_ir")
     assert [
         (subentry.title, dict(subentry.data))
         for subentry in ir_entry.subentries.values()
-    ] == [("Stand Hisense", {"emitter": "infrared.mock_hisense_emitter"})]
+    ] == [
+        ("Stand Hisense", {"emitter": "infrared.mock_hisense_emitter"}),
+        ("Stand Hisense 2", {"emitter": "infrared.mock_hisense_2_emitter"}),
+    ]
+    (ac,) = (
+        subentry.data
+        for subentry in climate[0].subentries.values()
+        if subentry.subentry_type == "ac_thermostat"
+    )
+    hisense_2 = entities.async_get(ac["air_conditioner"])
+    assert (hisense_2.platform, hisense_2.config_subentry_id) == (
+        "bestiarium_ir",
+        next(
+            sub.subentry_id
+            for sub in ir_entry.subentries.values()
+            if sub.title == "Stand Hisense 2"
+        ),
+    )
+    assert ac["power_entity"] == "sensor.mock_hisense_2_power_power"
+    assert ac["temperature_sensor"] == "sensor.mock_thermo_6_temperature"
+    assert ac["setpoint_margin"] == 1.0
+    assert entities.async_get(ac["power_socket"]).unique_id.endswith("_allowed")
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -316,6 +339,8 @@ class _Registry:
             *({"entity_id": f"climate.stand_ac_{n}"} for n in (1, 2, 3)),
             {"entity_id": "climate.stand_heater"},
             {"entity_id": "climate.stand_cloud_ac"},
+            {"entity_id": "climate.stand_ac_thermostat"},
+            {"entity_id": "select.stand_ac_thermostat_auto_mode"},
             {"entity_id": "number.stand_capacity"},
         ]
 
@@ -355,6 +380,7 @@ def test_reset_leaves_always_on_devices_on() -> None:
         *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
         "switch.mock_ac_4",
         "switch.mock_hisense_power",
+        "switch.mock_hisense_2_power",
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
 
@@ -631,3 +657,75 @@ def test_the_hisense_has_its_scenarios() -> None:
         "target": {"entity_id": "climate.stand_hisense"},
         "data": {"hvac_mode": "off"},
     }
+
+
+def _targets(sequence: list[dict], action: str) -> set[str]:
+    """Return the entities an action of a sequence targets."""
+    found: set[str] = set()
+    for step in sequence:
+        if step.get("action") == action:
+            entities = step["target"]["entity_id"]
+            found.update([entities] if isinstance(entities, str) else entities)
+    return found
+
+
+AC = "climate.stand_ac_thermostat"
+HISENSE_2 = "climate.stand_hisense_2"
+
+
+def test_the_ac_thermostat_has_its_scenarios() -> None:
+    """DEV-013: scenarios 3, 4, 7, 8; the reset turns it off and its knobs back."""
+    scripts = scenario_scripts(_Registry())
+    assert {
+        "ac_auto",
+        "ac_idle",
+        "ac_auto_cool",
+        "ac_stepwise",
+        "ac_off_against",
+        "ac_remote",
+        "ac_manual_alone",
+    } <= set(scripts)
+    reset = scripts["reset"]["sequence"]
+    assert {AC, HISENSE_2, "climate.stand_hisense"} <= _modes(reset)["off"]
+    assert {
+        "switch.mock_hisense_2_ir_lost",
+        "switch.mock_hisense_2_ignores_off",
+    } <= _targets(reset, "switch.turn_off")
+    assert {
+        "step": "select.stand_ac_thermostat_auto_mode",
+        "option": "heating",
+    } in [
+        {"step": step["target"]["entity_id"], "option": step["data"]["option"]}
+        for step in reset
+        if step.get("action") == "select.select_option"
+    ]
+    assert "number.mock_hisense_2_sensor_offset" in _targets(reset, "number.set_value")
+    assert "number.mock_thermo_6_mock_temperature" in _targets(
+        reset, "number.set_value"
+    )
+
+    assert _modes(scripts["ac_auto"]["sequence"]) == {"auto": {AC}}
+    assert "number.mock_hisense_2_sensor_offset" in _targets(
+        scripts["ac_idle"]["sequence"], "number.set_value"
+    )
+    assert "select.stand_ac_thermostat_auto_mode" in _targets(
+        scripts["ac_auto_cool"]["sequence"], "select.select_option"
+    )
+    assert "switch.mock_hisense_2_ignores_off" in _targets(
+        scripts["ac_stepwise"]["sequence"], "switch.turn_on"
+    )
+    # Past the thermostat: the Hisense itself, as from its card
+    assert HISENSE_2 in _targets(
+        scripts["ac_off_against"]["sequence"], "climate.set_temperature"
+    )
+    remote = scripts["ac_remote"]["sequence"]
+    assert "button.mock_hisense_2_remote_off" in _targets(remote, "button.press")
+    assert HISENSE_2 in _targets(remote, "climate.set_temperature")
+    assert _modes(scripts["ac_manual_alone"]["sequence"]) == {"heat": {AC}}
+
+
+def test_hisense_scenarios_drive_only_the_first_hisense() -> None:
+    """Scenarios 5 and 6 are the first Hisense's: the second has a thermostat."""
+    scripts = scenario_scripts(_Registry())
+    for name in ("hisense_manual_modes", "hisense_display"):
+        assert HISENSE_2 not in str(scripts[name]["sequence"])

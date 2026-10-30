@@ -21,6 +21,7 @@ from .ha import StandError
 from .layout import (
     AC_RUNNING_W,
     AC_STANDBY_W,
+    AC_THERMOSTAT,
     MODE,
     RED_W,
     SCRIPT_PREFIX,
@@ -118,8 +119,12 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
         e["entity_id"] for e in climate if e["entity_id"].startswith("climate.")
     ]
     # The scenarios before DEV-011 heat the virtual thermostats only: "heat"
-    # is the manual mode of a universal one
-    thermostats = [t for t in every_thermostat if t not in universal.values()]
+    # is the manual mode of a universal one and of the air conditioner's
+    thermostats = [
+        t
+        for t in every_thermostat
+        if t not in (*universal.values(), reg.thermostat(AC_THERMOSTAT[0]))
+    ]
     capacity = [e["entity_id"] for e in climate if e["entity_id"].startswith("number.")]
 
     def heat(hvac_mode: str) -> list[dict[str, Any]]:
@@ -325,6 +330,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                     room(thermometer, 20)
                     for _, thermometer, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)
                 ),
+                *_ac_reset(reg),
                 wait(2),
             ],
         },
@@ -704,6 +710,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
             ],
         },
         **_hisense_scenarios(reg, reset),
+        **_ac_scenarios(reg, reset),
         "unstable_tuya": {
             "alias": "Стенд: нестабільна Tuya",
             "icon": "mdi:wifi-strength-alert-outline",
@@ -733,22 +740,25 @@ def _hisense_reset(reg: Registry) -> list[dict[str, Any]]:
     unit that is off, assumed only: DEV-012 review, U3), so the stand's
     display and the one HA assumes agree; then off; its knobs back.
     """
-    ((name, mock_id),) = STAND_HISENSE
     return [
-        {
-            "action": "switch.turn_on",
-            "target": {"entity_id": reg.ir_entity(name, "switch")},
-        },
-        _hisense_mode(reg.ir_entity(name, "climate"), "off"),
-        {
-            "action": "switch.turn_off",
-            "target": {
-                "entity_id": [
-                    reg.mock("switch", f"mock_{mock_id}_{knob}")
-                    for knob in ("ir_lost", "ignores_off")
-                ]
+        step
+        for name, mock_id in STAND_HISENSE
+        for step in (
+            {
+                "action": "switch.turn_on",
+                "target": {"entity_id": reg.ir_entity(name, "switch")},
             },
-        },
+            _hisense_mode(reg.ir_entity(name, "climate"), "off"),
+            {
+                "action": "switch.turn_off",
+                "target": {
+                    "entity_id": [
+                        reg.mock("switch", f"mock_{mock_id}_{knob}")
+                        for knob in ("ir_lost", "ignores_off")
+                    ]
+                },
+            },
+        )
     ]
 
 
@@ -762,7 +772,7 @@ def _hisense_scenarios(
     Scenario 6: with the display off a frame goes twice (the first only
     lights it); "off" goes once.
     """
-    ((name, _),) = STAND_HISENSE
+    name, _ = STAND_HISENSE[0]
     climate = reg.ir_entity(name, "climate")
     display = reg.ir_entity(name, "switch")
 
@@ -809,6 +819,180 @@ def _hisense_scenarios(
                 call("set_temperature", temperature=26),
                 step,
                 mode("off"),
+            ],
+        },
+    }
+
+
+def _auto_mode(reg: Registry) -> str:
+    """Return the select "Auto mode" of the stand's air conditioner thermostat."""
+    return next(
+        e["entity_id"]
+        for e in reg.stand_climate()
+        if e["entity_id"].startswith("select.")
+    )
+
+
+def _ac_knob(reg: Registry, domain: str, key: str) -> str:
+    """Return a knob of the air conditioner under the thermostat."""
+    mock_id = dict(STAND_HISENSE)[AC_THERMOSTAT[2]]
+    return reg.mock(domain, f"mock_{mock_id}_{key}")
+
+
+def _ac_reset(reg: Registry) -> list[dict[str, Any]]:
+    """
+    Return the reset's steps of the air conditioner thermostat (DEV-013).
+
+    Its thermostat is off with the others; here auto heats again, its
+    unit's sensor reads the room, its room is at 20 °C.
+    """
+    return [
+        {
+            "action": "select.select_option",
+            "target": {"entity_id": _auto_mode(reg)},
+            "data": {"option": "heating"},
+        },
+        {
+            "action": "number.set_value",
+            "target": {"entity_id": _ac_knob(reg, "number", "sensor_offset")},
+            "data": {"value": 0},
+        },
+        {
+            "action": "number.set_value",
+            "target": {
+                "entity_id": reg.mock(
+                    "number", f"mock_{AC_THERMOSTAT[1]}_mock_temperature"
+                )
+            },
+            "data": {"value": 20},
+        },
+    ]
+
+
+def _ac_scenarios(reg: Registry, reset: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """
+    Return the scenarios of the air conditioner thermostat (DEV-013).
+
+    Scenario 3: auto heats to the target plus the margin and the room
+    follows; idling at the setpoint holds the place. 4: auto cools. 7: the
+    stepwise "off" with its socket; on past an "off" thermostat. 8: the
+    remote and the card past the thermostat; manual leaves them alone.
+    """
+    name, thermometer, hisense, _ = AC_THERMOSTAT
+    thermostat = reg.thermostat(name)
+    unit = reg.ir_entity(hisense, "climate")
+
+    def room(celsius: float) -> dict[str, Any]:
+        return {
+            "action": "number.set_value",
+            "target": {
+                "entity_id": reg.mock("number", f"mock_{thermometer}_mock_temperature")
+            },
+            "data": {"value": celsius},
+        }
+
+    def mode(hvac_mode: str, target: float = 21) -> list[dict[str, Any]]:
+        return [
+            {
+                "action": "climate.set_temperature",
+                "target": {"entity_id": thermostat},
+                "data": {"temperature": target},
+            },
+            {
+                "action": "climate.set_hvac_mode",
+                "target": {"entity_id": thermostat},
+                "data": {"hvac_mode": hvac_mode},
+            },
+        ]
+
+    def knob(service: str, domain: str, key: str, **data: Any) -> dict[str, Any]:
+        return {
+            "action": service,
+            "target": {"entity_id": _ac_knob(reg, domain, key)},
+            **({"data": data} if data else {}),
+        }
+
+    def wait(seconds: int) -> dict[str, Any]:
+        return {"delay": {"seconds": seconds}}
+
+    # Started and confirmed by power: the start's step, the power's delay
+    started = wait(60)
+    return {
+        "ac_auto": {
+            "alias": "Стенд: кондиціонер — авто гріє",
+            "icon": "mdi:air-conditioner",
+            "sequence": [reset, room(18), *mode("auto")],
+        },
+        "ac_idle": {
+            "alias": "Стенд: кондиціонер — простій на уставці",
+            "icon": "mdi:power-sleep",
+            "sequence": [
+                reset,
+                knob("number.set_value", "number", "sensor_offset", value=2),
+                room(18),
+                *mode("auto"),
+                # The room reaches 20 °C in about 3.5 minutes, then it idles
+                wait(240),
+                wait(180),
+                room(21),
+            ],
+        },
+        "ac_auto_cool": {
+            "alias": "Стенд: кондиціонер — авто охолоджує",
+            "icon": "mdi:snowflake",
+            "sequence": [
+                reset,
+                {
+                    "action": "select.select_option",
+                    "target": {"entity_id": _auto_mode(reg)},
+                    "data": {"option": "cooling"},
+                },
+                room(26),
+                *mode("auto", 23),
+            ],
+        },
+        "ac_stepwise": {
+            "alias": "Стенд: кондиціонер — ступінчасте вимкнення",
+            "icon": "mdi:power-plug-off",
+            "sequence": [
+                reset,
+                room(18),
+                *mode("auto"),
+                started,
+                knob("switch.turn_on", "switch", "ignores_off"),
+                room(23),
+            ],
+        },
+        "ac_off_against": {
+            "alias": "Стенд: кондиціонер — увімкнули повз «вимкнено»",
+            "icon": "mdi:account-alert",
+            "sequence": [
+                reset,
+                _hisense_mode(unit, "heat", temperature=24),
+            ],
+        },
+        "ac_remote": {
+            "alias": "Стенд: кондиціонер — пульт і картка повз термостат",
+            "icon": "mdi:remote",
+            "sequence": [
+                reset,
+                room(18),
+                *mode("auto"),
+                started,
+                knob("button.press", "button", "remote_off"),
+                # Off by another after a step (a minute), then the pause
+                wait(180),
+                _hisense_mode(unit, "cool", temperature=20),
+            ],
+        },
+        "ac_manual_alone": {
+            "alias": "Стенд: кондиціонер — ручний не втручається",
+            "icon": "mdi:hand-back-right",
+            "sequence": [
+                reset,
+                *mode("heat"),
+                wait(30),
+                _hisense_mode(unit, "cool", temperature=20),
             ],
         },
     }
