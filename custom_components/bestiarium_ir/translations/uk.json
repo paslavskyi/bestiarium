@@ -30,11 +30,57 @@
         "already_configured": "Цей TS1201 уже бластер.",
         "reconfigure_successful": "Бластер переналаштовано."
       }
+    },
+    "hisense": {
+      "entry_type": "Кондиціонер Hisense",
+      "initiate_flow": {
+        "user": "Додати кондиціонер Hisense",
+        "reconfigure": "Переналаштувати кондиціонер Hisense"
+      },
+      "step": {
+        "user": {
+          "title": "Кондиціонер Hisense",
+          "description": "Кондиціонер Hisense (пульт DG11R2-01, протокол Kelon168), яким керує ІЧ-передавач.",
+          "data": {
+            "name": "Назва",
+            "emitter": "ІЧ-передавач"
+          }
+        },
+        "reconfigure": {
+          "title": "Кондиціонер Hisense",
+          "data": {
+            "name": "Назва",
+            "emitter": "ІЧ-передавач"
+          }
+        }
+      },
+      "abort": {
+        "no_emitters": "У Home Assistant немає ІЧ-передавача: спершу додайте бластер.",
+        "reconfigure_successful": "Кондиціонер переналаштовано."
+      }
     }
   },
   "exceptions": {
     "timing_too_long": {
       "message": "TS1201 не може надіслати цю ІЧ-команду: {error}."
+    }
+  },
+  "entity": {
+    "climate": {
+      "hisense": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Авто",
+              "min": "Мінімальна",
+              "low": "Низька",
+              "medium": "Середня",
+              "high": "Висока",
+              "max": "Максимальна"
+            }
+          }
+        }
+      }
     }
   }
 }

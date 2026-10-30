@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.components.infrared import DOMAIN as INFRARED_DOMAIN
+from homeassistant.components.infrared import async_get_emitters
 from homeassistant.config_entries import (
     SOURCE_USER,
     ConfigEntry,
@@ -13,14 +15,17 @@ from homeassistant.config_entries import (
     ConfigSubentryFlow,
     SubentryFlowResult,
 )
+from homeassistant.const import CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_EMITTER,
     CONF_ZHA_DEVICE,
     DOMAIN,
     SUBENTRY_TYPE_BLASTER,
+    SUBENTRY_TYPE_HISENSE,
     ZHA_DOMAIN,
     ZHA_MODEL,
 )
@@ -48,7 +53,10 @@ class BestiariumIrFlowHandler(ConfigFlow, domain=DOMAIN):
         config_entry: ConfigEntry,  # noqa: ARG003
     ) -> dict[str, type[ConfigSubentryFlow]]:
         """Return the kinds of devices."""
-        return {SUBENTRY_TYPE_BLASTER: BlasterSubentryFlow}
+        return {
+            SUBENTRY_TYPE_BLASTER: BlasterSubentryFlow,
+            SUBENTRY_TYPE_HISENSE: HisenseSubentryFlow,
+        }
 
 
 class BlasterSubentryFlow(ConfigSubentryFlow):
@@ -119,4 +127,58 @@ class BlasterSubentryFlow(ConfigSubentryFlow):
             and other.data[CONF_ZHA_DEVICE] == device_id
             and other is not subentry
             for other in self._get_entry().subentries.values()
+        )
+
+
+class HisenseSubentryFlow(ConfigSubentryFlow):
+    """A Hisense air conditioner on an infrared emitter of HA."""
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Name the air conditioner and choose its emitter."""
+        return await self._step("user", user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Rename it or choose another emitter."""
+        return await self._step("reconfigure", user_input)
+
+    async def _step(
+        self, step_id: str, user_input: dict[str, Any] | None
+    ) -> SubentryFlowResult:
+        subentry = (
+            None if self.source == SOURCE_USER else self._get_reconfigure_subentry()
+        )
+        emitters = async_get_emitters(self.hass)
+        if not emitters:
+            return self.async_abort(reason="no_emitters")
+        if user_input is not None:
+            title = user_input[CONF_NAME].strip()
+            data = {CONF_EMITTER: user_input[CONF_EMITTER]}
+            if subentry is None:
+                return self.async_create_entry(title=title, data=data)
+            return self.async_update_and_abort(
+                self._get_entry(), subentry, title=title, data=data
+            )
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_NAME, default=subentry.title if subentry else "Hisense"
+                    ): selector.TextSelector(),
+                    vol.Required(
+                        CONF_EMITTER,
+                        default=(
+                            subentry.data[CONF_EMITTER] if subentry else vol.UNDEFINED
+                        ),
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=INFRARED_DOMAIN, include_entities=emitters
+                        )
+                    ),
+                }
+            ),
         )

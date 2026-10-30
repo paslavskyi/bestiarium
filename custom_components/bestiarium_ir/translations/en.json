@@ -30,11 +30,57 @@
         "already_configured": "This TS1201 is already a blaster.",
         "reconfigure_successful": "The blaster is reconfigured."
       }
+    },
+    "hisense": {
+      "entry_type": "Hisense air conditioner",
+      "initiate_flow": {
+        "user": "Add Hisense air conditioner",
+        "reconfigure": "Reconfigure Hisense air conditioner"
+      },
+      "step": {
+        "user": {
+          "title": "Hisense air conditioner",
+          "description": "A Hisense air conditioner (remote DG11R2-01, protocol Kelon168) controlled through an infrared emitter.",
+          "data": {
+            "name": "Name",
+            "emitter": "Infrared emitter"
+          }
+        },
+        "reconfigure": {
+          "title": "Hisense air conditioner",
+          "data": {
+            "name": "Name",
+            "emitter": "Infrared emitter"
+          }
+        }
+      },
+      "abort": {
+        "no_emitters": "There is no infrared emitter in Home Assistant: add a blaster first.",
+        "reconfigure_successful": "The air conditioner is reconfigured."
+      }
     }
   },
   "exceptions": {
     "timing_too_long": {
       "message": "The IR command cannot be sent by a TS1201: {error}."
+    }
+  },
+  "entity": {
+    "climate": {
+      "hisense": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Auto",
+              "min": "Minimum",
+              "low": "Low",
+              "medium": "Medium",
+              "high": "High",
+              "max": "Maximum"
+            }
+          }
+        }
+      }
     }
   }
 }

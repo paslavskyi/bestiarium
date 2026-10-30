@@ -9,12 +9,14 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr
 
 from custom_components.bestiarium_ir.const import (
+    CONF_EMITTER,
     CONF_ZHA_DEVICE,
     DOMAIN,
     SUBENTRY_TYPE_BLASTER,
+    SUBENTRY_TYPE_HISENSE,
 )
 
-from .conftest import ir_entry, set_up
+from .conftest import RecordingEmitter, ir_entry, set_up
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -98,3 +100,58 @@ async def test_reconfigure_blaster_to_another_device(
     assert result["reason"] == "reconfigure_successful"
     assert entry.subentries[subentry_id].data == {CONF_ZHA_DEVICE: other.id}
     assert entry.subentries[subentry_id].title == "IR bedroom"
+
+
+async def test_add_hisense_on_any_emitter(
+    hass: HomeAssistant,
+    emitter: RecordingEmitter,  # noqa: ARG001
+) -> None:
+    """An air conditioner on an emitter of another integration."""
+    entry = ir_entry()
+    await set_up(hass, entry)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_HISENSE), context={"source": SOURCE_USER}
+    )
+    assert result["type"] == FlowResultType.FORM
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {"name": "Stasi AC", CONF_EMITTER: "infrared.test_emitter"},
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    (subentry,) = entry.subentries.values()
+    assert (subentry.title, dict(subentry.data)) == (
+        "Stasi AC",
+        {CONF_EMITTER: "infrared.test_emitter"},
+    )
+    await hass.async_block_till_done()
+    assert hass.states.get("climate.stasi_ac") is not None
+
+
+async def test_hisense_without_emitters_aborts(hass: HomeAssistant) -> None:
+    """No infrared emitter in HA: nothing to choose."""
+    entry = ir_entry()
+    await set_up(hass, entry)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_HISENSE), context={"source": SOURCE_USER}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    assert result["reason"] == "no_emitters"
+
+
+async def test_reconfigure_hisense(
+    hass: HomeAssistant, ac: tuple[MockConfigEntry, str]
+) -> None:
+    """Another name and emitter without removing the air conditioner."""
+    entry, _ = ac
+    (subentry_id,) = entry.subentries
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_HISENSE),
+        context={"source": SOURCE_RECONFIGURE, "subentry_id": subentry_id},
+    )
+    assert result["step_id"] == "reconfigure"
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {"name": "Bedroom AC", CONF_EMITTER: "infrared.test_emitter"},
+    )
+    assert result["reason"] == "reconfigure_successful"
+    assert entry.subentries[subentry_id].title == "Bedroom AC"

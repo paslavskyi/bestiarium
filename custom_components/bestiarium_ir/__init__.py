@@ -12,25 +12,38 @@ from typing import TYPE_CHECKING
 
 from homeassistant.const import Platform
 
+from .const import CONF_EMITTER, SUBENTRY_TYPE_HISENSE
+from .hisense import HisenseLink
+
 if TYPE_CHECKING:
-    from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
 
-PLATFORMS: list[Platform] = [Platform.INFRARED]
+    from .data import BestiariumIrConfigEntry
+
+PLATFORMS: list[Platform] = [Platform.INFRARED, Platform.CLIMATE]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(
+    hass: HomeAssistant, entry: BestiariumIrConfigEntry
+) -> bool:
     """Set up the subentries' devices."""
+    entry.runtime_data = {
+        subentry.subentry_id: HisenseLink(hass, subentry.data[CONF_EMITTER])
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type == SUBENTRY_TYPE_HISENSE
+    }
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
 
 
-async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_reload(hass: HomeAssistant, entry: BestiariumIrConfigEntry) -> None:
     """Reload when a subentry is added, changed or removed."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant, entry: BestiariumIrConfigEntry
+) -> bool:
     """Unload the subentries' devices."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
