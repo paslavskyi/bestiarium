@@ -2,24 +2,28 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfPower, UnitOfTemperature
+from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.restore_state import RestoreEntity
 
+from ..bestiarium_ir.kelon168 import Kelon168Fan  # noqa: TID252
 from .const import (
     DOMAIN,
     LOGGER,
     MOCK_GRID,
     MOCK_THERMOMETERS,
+    IrFrameOutcome,
     MockThermometerSpec,
 )
-from .entity import MockSocketEntity
+from .entity import MockIrAcEntity, MockSocketEntity
+from .ir_ac import STATES
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -56,6 +60,10 @@ async def async_setup_entry(
     grid_sensor = MockGridPowerSensor(entry, coordinator.readings[MOCK_GRID.device_id])
     coordinator.register_grid_power_sensor(grid_sensor)
     entities.append(grid_sensor)
+
+    for ac in coordinator.ir_acs.values():
+        entities.append(MockIrAcStateSensor(ac, "ac_state"))
+        entities.append(MockIrAcLastFrameSensor(ac, "last_frame"))
 
     async_add_entities(entities)
 
@@ -177,3 +185,70 @@ class MockThermometerTemperatureSensor(SensorEntity):
         """Set the temperature value (called by coordinator)."""
         self._temperature = temperature
         self.async_write_ha_state()
+
+
+class MockIrAcStateSensor(MockIrAcEntity, SensorEntity, RestoreEntity):
+    """What the stand's air conditioner does: off or its mode; restored."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_options: ClassVar[list[str]] = ["off", *STATES.values()]
+
+    @property
+    def native_value(self) -> str:
+        """Return the unit's state."""
+        return self._ac.state
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the target, the fan speed and the display."""
+        return {
+            "temperature": self._ac.temperature,
+            "fan": self._ac.fan.value,
+            "display": self._ac.display_on,
+        }
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the unit."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is None or last.state not in self._attr_options:
+            return
+        attributes = last.attributes
+        mode = next(
+            (mode for mode, state in STATES.items() if state == last.state),
+            self._ac.mode,
+        )
+        self._ac.restore(
+            power=last.state != "off",
+            mode=mode,
+            temperature=int(attributes.get("temperature", self._ac.temperature)),
+            fan=Kelon168Fan(attributes.get("fan", self._ac.fan)),
+            display_on=bool(attributes.get("display", True)),
+        )
+
+
+class MockIrAcLastFrameSensor(MockIrAcEntity, SensorEntity):
+    """What the stand's air conditioner did with the last frame it heard."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_options: ClassVar[list[str]] = [outcome.value for outcome in IrFrameOutcome]
+
+    @property
+    def native_value(self) -> str | None:
+        """Return the outcome of the last frame."""
+        return self._ac.last_outcome
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return the frame: its button and the state it carries."""
+        if (frame := self._ac.last_frame) is None:
+            return None
+        return {
+            "action": frame.action.name.lower(),
+            "power": frame.power,
+            "mode": STATES[frame.mode],
+            "temperature": frame.temperature,
+            "fan": frame.fan.value,
+        }

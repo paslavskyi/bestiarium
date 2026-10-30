@@ -9,7 +9,7 @@ from homeassistant.const import STATE_ON, EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
-from .entity import MockSocketEntity
+from .entity import MockIrAcEntity, MockSocketEntity
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .coordinator import MockDevicesCoordinator
     from .data import BestiariumMockConfigEntry
     from .faults import MockSocket
+    from .ir_ac import MockIrAc
 
 
 async def async_setup_entry(
@@ -36,6 +37,41 @@ async def async_setup_entry(
         if socket.spec.has_ir
         for knob in ("ir_lost", "ir_hangs")
     )
+    async_add_entities(
+        MockIrAcKnobSwitch(ac, knob)
+        for ac in coordinator.ir_acs.values()
+        for knob in ("ir_lost", "ignores_off")
+    )
+
+
+class MockIrAcKnobSwitch(MockIrAcEntity, SwitchEntity, RestoreEntity):
+    """A test knob of the stand's IR air conditioner: "IR lost", "Ignores off"."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, ac: MockIrAc, knob: str) -> None:
+        """Initialize the knob."""
+        super().__init__(ac, knob)
+        self._knob = knob
+
+    @property
+    def is_on(self) -> bool:
+        """Return whether the knob is on."""
+        return getattr(self._ac, self._knob)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the knob on."""
+        self._ac.set_knob(self._knob, on=True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:  # noqa: ARG002
+        """Turn the knob off."""
+        self._ac.set_knob(self._knob, on=False)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the knob."""
+        await super().async_added_to_hass()
+        if (last_state := await self.async_get_last_state()) is not None:
+            self._ac.set_knob(self._knob, on=last_state.state == STATE_ON)
 
 
 class MockIrKnobSwitch(MockSocketEntity, SwitchEntity, RestoreEntity):

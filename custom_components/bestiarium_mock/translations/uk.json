@@ -21,6 +21,9 @@
       },
       "ir_hangs": {
         "name": "ІЧ зависає"
+      },
+      "ignores_off": {
+        "name": "Ігнорує вимкнути"
       }
     },
     "sensor": {
@@ -32,6 +35,54 @@
       },
       "temperature": {
         "name": "Температура"
+      },
+      "ac_state": {
+        "name": "Стан кондиціонера",
+        "state": {
+          "off": "Вимкнено",
+          "heat": "Гріє",
+          "cool": "Охолоджує",
+          "auto": "Авто",
+          "dry": "Осушення",
+          "fan_only": "Лише вентилятор"
+        },
+        "state_attributes": {
+          "temperature": {
+            "name": "Уставка"
+          },
+          "fan": {
+            "name": "Швидкість вентилятора"
+          },
+          "display": {
+            "name": "Екран"
+          }
+        }
+      },
+      "last_frame": {
+        "name": "Останній кадр",
+        "state": {
+          "applied": "Виконано",
+          "display_lit": "Лише засвітив екран",
+          "off_ignored": "«Вимкнути» проігноровано",
+          "not_recognised": "Не розпізнано"
+        },
+        "state_attributes": {
+          "action": {
+            "name": "Кнопка"
+          },
+          "power": {
+            "name": "Увімкнено"
+          },
+          "mode": {
+            "name": "Режим"
+          },
+          "temperature": {
+            "name": "Уставка"
+          },
+          "fan": {
+            "name": "Швидкість вентилятора"
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -88,6 +139,11 @@
           "no_data": "Немає даних",
           "frozen": "Застиг"
         }
+      }
+    },
+    "infrared": {
+      "emitter": {
+        "name": "ІЧ-передавач"
       }
     }
   },
@@ -168,6 +224,12 @@
     },
     "thermo_5": {
       "name": "Термометр 5"
+    },
+    "hisense": {
+      "name": "Hisense стенда"
+    },
+    "hisense_power": {
+      "name": "Живлення Hisense стенда"
     }
   }
 }
