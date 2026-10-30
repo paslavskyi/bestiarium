@@ -36,6 +36,7 @@ from .const import (
     DOMAIN,
     PRESET_KEYS,
     SIGNAL_CONTROL_CHANGED,
+    SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
 )
 from .control import ThermostatMemory, async_get_thermostat_memory
@@ -63,12 +64,14 @@ async def async_setup_entry(
     coordinator: BalancingCoordinator = hass.data[DOMAIN][entry.entry_id]
     memory = await async_get_thermostat_memory(hass)
     for subentry_id, control in coordinator.controls.items():
+        subentry = entry.subentries[subentry_id]
+        thermostat = (
+            UniversalThermostat
+            if subentry.subentry_type == SUBENTRY_TYPE_UNIVERSAL
+            else VirtualThermostat
+        )
         async_add_entities(
-            [
-                VirtualThermostat(
-                    hass, entry, entry.subentries[subentry_id], control, memory
-                )
-            ],
+            [thermostat(hass, entry, subentry, control, memory)],
             config_subentry_id=subentry_id,
         )
 
@@ -81,6 +84,7 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     )
+    _model = "Virtual Thermostat"
 
     def __init__(
         self,
@@ -103,7 +107,7 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             identifiers={(DOMAIN, subentry.subentry_id)},
             name=subentry.title,
             manufacturer="Bestiarium",
-            model="Virtual Thermostat",
+            model=self._model,
             entry_type=DeviceEntryType.SERVICE,
         )
 
@@ -220,6 +224,23 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         return abs(self._target_temp - self._cur_temp)
 
     @property
+    def manual(self) -> bool:
+        """Return whether a person runs it: the balancer leaves it alone."""
+        return False
+
+    @property
+    def wants_work(self) -> bool:
+        """Return whether the temperature asks it to heat or cool."""
+        return self._attr_hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+
+    @callback
+    def turn_off_by_zone(self) -> None:
+        """Turn the thermostat off for the load zone; the cycle goes on."""
+        self._attr_hvac_mode = HVACMode.OFF
+        self._update_hvac_action()
+        self.async_write_ha_state()
+
+    @property
     def available(self) -> bool:
         """Return False while the thermostat has had no temperature too long."""
         return not self._control.no_temperature
@@ -301,7 +322,7 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
             kept = {"hvac_mode": last_state.state, **last_state.attributes}
         else:
             kept = {}
-        if kept.get("hvac_mode") in (HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF):
+        if kept.get("hvac_mode") in self._restorable_modes():
             self._attr_hvac_mode = HVACMode(kept["hvac_mode"])
         with contextlib.suppress(TypeError, ValueError):
             if kept.get("temperature") is not None:
@@ -311,6 +332,10 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         self._saved_target_temp = self._memory.get(self.subentry_id).get(
             "saved_temperature"
         )
+
+    def _restorable_modes(self) -> tuple[HVACMode, ...]:
+        """Return the modes a restored state may set."""
+        return (HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF)
 
     def _save_target_temp(self, value: float | None) -> None:
         """Remember the target to go back to when the preset ends."""
@@ -373,3 +398,37 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         if self._unsub:
             self._unsub()
             self._unsub = None
+
+
+class UniversalThermostat(VirtualThermostat):
+    """
+    Universal thermostat: auto balanced, off, or manual (heat or cool).
+
+    Auto heats or cools, by its setting, as the balancer decides; manual
+    runs its switch by the temperature alone, outside the capacity, until
+    the red zone or the overload turns it off.
+    """
+
+    _model = "Universal Thermostat"
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: BestiariumClimateConfigEntry,
+        subentry: ConfigSubentry,
+        control: ThermostatControl,
+        memory: ThermostatMemory,
+    ) -> None:
+        """Initialize the thermostat; its manual mode is its heating or cooling."""
+        super().__init__(hass, entry, subentry, control, memory)
+        self._manual_mode = HVACMode.COOL if self._ac_mode else HVACMode.HEAT
+        self._attr_hvac_modes = [HVACMode.AUTO, self._manual_mode, HVACMode.OFF]
+
+    @property
+    def manual(self) -> bool:
+        """Return whether it is in its manual mode."""
+        return self._attr_hvac_mode == self._manual_mode
+
+    def _restorable_modes(self) -> tuple[HVACMode, ...]:
+        """Return its own modes."""
+        return tuple(self._attr_hvac_modes)

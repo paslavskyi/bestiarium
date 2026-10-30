@@ -18,7 +18,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
-from homeassistant.core import callback
+from homeassistant.core import State, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_track_point_in_utc_time,
@@ -38,14 +38,17 @@ from .command import (
 )
 from .const import (
     CONF_HEATER_POWER,
+    CONF_POWER_ENTITY,
     CONF_RECOVERY_TIMEOUT,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
+    DEFAULT_UNIVERSAL_MIN_POWER,
     DOMAIN,
     LOGGER,
     SAVE_DELAY_SECONDS,
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
+    SIGNAL_SWITCH_CHANGED,
     STORAGE_KEY,
     STORAGE_MINOR_VERSION,
     STORAGE_VERSION,
@@ -53,7 +56,8 @@ from .const import (
     ControlState,
     Zone,
 )
-from .devices import PowerSupply, power_supply
+from .devices import PowerSupply, power_supply, switch_power
+from .power_reading import PowerReading, PowerThresholds
 from .stepwise import Step, StepwiseOff
 from .util import duration_dict_to_timedelta
 
@@ -66,7 +70,6 @@ if TYPE_CHECKING:
         Event,
         EventStateChangedData,
         HomeAssistant,
-        State,
     )
 
     from .data import BestiariumClimateConfigEntry
@@ -203,6 +206,28 @@ class ThermostatControl:
         self._sensor: str = subentry.data[CONF_TEMPERATURE_SENSOR]
         # The power the thermostat's form gives its heater, if any
         self.heater_power: float | None = subentry.data.get(CONF_HEATER_POWER)
+        # A universal thermostat's own power sensor; else its virtual switch's
+        self._power_entity: str | None = subentry.data.get(CONF_POWER_ENTITY)
+        # A universal thermostat with a power sensor reads its switch by it
+        self._power_reading = (
+            PowerReading(
+                hass,
+                self.name,
+                self._power_entity,
+                PowerThresholds.of(
+                    subentry.data, min_power=DEFAULT_UNIVERSAL_MIN_POWER
+                ),
+                self._on_power_reading,
+            )
+            if self._power_entity
+            else None
+        )
+        self._power_was_on = False
+        # In the manual mode: what the temperature asks, the last command sent
+        # and the thermostat's minimum cycle (FR-028)
+        self._manual: bool | None = None
+        self._manual_sent: bool | None = None
+        self._manual_cycle = timedelta()
         self._memory = memory
         kept = memory.get(self.subentry_id)
         self.expected_on: bool = kept.get("expected_on", False)
@@ -251,9 +276,14 @@ class ThermostatControl:
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
-            ),
-            async_at_started(self._hass, self._on_started),
+            )
         ]
+        # Read by power before HA's start is seen: on a reload it is at once
+        if (reading := self._power_reading) is not None:
+            reading.start()
+            self._unsubscribe.append(reading.stop)
+            self._power_was_on = reading.available and reading.is_on
+        self._unsubscribe.append(async_at_started(self._hass, self._on_started))
 
     @callback
     def async_stop(self) -> None:
@@ -264,11 +294,35 @@ class ThermostatControl:
             self._cancel_timer()
         self._unsubscribe, self._cancel_timer = [], None
 
+    def _switch_state(self) -> State | None:
+        """
+        Return the switch's state: its own, or read by its power sensor.
+
+        Read by power, it is gone while the switch is missing or unavailable,
+        or the power data is gone. An optimistic switch (a template switch
+        over scenes) is unknown until its first command: no reason to be gone.
+        """
+        state = self._hass.states.get(self.switch)
+        reading = self._power_reading
+        if reading is None:
+            return state
+        if state is None or state.state == STATE_UNAVAILABLE or not reading.available:
+            return None
+        return State(
+            self.switch,
+            STATE_ON if reading.is_on else STATE_OFF,
+            last_changed=reading.last_changed,
+        )
+
     # What the balancer asks
+
+    def measured_power(self) -> float | None:
+        """Return what the switch's power sensor reads, if it has one."""
+        return switch_power(self._hass, self.switch, self._power_entity)
 
     def follow_power(self) -> bool:
         """Find again what powers the switch; return whether it changed."""
-        power = power_supply(self._hass, self.switch)
+        power = power_supply(self._hass, self.switch, self._power_entity)
         changed, self.power = power != self.power, power
         return changed
 
@@ -311,7 +365,7 @@ class ThermostatControl:
         that lasted the tolerance (DEC-014, rule 1); until then it gets no
         command and heats, for the arrangement and the zones alike.
         """
-        state = self._hass.states.get(self.switch)
+        state = self._switch_state()
         if _gone(state):
             return None
         if state.state == STATE_ON:
@@ -366,7 +420,7 @@ class ThermostatControl:
 
     def _turned_off_at(self) -> datetime | None:
         """Return when another turned the switch, wanted on, off after its last "on"."""
-        state = self._hass.states.get(self.switch)
+        state = self._switch_state()
         command = self._commands.latest()
         if (
             self.expected_on
@@ -421,7 +475,63 @@ class ThermostatControl:
             self._no_power.set(cut, now)
             self._refresh(now)
 
-    def next_command(self, now: datetime) -> bool | None:
+    @property
+    def manual(self) -> bool:
+        """Return whether the thermostat is in its manual mode."""
+        return self._manual is not None
+
+    def set_manual(
+        self,
+        demand: bool | None,  # noqa: FBT001
+        now: datetime,
+        min_cycle: timedelta,
+    ) -> bool:
+        """
+        Set what the manual mode asks for (None: not manual).
+
+        Entering it, the switch is the person's: the balancer wants nothing
+        of it and its stepwise "off" ends; the switch as it reads counts as
+        the last command. A cycle of the manual mode lasts at least the
+        thermostat's own minimum cycle duration. Return whether it left the
+        manual mode with its switch running: the balancer keeps it running
+        if it has a place (keep_running).
+        """
+        left_running = False
+        if (demand is None) != (self._manual is None):
+            running = self.reading(now) is Reading.ON
+            self._manual_sent = running if demand is not None else None
+            if demand is not None:
+                self.expected_on, self.expected_changed_at = False, now
+                self._stepwise = StepwiseOff()
+            left_running = demand is None and running
+            self._keep()
+            self._refresh(now)
+        self._manual, self._manual_cycle = demand, min_cycle
+        return left_running
+
+    def keep_running(self, now: datetime) -> None:
+        """Take the switch left running by the manual mode as running: no start."""
+        self.expected_on, self.expected_changed_at = True, now
+        self._keep()
+        self._refresh(now)
+
+    def _manual_command(self, now: datetime) -> bool | None:
+        """
+        Return the manual mode's command: once for each change of the demand.
+
+        As a thermostat of HA: no attempts, no "Not responding", no stepwise
+        "off"; the switch changes no sooner than the minimum cycle after its
+        last change.
+        """
+        demand = self._manual
+        if demand is None or demand is self._manual_sent:
+            return None
+        state = self._switch_state()
+        if state is not None and now - state.last_changed < self._manual_cycle:
+            return None
+        return demand
+
+    def next_command(self, now: datetime) -> bool | None:  # noqa: PLR0911
         """
         Return the state to send the switch now, or None.
 
@@ -441,6 +551,8 @@ class ThermostatControl:
         reading = self.reading(now)
         if reading in (None, Reading.OFF_UNCONFIRMED):
             return None
+        if self.manual:
+            return self._manual_command(now)
         actual = reading is Reading.ON
         wanted = self.wanted(now)
         if actual and not wanted:
@@ -478,6 +590,8 @@ class ThermostatControl:
         )
         if deferred and target is None:
             self._off_owed = False
+        if self.manual and target is None:
+            self._manual_sent = on
         self._keep()
         self._refresh(now)
         return command
@@ -507,7 +621,11 @@ class ThermostatControl:
         goes to another thermostat in this cycle.
         """
         self._observe(now)
-        if self.switch_is_on(now) is not False or self.deferred_until is not None:
+        if (
+            self.manual
+            or self.switch_is_on(now) is not False
+            or self.deferred_until is not None
+        ):
             return
         attempts = self.settings.attempts
         failed = self._commands.failed(now, on=True)
@@ -538,7 +656,7 @@ class ThermostatControl:
                 not actual
                 and (
                     self._stepwise.cut
-                    or now - self._hass.states.get(self.switch).last_changed
+                    or now - self._switch_state().last_changed
                     >= timedelta(seconds=self.settings.off_interval_seconds)
                 )
             )
@@ -549,7 +667,7 @@ class ThermostatControl:
         command = self._commands.answer(actual)
         # A switch in the state already when the command went is no answer of
         # it: only a change after the command ends "Not responding"
-        state = self._hass.states.get(self.switch)
+        state = self._switch_state()
         if (
             command is not None
             and command.counted
@@ -693,7 +811,7 @@ class ThermostatControl:
     def _on_started(self, _hass: HomeAssistant) -> None:
         self._watching = True
         now = dt_util.utcnow()
-        self._switch_gone.set(_gone(self._hass.states.get(self.switch)), now)
+        self._switch_gone.set(_gone(self._switch_state()), now)
         self._no_temperature.set(
             _no_temperature(self._hass.states.get(self._sensor)), now
         )
@@ -706,19 +824,38 @@ class ThermostatControl:
         now = dt_util.utcnow()
         new = event.data["new_state"]
         if event.data["entity_id"] == self.switch:
-            self._switch_gone.set(_gone(new), now)
             old = event.data["old_state"]
-            # An "off" by another pauses once confirmed (set_expected)
-            if (
-                old is not None
-                and old.state == STATE_ON
-                and self.reading(now) is Reading.OFF
-            ):
-                self.off_at = now
-                self._keep()
+            if self._power_reading is None:
+                self._switch_changed(
+                    was_on=old is not None and old.state == STATE_ON, now=now
+                )
+            else:
+                self._switch_changed(was_on=self._power_was_on, now=now)
         else:
             self._no_temperature.set(_no_temperature(new), now)
         self._refresh(now)
+
+    @callback
+    def _on_power_reading(self) -> None:
+        """Follow the switch read by power, as a change of the switch's own state."""
+        was_on = self._power_was_on
+        reading = self._power_reading
+        self._power_was_on = reading is not None and reading.available and reading.is_on
+        if not self._watching:
+            return
+        now = dt_util.utcnow()
+        self._switch_changed(was_on=was_on, now=now)
+        self._refresh(now)
+        async_dispatcher_send(
+            self._hass, SIGNAL_SWITCH_CHANGED.format(self.subentry_id)
+        )
+
+    def _switch_changed(self, *, was_on: bool, now: datetime) -> None:
+        self._switch_gone.set(_gone(self._switch_state()), now)
+        # An "off" by another pauses once confirmed (set_expected)
+        if was_on and self.reading(now) is Reading.OFF:
+            self.off_at = now
+            self._keep()
 
     def _refresh(self, now: datetime) -> None:
         """Settle the problems, tell a new state, plan the next check."""

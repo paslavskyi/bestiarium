@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
-from homeassistant.components.climate import HVACAction, HVACMode
+from homeassistant.components.climate import HVACMode
 from homeassistant.config_entries import (
     SIGNAL_CONFIG_ENTRY_CHANGED,
     ConfigEntry,
@@ -44,6 +44,7 @@ from .const import (
     DOMAIN_BESTIARIUM_MODE,
     EVENT_DEVICE_ROTATED_IN,
     EVENT_DEVICE_ROTATED_OUT,
+    EVENT_MANUAL_TURNED_OFF,
     ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
     LARGE_HEATER_POWER_W,
@@ -55,10 +56,13 @@ from .const import (
     SENSOR_ZONES,
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
-    SUBENTRY_TYPE_THERMOSTAT,
+    SIGNAL_SWITCH_CHANGED,
+    THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
     DeviceRotatedData,
+    ManualCause,
+    ManualTurnedOffData,
     Zone,
 )
 from .control import DEFAULT_PAUSE, ThermostatControl, async_get_thermostat_memory
@@ -66,7 +70,6 @@ from .devices import (
     device_of_relay,
     expected_power,
     power_cut,
-    switch_power,
 )
 from .repairs import set_issue
 from .stepwise_actions import StepwiseActions
@@ -90,7 +93,7 @@ def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[s
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id != besides
         for subentry in entry.subentries.values()
-        if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+        if subentry.subentry_type in THERMOSTAT_TYPES
     )
     return {switch for switch, count in targets.items() if count > 1}
 
@@ -179,7 +182,7 @@ class BalancingCoordinator:
                 self._hass, self._entry, subentry, memory, zone=self._zone
             )
             for subentry in self._entry.subentries.values()
-            if subentry.subentry_type == SUBENTRY_TYPE_THERMOSTAT
+            if subentry.subentry_type in THERMOSTAT_TYPES
         }
 
     def start(self) -> None:
@@ -193,6 +196,13 @@ class BalancingCoordinator:
                     self._hass,
                     SIGNAL_CONTROL_CHANGED.format(control.subentry_id),
                     self._control_changed(control),
+                )
+            )
+            self._unsubscribe.append(
+                async_dispatcher_connect(
+                    self._hass,
+                    SIGNAL_SWITCH_CHANGED.format(control.subentry_id),
+                    self.async_request_balance,
                 )
             )
         self._follow_zones()
@@ -397,8 +407,17 @@ class BalancingCoordinator:
         self._report_shared_switches()
         self._actions.report_gone_sockets(self.controls.values())
         zone = self._zone()
-        self._allocate(self._thermostats(), now, zone)
-        if zone in SHEDDING_ZONES and self._last_zone not in SHEDDING_ZONES:
+        thermostats = self._thermostats()
+        entering = zone in SHEDDING_ZONES and self._last_zone not in SHEDDING_ZONES
+        for subentry_id in sorted(self._allocate(thermostats, now, zone)):
+            self._turn_off_manual(
+                thermostats[subentry_id],
+                self.controls[subentry_id],
+                zone,
+                now,
+                cause=ManualCause.ZONE_ENTERED if entering else ManualCause.TURNED_ON,
+            )
+        if entering:
             self._actions.shed(
                 (c for c in self.controls.values() if not self._left_alone(c)), now
             )
@@ -410,9 +429,40 @@ class BalancingCoordinator:
             if self._left_alone(control):
                 continue
             if (on := control.next_command(now)) is not None:
-                self._send(control, on, now)
+                # The manual mode's commands are no attempts (FR-028)
+                self._send(control, on, now, counted=not control.manual)
             if (due := self._actions.take_step(control, now)) is not None:
                 self._start_again(due - now)
+
+    def _turn_off_manual(
+        self,
+        thermostat: VirtualThermostat,
+        control: ThermostatControl,
+        zone: Zone,
+        now: datetime,
+        *,
+        cause: ManualCause,
+    ) -> None:
+        """
+        Turn a manual thermostat off for red or the overload, before the others.
+
+        Its mode is off and stays off until a person turns it on; its "off"
+        goes now, the first of a stepwise "off" if its switch runs.
+        """
+        thermostat.turn_off_by_zone()
+        control.set_manual(None, now, thermostat.min_cycle_duration)
+        LOGGER.info("%s: manual mode turned off in the %s zone", control.name, zone)
+        self._hass.bus.async_fire(
+            EVENT_MANUAL_TURNED_OFF,
+            ManualTurnedOffData(
+                thermostat=thermostat.entity_id,
+                switch_entity_id=control.switch,
+                zone=zone,
+                cause=cause,
+            ),
+        )
+        if (on := control.next_command(now)) is not None:
+            self._send(control, on, now)
 
     def _send(
         self,
@@ -510,9 +560,11 @@ class BalancingCoordinator:
 
     def _allocate(
         self, thermostats: dict[str, VirtualThermostat], now: datetime, zone: Zone
-    ) -> None:
+    ) -> frozenset[str]:
         """
         Share the capacity among the thermostats that want to work, by the zone.
+
+        Return the manual thermostats the zone turns off first (FR-029).
 
         Those that do not work (idle, off), whose switch is gone, shared or
         does not respond, or that have no temperature get nothing: their
@@ -534,6 +586,17 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
+            # The manual mode: by the temperature alone, outside the capacity.
+            # Back to auto running, it goes on if it has a place (the owner,
+            # DEV-011), else it is turned off stepwise
+            if control.set_manual(
+                thermostat.wants_work if thermostat.manual else None,
+                now,
+                thermostat.min_cycle_duration,
+            ) and sum(c.expected_on for c in self.controls.values()) < (
+                self._capacity()
+            ):
+                control.keep_running(now)
         for subentry_id, control in self.controls.items():
             control.defer_if_exhausted(now)
             # Decide again the moment an "off" by another is confirmed
@@ -555,16 +618,17 @@ class BalancingCoordinator:
             for subentry_id, thermostat in thermostats.items()
             if (control := self.controls[subentry_id]).in_rotation(now)
             and not self._left_alone(control)
+            and not control.manual
             and control not in cut
-            and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+            and thermostat.wants_work
         ]
         for control in self.controls.values():
-            if not any(control is c for _, c in working):
+            if not control.manual and not any(control is c for _, c in working):
                 control.set_expected(False, now)  # noqa: FBT003
         for _thermostat, control in working:
             if control.turned_off_by_another(now):
                 control.set_expected(False, now)  # noqa: FBT003
-        self._arrange(working, zone, now)
+        return self._arrange(working, zone, now)
 
     def _rank(
         self, thermostat: VirtualThermostat, control: ThermostatControl, now: datetime
@@ -598,12 +662,13 @@ class BalancingCoordinator:
         working: list[tuple[VirtualThermostat, ThermostatControl]],
         zone: Zone,
         now: datetime,
-    ) -> None:
+    ) -> frozenset[str]:
         """
         Carry out the arrangement of the zone's rules (zone_rules.py).
 
         The "off"s first, then the starts, each in the order of rank; in a
-        deficit the rotation is told of what it turned off or on.
+        deficit the rotation is told of what it turned off or on. Return the
+        manual thermostats it turns off.
         """
         candidates = {
             control.subentry_id: self._candidate(thermostat, control, now)
@@ -631,6 +696,11 @@ class BalancingCoordinator:
                 started_at=self._started_at,
                 red_off_at=self._red_off_at,
             ),
+            manual=frozenset(
+                c.subentry_id
+                for c in self.controls.values()
+                if c.manual and not self._left_alone(c)
+            ),
         )
         self._started_at = arrangement.started_at
         self._red_off_at = arrangement.red_off_at
@@ -655,6 +725,7 @@ class BalancingCoordinator:
                 )
         if arrangement.retry_in is not None:
             self._start_again(arrangement.retry_in)
+        return arrangement.manual_off
 
     def _start_again(self, delay: timedelta) -> None:
         """Run a cycle after a delay (a step, a pause, a tolerance): the earliest."""
@@ -694,7 +765,7 @@ class BalancingCoordinator:
         A running air conditioner idling draws less than its expected power,
         and frees only that; a switch without a power sensor, the expected.
         """
-        power = switch_power(self._hass, control.switch)
+        power = control.measured_power()
         return self._heater_power(control)[0] if power is None else power
 
     def _load_and_red_threshold(self) -> tuple[float, float] | None:

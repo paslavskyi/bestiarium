@@ -9,10 +9,16 @@ alone is rotation.arrange; here the zone's rules apply to its changes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
-from .const import LOGGER, RED_STEP_SECONDS, START_STEP_SECONDS, Zone
+from .const import (
+    LOGGER,
+    RED_STEP_SECONDS,
+    SHEDDING_ZONES,
+    START_STEP_SECONDS,
+    Zone,
+)
 from .rotation import Heater, arrange
 
 # The zones in which the balancer starts heaters
@@ -68,9 +74,15 @@ class Arrangement:
     rotated: bool
     started_at: datetime | None
     red_off_at: datetime | None
+    # The manual thermostats to turn off before anything else (FR-029)
+    manual_off: frozenset[str] = frozenset()
 
 
-def arrange_zone(candidates: list[Candidate], state: ZoneInput) -> Arrangement:
+def arrange_zone(
+    candidates: list[Candidate],
+    state: ZoneInput,
+    manual: frozenset[str] = frozenset(),
+) -> Arrangement:
     """
     Return who heats after this cycle by the zone's rules.
 
@@ -79,10 +91,19 @@ def arrange_zone(candidates: list[Candidate], state: ZoneInput) -> Arrangement:
     ones turned off freed. Yellow: its "off"s only. The pause and no data: no
     rotation. Red: the heaters go off one by one; overload: all at once. Out
     of green a heater that does not heat is not wanted on (B1).
+
+    The manual thermostats are none of the candidates: outside the capacity
+    until red or the overload, which turn every one of them off first.
     """
     if state.zone is Zone.RED:
-        return _red(candidates, state)
-    return _Arranging(sorted(candidates, key=lambda c: c.rank), state).arrange()
+        arrangement = _red(candidates, state)
+    else:
+        arrangement = _Arranging(
+            sorted(candidates, key=lambda c: c.rank), state
+        ).arrange()
+    if state.zone in SHEDDING_ZONES:
+        return replace(arrangement, manual_off=manual)
+    return arrangement
 
 
 def _red(candidates: list[Candidate], state: ZoneInput) -> Arrangement:

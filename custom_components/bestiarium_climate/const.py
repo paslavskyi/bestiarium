@@ -20,6 +20,9 @@ DOMAIN_BESTIARIUM_DEVICES = "bestiarium_devices"
 # Subentry types
 SUBENTRY_TYPE_SWITCH = "switch"
 SUBENTRY_TYPE_THERMOSTAT = "thermostat"
+# Any switch, read by its power sensor if it has one; auto, off and manual
+SUBENTRY_TYPE_UNIVERSAL = "universal_thermostat"
+THERMOSTAT_TYPES = (SUBENTRY_TYPE_THERMOSTAT, SUBENTRY_TYPE_UNIVERSAL)
 
 # Config keys — entry-level
 CONF_CAPACITY = "capacity"
@@ -41,6 +44,8 @@ CONF_POWER_SOCKET = "power_socket"
 DEFAULT_POWER_HYSTERESIS_PERCENT = 20
 DEFAULT_POWER_DELAY_SECONDS = 10
 DEFAULT_POWER_TOLERANCE_SECONDS = 60
+# A universal thermostat's switch runs at or above it (an idling AC ~40 W)
+DEFAULT_UNIVERSAL_MIN_POWER = 20.0
 
 # Config keys — thermostat subentry
 CONF_THERMOSTAT_NAME = "name"
@@ -70,7 +75,11 @@ EVENT_DEVICE_ROTATED_OUT = "bestiarium_climate_device_rotated_out"
 # The stepwise "off" ran out of attempts; then it cut the socket (DEV-010)
 EVENT_SWITCH_OUT_OF_CONTROL = "bestiarium_climate_switch_out_of_control"
 EVENT_POWER_CUT = "bestiarium_climate_power_cut"
+# Red or overload turned a manual thermostat off (FR-029)
+EVENT_MANUAL_TURNED_OFF = "bestiarium_climate_manual_turned_off"
 SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
+# A switch read by power changed: the balancer decides again
+SIGNAL_SWITCH_CHANGED = f"{DOMAIN}_switch_changed_{{}}"
 
 # The thermostats' state the balancer keeps across restarts (Store)
 STORAGE_KEY = f"{DOMAIN}.thermostats"
@@ -150,7 +159,8 @@ class SwitchOutOfControlData(TypedDict):
 
     thermostat: str | None
     switch_entity_id: str
-    # What the virtual switch's power sensor reads; None for another switch
+    # What the switch's power sensor reads (its virtual switch's or the
+    # universal thermostat's); None without one
     power: float | None
     attempts: int
 
@@ -170,6 +180,25 @@ class PowerCutData(TypedDict):
     thermostat: str | None
     switch_entity_id: str
     socket_entity_id: str
+
+
+class ManualCause(StrEnum):
+    """Why the zone turned a manual thermostat off."""
+
+    # The home entered red or overload
+    ZONE_ENTERED = "zone_entered"
+    # A person turned it on while the zone was red or overload
+    TURNED_ON = "turned_on"
+
+
+class ManualTurnedOffData(TypedDict):
+    """The payload of EVENT_MANUAL_TURNED_OFF."""
+
+    thermostat: str
+    switch_entity_id: str
+    # red or overload
+    zone: str
+    cause: str
 
 
 class Zone(StrEnum):

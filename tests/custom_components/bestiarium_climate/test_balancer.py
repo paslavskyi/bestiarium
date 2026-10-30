@@ -35,6 +35,7 @@ from custom_components.bestiarium_climate.const import (
     EVENT_DEVICE_ROTATED_IN,
     START_STEP_SECONDS,
     SUBENTRY_TYPE_THERMOSTAT,
+    SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
     Zone,
 )
@@ -73,7 +74,7 @@ class Floors:
         # What a switch does before it takes a command (a slow one, a sequence)
         self.before: dict[str, Callable[[], Awaitable[None]]] = {}
 
-    async def setup(
+    async def setup(  # noqa: PLR0913
         self,
         capacity: int = 2,
         *,
@@ -81,8 +82,15 @@ class Floors:
         settle: bool = True,
         heater_power: float | None = None,
         min_working_minutes: int = 10,
+        universal: frozenset[str] = frozenset(),
+        power: dict[str, str] | None = None,
     ) -> None:
-        """Set up the entry: three thermostats heating to 21 °C."""
+        """
+        Set up the entry: three thermostats heating to 21 °C.
+
+        The `universal` floors are universal thermostats in auto, `power`
+        gives their power sensors.
+        """
         for floor in FLOORS:
             self.hass.states.async_set(f"switch.{floor}", STATE_OFF)
             self.hass.states.async_set(f"sensor.{floor}_temperature", "18")
@@ -120,7 +128,9 @@ class Floors:
             subentries_data=[
                 ConfigSubentryData(
                     subentry_id=floor,
-                    subentry_type=SUBENTRY_TYPE_THERMOSTAT,
+                    subentry_type=SUBENTRY_TYPE_UNIVERSAL
+                    if floor in universal
+                    else SUBENTRY_TYPE_THERMOSTAT,
                     title=floor.title(),
                     unique_id=None,
                     data={
@@ -131,6 +141,11 @@ class Floors:
                         **(
                             {"heater_power": heater_power}
                             if heater_power and floor == "floor_1"
+                            else {}
+                        ),
+                        **(
+                            {"power_entity": power[floor]}
+                            if power and floor in power
                             else {}
                         ),
                     },
@@ -157,7 +172,10 @@ class Floors:
             await self.hass.services.async_call(
                 "climate",
                 "set_hvac_mode",
-                {"entity_id": self.climate(floor), "hvac_mode": "heat"},
+                {
+                    "entity_id": self.climate(floor),
+                    "hvac_mode": "auto" if floor in universal else "heat",
+                },
                 blocking=True,
             )
         await self.hass.async_block_till_done()

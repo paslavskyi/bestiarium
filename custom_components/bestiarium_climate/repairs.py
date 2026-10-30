@@ -22,6 +22,7 @@ from .config_flow import (
     async_action_errors,
     socket_schema,
     switch_error,
+    virtual_switches,
 )
 from .const import (
     CONF_POWER_SOCKET,
@@ -32,6 +33,7 @@ from .const import (
     ISSUE_SOCKET_GONE,
     ISSUE_SWITCH_IS_DEVICE,
     ISSUE_SWITCH_SHARED,
+    SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
 )
 from .devices import device_of_relay
@@ -259,7 +261,13 @@ class ThermostatSwitchRepairFlow(_GoneRepairFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(CONF_TARGET_SWITCH): selector.EntitySelector(
-                        selector.EntitySelectorConfig(domain=DOMAIN_SWITCH)
+                        selector.EntitySelectorConfig(
+                            domain=DOMAIN_SWITCH,
+                            # A universal thermostat takes no virtual switch
+                            exclude_entities=virtual_switches(self.hass)
+                            if thermostat.subentry_type == SUBENTRY_TYPE_UNIVERSAL
+                            else [],
+                        )
                     )
                 }
             ),

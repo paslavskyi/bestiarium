@@ -25,6 +25,7 @@ from scripts.stand.layout import (
     SCRIPT_PREFIX,
     STAND_DEVICES,
     THERMOSTATS,
+    UNIVERSAL_THERMOSTATS,
 )
 from scripts.stand.scenarios import scenario_scripts
 from scripts.stand_setup import setup_stand
@@ -142,7 +143,9 @@ async def test_stand_setup_is_repeatable(
     assert len(climate) == 1
     # Each thermostat runs an air conditioner through its own virtual switch,
     # whose power socket is the "Allowed" of the AC socket's device (DEV-010)
-    assert len(climate[0].subentries) == 2 * len(THERMOSTATS)
+    assert len(climate[0].subentries) == 2 * len(THERMOSTATS) + len(
+        UNIVERSAL_THERMOSTATS
+    )
     sockets = [
         subentry.data["power_socket"]
         for subentry in climate[0].subentries.values()
@@ -155,6 +158,25 @@ async def test_stand_setup_is_repeatable(
         for socket in sockets
     )
     assert climate[0].options["off_interval_seconds"] == 60  # noqa: PLR2004
+    # DEV-011: the heater on its socket, the cloud AC on one template switch,
+    # each read by its socket's power
+    universal = {
+        subentry.title: subentry.data
+        for subentry in climate[0].subentries.values()
+        if subentry.subentry_type == "universal_thermostat"
+    }
+    assert universal["Stand heater"]["target_switch"] == "switch.mock_heater"
+    assert universal["Stand heater"]["power_entity"] == "sensor.mock_heater_power"
+    cloud = universal["Stand cloud AC"]
+    assert cloud["power_entity"] == "sensor.mock_ac_4_power"
+    templates = hass.config_entries.async_entries("template")
+    assert [entry.title for entry in templates] == ["Stand cloud AC switch"]
+    assert entities.async_get(cloud["target_switch"]).config_entry_id == (
+        templates[0].entry_id
+    )
+    assert templates[0].options["turn_on"] == [
+        {"action": f"script.{SCRIPT_PREFIX}ir_ac_4_on"}
+    ]
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -286,8 +308,13 @@ class _Registry:
     def stand_climate(self) -> list:
         return [
             *({"entity_id": f"climate.stand_ac_{n}"} for n in (1, 2, 3)),
+            {"entity_id": "climate.stand_heater"},
+            {"entity_id": "climate.stand_cloud_ac"},
             {"entity_id": "number.stand_capacity"},
         ]
+
+    def thermostat(self, name: str) -> str:
+        return f"climate.{name.lower().replace(' ', '_')}"
 
     def mock_device(self, mock_id: str) -> dict:
         return {"id": mock_id}
@@ -316,6 +343,7 @@ def test_reset_leaves_always_on_devices_on() -> None:
         "switch.mock_cooker",
         "switch.mock_fridge",
         *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
+        "switch.mock_ac_4",
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
 
@@ -476,3 +504,55 @@ async def test_a_load_out_of_the_cookers_reach_stops(
     assert out is stops
     assert check["then"][0]["error"]
     assert set_value["data"]["value"] == "{{ cooker }}"
+
+
+def _modes(sequence: list[dict]) -> dict[str, set[str]]:
+    """Return the climate entities each hvac mode of a sequence is set on."""
+    modes: dict[str, set[str]] = {}
+    for step in sequence:
+        if step.get("action") == "climate.set_hvac_mode":
+            entities = step["target"]["entity_id"]
+            modes.setdefault(step["data"]["hvac_mode"], set()).update(
+                [entities] if isinstance(entities, str) else entities
+            )
+    return modes
+
+
+def test_the_universal_thermostats_have_their_scenarios() -> None:
+    """DEV-011: scenarios 1, 2, 9, 10; the reset turns the new ones off too."""
+    scripts = scenario_scripts(_Registry())
+    assert {
+        "universal_auto",
+        "universal_manual",
+        "manual_red",
+        "manual_on_in_red",
+        "climate_coexistence",
+        "cloud_ac_universal",
+    } <= set(scripts)
+    reset = scripts["reset"]["sequence"]
+    assert {"climate.stand_heater", "climate.stand_cloud_ac"} <= _modes(reset)["off"]
+    assert scripts["ir_ac_4_on"]["sequence"][0] == {
+        "condition": "state",
+        "entity_id": "switch.mock_ac_4_ir_lost",
+        "state": "off",
+    }
+    assert _modes(scripts["universal_manual"]["sequence"])["heat"] == {
+        "climate.stand_heater"
+    }
+    assert _modes(scripts["cloud_ac_universal"]["sequence"])["auto"] == {
+        "climate.stand_cloud_ac"
+    }
+    coexistence = _modes(scripts["climate_coexistence"]["sequence"])
+    assert coexistence == {
+        "heat": {"climate.stand_ac_1", "climate.stand_ac_2"},
+        "auto": {"climate.stand_heater"},
+    }
+
+
+def test_old_scenarios_heat_only_the_virtual_thermostats() -> None:
+    """The manual mode of a universal one is "heat": the old scenarios leave them."""
+    scripts = scenario_scripts(_Registry())
+    for name in ("climate_zones", "climate_rotation", "thermostats_dead_switch"):
+        assert _modes(scripts[name]["sequence"])["heat"] == {
+            f"climate.stand_ac_{n}" for n in (1, 2, 3)
+        }

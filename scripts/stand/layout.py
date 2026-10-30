@@ -19,6 +19,7 @@ MOCK = "bestiarium_mock"
 MODE = "bestiarium_mode"
 DEVICES = "bestiarium_devices"
 CLIMATE = "bestiarium_climate"
+TEMPLATE = "template"
 
 DASHBOARD = "bestiarium-stand"
 SCRIPT_PREFIX = "bestiarium_stand_"
@@ -67,10 +68,11 @@ STAND_DEVICES = (
     StandDevice("floor_heating_1", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_2", 2000, first_queue=True, thermostat_driven=True),
     StandDevice("floor_heating_3", 2000, first_queue=True, thermostat_driven=True),
-    # The power of the air conditioners: always on, in the first queue
+    # The power of the air conditioners: always on, in the first queue; the
+    # fourth is the cloud AC of a universal thermostat (DEV-011)
     *(
         StandDevice(f"ac_{number}", LOAD_PRIORITY_ALWAYS_ON, first_queue=True)
-        for number in range(1, 4)
+        for number in range(1, 5)
     ),
 )
 # One relay lives in one integration (review 18): the floors are only
@@ -82,6 +84,16 @@ THERMOSTATS = (
     ("Stand AC 2", "thermo_2", "ac_2"),
     ("Stand AC 3", "thermo_3", "ac_3"),
 )
+# The universal thermostats (DEV-011): name, thermometer, the socket whose
+# power they read. The heater's switch is its socket's; the cloud AC's a
+# template switch over its IR scripts, as the home's Tuya scenes
+CLOUD_AC = "ac_4"
+CLOUD_AC_SWITCH = "Stand cloud AC switch"
+UNIVERSAL_THERMOSTATS = (
+    ("Stand heater", "thermo_4", "heater"),
+    ("Stand cloud AC", "thermo_5", CLOUD_AC),
+)
+HEATER_W = 1500
 # The thermostats of the stand before review 18, on the floors
 RETIRED_THERMOSTATS = frozenset({"Stand floor 1", "Stand floor 2", "Stand floor 3"})
 AC_RUNNING_W = 1200

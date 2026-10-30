@@ -5,11 +5,11 @@
 `bestiarium_mock` (domain `bestiarium_mock`) simulates smart-home devices for
 testing the Bestiarium integrations without hardware. It has no dependencies.
 
-1. **16 mock smart sockets**, one per test scenario. Each socket has a
+1. **18 mock smart sockets**, one per test scenario. Each socket has a
    **fault model** that makes it misbehave like a real cloud socket (ignored
    commands, slow replies, a stale state in HA, short dropouts), chosen with
    a **fault profile**.
-2. **4 mock thermometers** with a temperature set by hand.
+2. **5 mock thermometers** with a temperature set by hand.
 3. **A grid**: the sum of what the loads draw plus 40–100 W of background,
    (the overload alarm was removed in DEV-008 stage B: nobody read it, the
    overload zone tells it).
@@ -72,8 +72,9 @@ Device names are translated (`device` in the translations, `translation_key`
 | `fridge` | Mock Fridge | 100 W | Reliable | "always on" priority in modes |
 | `floor_heating_1..3` | Mock Floor Heating 1–3 | 1200 W | Reliable | Bestiarium Devices only, "turned on by a thermostat" (review 18: one relay, one integration) |
 | `matter_socket` | Matter socket (free) | 2000 W | Reliable | no Bestiarium device: the boiler is re-pointed to it (DEV-008) |
-| `ac_1..3` | Mock AC 1–3 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7) |
-| `thermo_1..4` | Mock Thermometer 1–4 | — | — | thermostat inputs |
+| `heater` | Mock Heater | 1500 W | Reliable | no Bestiarium device: the switch of the universal thermostat "Stand heater" (DEV-011), read by its power |
+| `ac_1..4` | Mock AC 1–4 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7). `ac_4` is the cloud air conditioner of the universal thermostat "Stand cloud AC" (DEV-011): its template switch runs `ac_4`'s IR scripts as the home's Tuya scenes |
+| `thermo_1..5` | Mock Thermometer 1–5 | — | — | thermostat inputs |
 
 ---
 
@@ -221,7 +222,13 @@ the script fails if HA did not load them.
    socket: the "Allowed" of its AC socket's device, DEV-010), each with a minimum
    cycle duration of 1 minute (the pause after an "off" and the working time
    before a rotation, decision 29), so that a scenario shows its result
-   within 4 minutes of its button.
+   within 4 minutes of its button. Since DEV-011 the same entry has two
+   universal thermostats, heating, each read by its socket's power (20 W)
+   with the same minimum cycle: "Stand heater" (thermometer 4, the switch
+   of the free heater socket, 1500 W) and "Stand cloud AC" (thermometer 5,
+   the template switch "Stand cloud AC switch" made by the template
+   helper's own form, whose actions are the IR scripts of `ac_4`, as the
+   home's switches over Tuya scenes; made again on each run).
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
@@ -246,6 +253,12 @@ the script fails if HA did not load them.
    | `grid_no_data` | reset; the grid "No data": after a minute the zones are unavailable (no data) |
    | `mode_after_restart` | reset; "Night"; then the Tuya socket on, as a person would: restart HA, and the mode turns it off again with `mode_applied` `reason: restart` |
    | `unstable_tuya` | reset; the Tuya socket "Unstable" and on |
+   | `universal_auto` | scenario 1 (DEV-011): reset; the heater's room at 18 °C, "Stand heater" in auto to 21 °C: it starts; 2 minutes later the room at 22 °C: it stops |
+   | `universal_manual` | scenario 1: reset; capacity 0; "Stand heater" in manual ("heat"): it starts all the same; a minute later the cooker pushes the grid into yellow: it goes on; a minute later the room at 22 °C: it stops by itself; then off |
+   | `manual_red` | scenario 2: reset; "Stand heater" manual and running; the cooker pushes the grid 300 W into red: the thermostat is off at once, its heater the first to go off, the event `manual_turned_off` (`zone_entered`); the cooker back: the thermostat stays off |
+   | `manual_on_in_red` | scenario 2: reset; red; "Stand heater" set to "heat": off at once, the heater never on, the event (`turned_on`) |
+   | `climate_coexistence` | scenario 9: reset; the stand's loads not allowed; AC 1 and AC 2 (virtual thermostats) and "Stand heater" (auto) want heat, capacity 2: two run; after the minimum cycle the rotation lets the waiting one in |
+   | `cloud_ac_universal` | scenario 10: reset; "Stand cloud AC" in auto, its room at 18 °C: the template switch runs the IR script, 1200 W, it runs by its power; the room at 25 °C: off (5 W); cold again and running, its IR lost and the room warm: "off" three times a minute apart, "Does not turn off", the event "out of control" — no socket is cut (it has none) |
 
 5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode
    and zones; the scenario buttons; a section per socket (switch, power,

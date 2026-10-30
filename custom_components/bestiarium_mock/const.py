@@ -145,8 +145,12 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     MockDeviceSpec(device_id="floor_heating_3", power_w=1200),
     # Free on the stand: the boiler is re-pointed to it (SmartThings to Matter)
     MockDeviceSpec(device_id="matter_socket", power_w=2000),
-    # The power of three air conditioners: 5 W on standby; the stand's IR
-    # scripts set 1200 W when one runs (review 18: as in the owner's home)
+    # A plain heater on its own socket: the universal thermostat's (DEV-011);
+    # no Bestiarium device, one relay lives in one integration
+    MockDeviceSpec(device_id="heater", power_w=1500),
+    # The power of four air conditioners: 5 W on standby; the stand's IR
+    # scripts set 1200 W when one runs (review 18: as in the owner's home).
+    # The fourth is the cloud AC of a universal thermostat (DEV-011)
     *(
         MockDeviceSpec(
             device_id=f"ac_{number}",
@@ -155,7 +159,7 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
             power_max_w=1200,
             has_ir=True,
         )
-        for number in range(1, 4)
+        for number in range(1, 5)
     ),
 )
 
@@ -165,6 +169,7 @@ MOCK_THERMOMETERS: tuple[MockThermometerSpec, ...] = (
     MockThermometerSpec(device_id="thermo_2"),
     MockThermometerSpec(device_id="thermo_3"),
     MockThermometerSpec(device_id="thermo_4"),
+    MockThermometerSpec(device_id="thermo_5"),
 )
 
 # Grid device (special - not a smart socket)

@@ -13,6 +13,8 @@ Core capabilities:
 
 The integration uses **HA subentries** — switches and thermostats are added as subentries under a single parent config entry.
 
+**Two kinds of thermostats** share one entry, one capacity and one balancer: the virtual thermostat (on a virtual switch or any switch, heat or cool) and, since DEV-011, the [universal thermostat](#universal-thermostat-dev-011) (any switch, read by its power sensor if it has one; auto, off and a manual mode).
+
 **Automation events**: The balancer fires HA bus events at device rotation in a deficit; the thermostat's control state tells switch and temperature problems. See [Automation Events](events.md) for event types, payloads, and automation examples.
 
 ---
@@ -27,7 +29,7 @@ custom_components/bestiarium_climate/
 ├── data.py              # Type aliases and TypedDicts for config data
 ├── config_flow.py       # Main config flow + switch/thermostat subentry flows
 ├── util.py              # duration_dict_to_timedelta helper
-├── climate.py           # VirtualThermostat entity (ClimateEntity + RestoreEntity)
+├── climate.py           # VirtualThermostat, UniversalThermostat (ClimateEntity + RestoreEntity)
 ├── switch.py            # VirtualSwitch entity (SwitchEntity)
 ├── number.py            # CapacityNumber entity (NumberEntity + RestoreEntity)
 ├── sensor.py            # ControlStateSensor — "Control state" of each thermostat
@@ -38,6 +40,7 @@ custom_components/bestiarium_climate/
 ├── rotation.py          # arrange() — who should heat, without the zone (decision 32)
 ├── zone_rules.py        # arrange_zone() — the zone's rules on the arrangement, no timers (pure)
 ├── stepwise_actions.py  # StepwiseActions — what the stepwise "off" and the entry to red send
+├── power_reading.py     # PowerReading — on/off read from a power sensor (virtual switch, universal thermostat)
 ├── devices.py           # What Climate reads of Bestiarium Devices; PowerSupply of a switch
 ├── follow.py            # A renamed switch, sensor or socket written into the subentries
 ├── repairs.py           # Repairs issues and their fix flows
@@ -56,7 +59,10 @@ tests/custom_components/bestiarium_climate/
 ├── test_balancer.py
 ├── test_rotation.py
 ├── test_zone_rules.py
-└── test_stepwise_off.py
+├── test_stepwise_off.py
+├── test_power_reading.py
+├── test_universal.py
+└── test_manual.py
 ```
 
 ---
@@ -129,6 +135,22 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH
 }
 ```
 
+### Universal Thermostat Subentry (`subentry_type: "universal_thermostat"`, DEV-011)
+
+```python
+{
+    # The fields of the thermostat subentry above (name, temperature_sensor,
+    # target_switch, thermostat_mode, tolerances, min_cycle_duration,
+    # heater_power, min/max_temp, presets); thermostat_mode: what auto and
+    # the manual mode do (heating: manual "heat"; cooling: manual "cool")
+    "power_entity": str,                 # Optional — the device's power sensor; empty: the switch's own state
+    "min_power": float,                  # W, at or above = running (default 20)
+    "power_hysteresis_percent": int,     # as the virtual switch (default 20)
+    "power_delay_seconds": int,          # as the virtual switch (default 10)
+    "power_tolerance_seconds": int,      # as the virtual switch (default 60)
+}
+```
+
 ### Key Constants (`const.py`)
 
 | Constant | Value |
@@ -136,6 +158,9 @@ PLATFORMS = [Platform.CLIMATE, Platform.NUMBER, Platform.SENSOR, Platform.SWITCH
 | `DOMAIN` | `"bestiarium_climate"` |
 | `SUBENTRY_TYPE_SWITCH` | `"switch"` |
 | `SUBENTRY_TYPE_THERMOSTAT` | `"thermostat"` |
+| `SUBENTRY_TYPE_UNIVERSAL` | `"universal_thermostat"` |
+| `DEFAULT_UNIVERSAL_MIN_POWER` | `20.0` (W) |
+| `EVENT_MANUAL_TURNED_OFF` | `"bestiarium_climate_manual_turned_off"` |
 | `DEFAULT_CAPACITY` | `1` |
 | `DEFAULT_MIN_WORKING_TIME` | `timedelta(minutes=20)` |
 | `DEFAULT_RECOVERY_TIMEOUT` | `timedelta(hours=1)` |
@@ -258,6 +283,28 @@ Class: `VirtualThermostat(ClimateEntity, RestoreEntity)` — one per thermostat 
 `RestoreEntity` restores the HVAC mode, the target and the preset — from its extra data (`extra_restore_state_data`), because a thermostat unavailable at shutdown (no temperature) has a state without attributes; a state saved before DEV-008 stage B is read from its attributes. The rest lives in the Store `bestiarium_climate.thermostats` (`ThermostatMemory`, by subentry id): `saved_temperature` of the thermostat, and `expected_on`, `expected_changed_at`, `tries`, `deferred_until` of its control.
 
 ---
+
+## Universal thermostat (DEV-011)
+
+`UniversalThermostat(VirtualThermostat)` — one per `universal_thermostat` subentry, device model "Universal Thermostat". The second of the new thermostats of FEAT-066 (the air conditioner's comes later); the virtual thermostat stays as it is until the owner moves the home to the new ones.
+
+**Settings** (its form: basic → power → presets). The basic step is the virtual thermostat's (name, temperature sensor, switch, heating or cooling, tolerances, minimum cycle, min/max, heater power), its switch any switch but the virtual switches of Climate (they have their own power; the universal thermostat replaces the pair) and the relays of Bestiarium Devices (one relay, one integration: `switch_is_device`, also as the fixable Repairs issue). One switch, one thermostat, of either kind (`switch_taken`). The power step: the power sensor, optional, and when it reads on — the virtual switch's fields, `min_power` 20 W by default (an idling air conditioner draws ~40 W, off ~5 W). The presets as the virtual thermostat's.
+
+**Modes** (the owner, FR-028, SRC-166):
+
+| Mode | What happens |
+|---|---|
+| `auto` | Balanced as a virtual thermostat in "heat" (or "cool", by its setting): the capacity, the zones, the rotation, the attempts, "Not responding", the stepwise "off" |
+| `heat` / `cool` (manual, by its setting) | As a thermostat of HA: the thermostat turns its switch on and off by the temperature alone, outside the capacity and the zones until red |
+| `off` | Its switch is wanted off; one that runs is turned off stepwise |
+
+**Its switch's state** — with a power sensor, read from it by `PowerReading` (the virtual switch's threshold, hysteresis, delay and tolerance, `power_reading.py`): a cloud or template switch may show a state it does not have; the switch is gone only while its entity is missing or `unavailable` — an optimistic template switch over scenes is `unknown` until its first command, and that is no problem (DEV-011 review 1, R1); no power data past the tolerance is "Switch unavailable". Without a power sensor, the switch's own state, as a virtual thermostat on any switch. The power for the fit check and "No power" is that of the Bestiarium device whose power sensor is the thermostat's (as for a virtual switch), else `heater_power`, else 2000 W. It has **no socket**: the stepwise "off" ends with the event `switch_out_of_control` (its `power` from the thermostat's sensor), there is no step "socket".
+
+**The manual mode** (FR-028): the balancer gives it no place in the capacity and leaves it alone in green, yellow, the pause and no data. A command goes once per change of what the temperature asks (the first in manual: only if the switch reads otherwise), not counted: no attempts, no "Not responding", no deferral, no stepwise "off"; a switch a person turns off is not turned on again until the demand changes. The thermostat's own minimum cycle duration holds as in HA's thermostat: the switch changes no sooner after its last change (the default pause of 5 minutes does not apply here). "Switch unavailable" and "No temperature data" are still shown. Back to `auto` with its switch running, it is a running heater, not a new start, if a place is free — counted by the capacity alone, not by the zone or the fit (the owner's answer 5, DEV-011): no command, no pause, no fit check, in yellow too; without a free place it is turned off stepwise, as any switch that runs while wanted off (the owner, DEV-011).
+
+**Manual first in red and the overload** (FR-029, step 1; the owner, SRC-167): in every cycle of red or the overload `zone_rules.arrange_zone` returns every manual thermostat in `manual_off`, and the balancer turns each off before the other rules of the zone: its mode becomes `off` (it stays off until a person turns it on), its "off" goes at once — before the entry's "off"s outside the attempts and before the queue of red — and the event `bestiarium_climate_manual_turned_off` fires with `cause` `zone_entered` (the cycle of the entry) or `turned_on` (a person turned it on in red: it goes off at once, its "on" never sent). The pause and no data between red and the overload are no new entry. Then it is an ordinary thermostat in `off`: a switch that goes on running is turned off stepwise, its steps a cycle apart in red.
+
+**Necessity** ([necessity](concepts/necessity.md)): the subentry type — the only interface to the balancing of any switch with a manual mode; the power fields — the algorithm's parameters (configuration, settings-vs-entities); the event — the integration's own decision (it turned a person's thermostat off), on the transition only, which the climate entity's "off" does not tell. No new entity or attribute.
 
 ## Thermostat control (`control.py`) and "Control state" (`sensor.py`)
 
@@ -390,6 +437,7 @@ Coverage:
 - Reconfigure main entry (no capacity field); control settings in the options; translations of states and settings
 - Switch subentry: create (no mode, hysteresis and delay defaults), a heating or cooling action required, an invalid action refused, the action a thermostat needs kept
 - Thermostat subentry: two-step flow (basic + presets); one switch serves one mode; a virtual switch needs the mode's action
+- Universal thermostat subentry: basic, power, presets; the power sensor optional, its defaults; no virtual switch offered; a taken switch or a device relay refused, by either kind; a cleared power sensor goes; every field translated
 - The power socket: optional, saved when given, the virtual switches of Climate not offered; an old switch has none, and the defaults of turning off apply
 
 ### `test_climate.py`
@@ -425,7 +473,20 @@ Coverage:
 - The deferral's "off" goes once while it runs, not again by the entry to red; with one attempt an "on" of a minute is no problem, one hung past 90 s is
 
 ### `test_zone_rules.py`
-- The zone's rules without HA: green turns out and starts one at a time, a step apart, only what fits; yellow only turns off; the pause and no data change nothing; red one "off" a step; overload all; a pause decides again at its end
+- The zone's rules without HA: green turns out and starts one at a time, a step apart, only what fits; yellow only turns off; the pause and no data change nothing; red one "off" a step; overload all; a pause decides again at its end; red and overload turn every manual thermostat off, the other zones none
+
+### `test_power_reading.py`
+- On at the minimum, off below the hysteresis, a change shown after the delay, no data after the tolerance and back at once; the moment of the shown change
+
+### `test_universal.py`
+- Auto heats and stops; its modes; its device; it shares the capacity with the old ones, and its "off" frees its place
+- The stepwise "off" without the step "socket", the event's power from its sensor; the device of its power sensor counts for "No power"; auto restored
+- Read by power: an optimistic switch is not "on" until its power shows it; a dip shorter than the delay changes nothing; no power data is "Switch unavailable"; an "off" by another read from power is no attempt
+- A universal thermostat on a device relay: the fix offers no virtual switch
+
+### `test_manual.py`
+- The manual mode heats by temperature alone, holds no place, is left alone in yellow, the pause and no data; one command per change of demand, never "Not responding"; its minimum cycle; back to auto with or without a place
+- Red and the overload turn it off first, its mode off, the event; it stays off after red; turned on in red it goes off at once (`turned_on`); the pause between red and the overload is no entry; restored in red; a switch that goes on running is turned off stepwise
 
 ### `test_stepwise_off.py`
 - "Off" three times 5 minutes apart, the event at 15, the socket and its event at 20; without a socket only the event

@@ -9,7 +9,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from .layout import CLIMATE, DEVICES, MOCK, THERMOSTATS, TOKEN_ENV
+from .layout import (
+    CLIMATE,
+    DEVICES,
+    MOCK,
+    THERMOSTATS,
+    TOKEN_ENV,
+    UNIVERSAL_THERMOSTATS,
+)
 
 if TYPE_CHECKING:
     import aiohttp
@@ -123,7 +130,7 @@ class Registry:
 
         The stand's entry is the one whose devices are the stand thermostats.
         """
-        names = {name for name, _, _ in THERMOSTATS}
+        names = {name for name, _, _ in (*THERMOSTATS, *UNIVERSAL_THERMOSTATS)}
         entry_ids = {
             entry_id
             for device in self.devices
@@ -147,6 +154,19 @@ class Registry:
                 ].startswith("switch."):
                     return entity["entity_id"]
         msg = f"No IR switch of {thermostat}"
+        raise StandError(msg)
+
+    def thermostat(self, thermostat: str) -> str:
+        """Return the climate entity of a stand thermostat, by its name."""
+        for device in self.devices:
+            if device.get("name") != thermostat:
+                continue
+            for entity in self.stand_climate():
+                if entity["device_id"] == device["id"] and entity[
+                    "entity_id"
+                ].startswith("climate."):
+                    return entity["entity_id"]
+        msg = f"No thermostat {thermostat}"
         raise StandError(msg)
 
     def control_state(self, thermostat: str) -> str:
