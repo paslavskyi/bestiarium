@@ -36,18 +36,21 @@ async def test_card_is_served_and_loaded_with_the_frontend(
     """
     The folder is a static path; every page of HA loads the card's module.
 
-    No long cache: the card's URL is versioned, its import of the model is not.
+    The whole folder is under the version: the card's relative import of the
+    model is versioned too, so a long cache never pairs a new card with an old
+    model.
     """
     with patch(ADD_JS) as add_js:
         assert await async_setup_component(hass, DOMAIN, {})
 
-    frontend.async_register_static_paths.assert_awaited_once_with(
-        [StaticPathConfig(CARD_URL, str(FRONTEND), cache_headers=False)]
-    )
     add_js.assert_called_once()
     url = add_js.call_args.args[1]
-    assert re.fullmatch(
-        r"/bestiarium_mode/frontend/power-flow-card\.js\?v=[0-9a-f]{8}", url
+    version = re.fullmatch(
+        r"/bestiarium_mode/frontend/([0-9a-f]{8})/power-flow-card\.js", url
+    )[1]
+    # The model, imported relatively, is under the same version: a long cache
+    frontend.async_register_static_paths.assert_awaited_once_with(
+        [StaticPathConfig(f"{CARD_URL}/{version}", str(FRONTEND), cache_headers=True)]
     )
 
 

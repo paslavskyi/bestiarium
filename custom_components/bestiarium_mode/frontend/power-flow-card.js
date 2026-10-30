@@ -2,10 +2,10 @@
 // It builds its scheme once and on each update of HA only switches classes,
 // a speed and texts; the dots run by a CSS animation, no JS per frame.
 
-import { DEFAULTS, KEYS, flowModel, readings, skeleton } from "./power-flow-model.js";
+import { DEFAULTS, KEYS, flowModel, layoutFor, readings, skeleton } from "./power-flow-model.js";
 
-// Below this card width the captions would not be readable in the wide scheme
-const NARROW_PX = 560;
+// Before the card has a width, the scheme of the mockup
+const WIDE_UNTIL_SEEN = Infinity;
 
 const STYLE = `
   ha-card { padding: 16px 20px 8px; container-type: inline-size; }
@@ -80,12 +80,12 @@ class BestiariumPowerFlowCard extends HTMLElement {
     this._layout = null;
     // The scheme follows the card's width: rebuilt only when the layout changes
     new ResizeObserver(([entry]) => this._scheme(entry.contentRect.width)).observe(this._card);
-    this._scheme(this._card.clientWidth);
+    this._scheme(this._card.clientWidth || WIDE_UNTIL_SEEN);
   }
 
   _scheme(width) {
-    const layout = width && width < NARROW_PX ? "narrow" : "wide";
-    if (layout === this._layout) {
+    const layout = layoutFor(width);
+    if (layout === null || layout === this._layout) {
       return;
     }
     this._layout = layout;

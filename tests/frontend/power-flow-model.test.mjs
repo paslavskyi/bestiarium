@@ -8,6 +8,7 @@ import {
   flowModel,
   hours,
   kw,
+  layoutFor,
   readings,
   skeleton,
 } from "../../custom_components/bestiarium_mode/frontend/power-flow-model.js";
@@ -114,6 +115,22 @@ test("criterion 4: without a grid behind the inverter the battery discharges bef
     model({ gridInverter: false, homeKw: 1.2, sunKw: 1.8 }).wires.invBat.status,
     "idle",
   );
+});
+
+test("the battery exception never overrides a charge the sensor sees", () => {
+  const m = model({ gridInverter: false, homeKw: 1.0, sunKw: 1.05, batteryKw: -0.4, hoursToFull: 2 });
+  assert.equal(m.wires.invBat.status, "flow");
+  assert.equal(m.wires.invBat.reverse, false);
+  assert.equal(m.wires.invBat.speed, model({ batteryKw: -0.4 }).wires.invBat.speed);
+  assert.deepEqual(m.nodes.bat.lines, ["91 % · заряд", "до повного ≈2 год"]);
+});
+
+test("the scheme is narrow while the wide captions would be under 11 px", () => {
+  assert.equal(layoutFor(375), "narrow");
+  assert.equal(layoutFor(700), "narrow");
+  assert.equal(layoutFor(800), "wide");
+  // Hidden: no width to choose by
+  assert.equal(layoutFor(0), null);
 });
 
 test("criterion 5: no grid feeds the home from the inverter whatever the relays", () => {

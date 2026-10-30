@@ -91,8 +91,10 @@ export function flowModel(r) {
   // The sensor sees a discharge only once the charge falls; with no grid
   // behind the inverter feeding the home, the battery covers what the sun lacks
   let batKw = r.batteryKw;
-  if (homeFromInv && (noGrid || r.gridInverter === false) && r.homeKw !== null && r.sunKw !== null) {
-    batKw = Math.max(r.batteryKw ?? 0, r.homeKw - r.sunKw);
+  const lacking = r.homeKw !== null && r.sunKw !== null ? r.homeKw - r.sunKw : null;
+  // A charge only from the sensor
+  if (homeFromInv && (noGrid || r.gridInverter === false) && lacking > THRESHOLD) {
+    batKw = Math.max(r.batteryKw ?? 0, lacking);
   }
   const discharging = flows(batKw) && batKw > 0;
   const charging = flows(batKw) && batKw < 0;
@@ -134,6 +136,12 @@ export function flowModel(r) {
     wires,
   };
 }
+
+// The wide scheme's values (14 of 900 units) are 11 px from a card this wide
+const WIDE_FROM_PX = 760;
+
+// The layout for a card's width; null while it is hidden (no width)
+export const layoutFor = (width) => (width ? (width < WIDE_FROM_PX ? "narrow" : "wide") : null);
 
 // The scheme of the mockup, and a narrower one for a phone whose captions sit
 // above and below the circles: node centres, the viewBox, where each caption goes

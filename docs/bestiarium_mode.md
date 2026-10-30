@@ -301,12 +301,12 @@ without the grid); a tap opens `navigation_path` when it is set.
 
 **Why in Mode.** The power modes are Mode's subject, and Mode is always set up
 in the home. `async_setup` (the integration's, not an entry's) serves
-`frontend/` as the static path `/bestiarium_mode/frontend` and adds
-`power-flow-card.js?v=<digest of both files>` to every page of HA
+`frontend/` as the static path `/bestiarium_mode/frontend/<digest of its
+files>` and adds its `power-flow-card.js` to every page of HA
 (`frontend.add_extra_js_url`), only when HA's frontend is loaded
 (`after_dependencies: ["frontend", "http"]`). An update of Bestiarium is a new
-URL; an update of HA does not touch the files. The files are served without a
-long cache: the card's import of the model has no version. Nothing to do but
+URL for the card and for the model it imports, so both are cached for long;
+an update of HA does not touch the files. Nothing to do but
 add the card to a dashboard (it is in the card picker). No HACS, no card-mod,
 no CDN: icons are HA's own `ha-icon`.
 
@@ -315,7 +315,8 @@ no CDN: icons are HA's own `ha-icon`.
 of `make test` and of CI). `power-flow-card.js` — the element: it builds the
 scheme once and on each state update only switches classes, a CSS speed and
 texts; the dots run by a CSS animation (`stroke-dashoffset`), no JS per
-frame. Below 560 px of card width it uses a narrower scheme (captions above
+frame. Below 760 px of card width (where the wide captions would be under
+11 px) it uses a narrower scheme (captions above
 and below the circles), so a phone reads them. Colours are the theme's
 variables (`--primary-color`, `--card-background-color`,
 `--primary-text-color`, `--secondary-text-color`, `--state-icon-color`,
