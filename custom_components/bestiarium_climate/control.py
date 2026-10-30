@@ -219,7 +219,8 @@ class ThermostatControl:
         self._sensor: str = subentry.data[CONF_TEMPERATURE_SENSOR]
         # The power the thermostat's form gives its heater, if any
         self.heater_power: float | None = subentry.data.get(CONF_HEATER_POWER)
-        # A universal thermostat's own power sensor; else its virtual switch's
+        # The thermostat's own power sensor (universal, air conditioner); else
+        # its virtual switch's
         self._power_entity: str | None = subentry.data.get(CONF_POWER_ENTITY)
         # In the manual mode: what the temperature asks, the last command sent
         # and the thermostat's minimum cycle (FR-028)
@@ -403,19 +404,24 @@ class ThermostatControl:
         return off + self._off_confirmation
 
     def _turned_off_at(self) -> datetime | None:
-        """Return when another turned the switch, wanted on, off after its last "on"."""
+        """
+        Return when another turned the switch, wanted on, off after its last "on".
+
+        An air conditioner wanted on with no "on" of its own since (a restart,
+        back from the manual mode running) is off by another from the moment
+        it was wanted on: its idle waits a whole step there too.
+        """
         state = self.source.state()
+        if not self.expected_on or state is None or state.on:
+            return None
         command = self._commands.latest()
-        if (
-            self.expected_on
-            and command is not None
-            and command.on
-            and state is not None
-            and not state.on
-            and state.changed_at > command.sent_at
-        ):
-            return state.changed_at
-        return None
+        if command is not None and command.on:
+            since = command.sent_at
+        elif self.source.idles:
+            since = self.expected_changed_at
+        else:
+            return None
+        return state.changed_at if state.changed_at > since else None
 
     @property
     def _off_confirmation(self) -> timedelta:
@@ -586,7 +592,11 @@ class ThermostatControl:
         it never shows is not sent every cycle. A switch has no setting.
         """
         wanted, shown = self.source.wanted(), self.source.setting()
-        if wanted is None or wanted.matches(shown) or self._repaired == (wanted, shown):
+        if wanted is None or wanted.matches(shown):
+            # Shown as wanted: the next change past it is repaired again
+            self._repaired = None
+            return False
+        if self._repaired == (wanted, shown):
             return False
         self._repaired = (wanted, shown)
         return True

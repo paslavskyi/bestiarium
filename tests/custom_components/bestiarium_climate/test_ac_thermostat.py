@@ -664,3 +664,24 @@ async def test_a_gone_socket_is_a_repairs_issue_of_the_ac_thermostat(
     issue = ir.async_get(hass).async_get_issue(DOMAIN, "socket_gone_ac_1")
     assert issue is not None
     assert issue.data == {"entry_id": units.entry.entry_id, "subentry_id": "ac_1"}
+
+
+async def test_an_idle_dip_after_a_restart_waits_a_step(units: Units) -> None:
+    """Restarted running, then below the threshold for 4 minutes: no frame."""
+    await units.setup()
+    await units.reload()
+    sent = len(units.calls)
+    await units.power("ac_1", 10)
+    await units.tick(4 * MINUTE)
+    assert len(units.calls) == sent
+    assert units.attributes("ac_1")["failed_attempts"] == 0
+
+
+async def test_the_same_override_twice_is_repaired_twice(units: Units) -> None:
+    """Cool 20 from a dashboard, repaired; the same again later: repaired again."""
+    await units.setup()
+    for _ in range(2):
+        await units.change_past_the_thermostat("ac_1", "cool", temperature=20)
+        await units.tick(MINUTE)
+        assert units.frames("ac_1")[-1] == HEAT_22
+    assert units.frames("ac_1").count(HEAT_22) == 3
