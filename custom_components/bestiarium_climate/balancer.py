@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from homeassistant.components.climate import (
     DATA_COMPONENT as CLIMATE_DATA_COMPONENT,
 )
-from homeassistant.components.climate import HVACAction, HVACMode
+from homeassistant.components.climate import HVACMode
 from homeassistant.config_entries import (
     SIGNAL_CONFIG_ENTRY_CHANGED,
     ConfigEntry,
@@ -590,9 +590,7 @@ class BalancingCoordinator:
             # Back to auto running, it goes on if it has a place (the owner,
             # DEV-011), else it is turned off stepwise
             if control.set_manual(
-                thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
-                if thermostat.manual
-                else None,
+                thermostat.wants_work if thermostat.manual else None,
                 now,
                 thermostat.min_cycle_duration,
             ) and sum(c.expected_on for c in self.controls.values()) < (
@@ -622,7 +620,7 @@ class BalancingCoordinator:
             and not self._left_alone(control)
             and not control.manual
             and control not in cut
-            and thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+            and thermostat.wants_work
         ]
         for control in self.controls.values():
             if not control.manual and not any(control is c for _, c in working):

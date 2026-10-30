@@ -298,13 +298,15 @@ class ThermostatControl:
         """
         Return the switch's state: its own, or read by its power sensor.
 
-        Read by power, it is gone while the switch or the power data is.
+        Read by power, it is gone while the switch is missing or unavailable,
+        or the power data is gone. An optimistic switch (a template switch
+        over scenes) is unknown until its first command: no reason to be gone.
         """
         state = self._hass.states.get(self.switch)
         reading = self._power_reading
-        if reading is None or _gone(state):
+        if reading is None:
             return state
-        if not reading.available:
+        if state is None or state.state == STATE_UNAVAILABLE or not reading.available:
             return None
         return State(
             self.switch,

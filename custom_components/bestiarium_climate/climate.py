@@ -228,6 +228,11 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         """Return whether a person runs it: the balancer leaves it alone."""
         return False
 
+    @property
+    def wants_work(self) -> bool:
+        """Return whether the temperature asks it to heat or cool."""
+        return self._attr_hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
+
     @callback
     def turn_off_by_zone(self) -> None:
         """Turn the thermostat off for the load zone; the cycle goes on."""

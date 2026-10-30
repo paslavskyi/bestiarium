@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 from homeassistant.config_entries import ConfigEntryDisabler
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
@@ -268,5 +268,30 @@ async def test_power_gone_over_a_reload_is_switch_unavailable(
     floors.hass.states.async_set("sensor.floor_1_power", STATE_UNAVAILABLE)
     await hass.config_entries.async_reload(floors.entry.entry_id)
     await hass.async_block_till_done()
+    await floors.tick(3 * MINUTE)
+    assert floors.state("floor_1") == "switch_unavailable"
+
+
+async def test_an_optimistic_switch_unknown_is_read_by_power(floors: Floors) -> None:
+    """R1: a template switch unknown until its first command: power alone counts."""
+    await _running(floors)
+    await _temperatures(floors, floor_1="22")
+    await floors.tick(MINUTE)
+    floors.hass.states.async_set("switch.floor_1", STATE_UNKNOWN)
+    await _power(floors, "5", after=3 * MINUTE)
+    assert floors.state("floor_1") == "normal"
+    assert _reading(floors, "floor_1") is Reading.OFF
+    floors.calls.clear()
+    await _temperatures(floors, floor_1="18")
+    await floors.tick(5 * MINUTE)
+    assert ("turn_on", "floor_1") in floors.calls
+    await _power(floors, "1200")
+    assert _reading(floors, "floor_1") is Reading.ON
+
+
+async def test_a_switch_unavailable_is_gone_even_with_power(floors: Floors) -> None:
+    """The switch's entity unavailable: "Switch unavailable", whatever the power."""
+    await _running(floors)
+    floors.hass.states.async_set("switch.floor_1", STATE_UNAVAILABLE)
     await floors.tick(3 * MINUTE)
     assert floors.state("floor_1") == "switch_unavailable"
