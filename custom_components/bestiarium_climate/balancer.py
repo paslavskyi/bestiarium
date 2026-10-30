@@ -586,14 +586,19 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
-            # The manual mode: by the temperature alone, outside the capacity
-            control.set_manual(
+            # The manual mode: by the temperature alone, outside the capacity.
+            # Back to auto running, it goes on if it has a place (the owner,
+            # DEV-011), else it is turned off stepwise
+            if control.set_manual(
                 thermostat.hvac_action in (HVACAction.HEATING, HVACAction.COOLING)
                 if thermostat.manual
                 else None,
                 now,
                 thermostat.min_cycle_duration,
-            )
+            ) and sum(c.expected_on for c in self.controls.values()) < (
+                self._capacity()
+            ):
+                control.keep_running(now)
         for subentry_id, control in self.controls.items():
             control.defer_if_exhausted(now)
             # Decide again the moment an "off" by another is confirmed

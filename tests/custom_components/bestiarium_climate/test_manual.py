@@ -287,3 +287,29 @@ def test_manual_event_payload_is_typed() -> None:
         "cause",
     }
     assert {cause.value for cause in ManualCause} == {"zone_entered", "turned_on"}
+
+
+async def test_manual_to_auto_near_the_red_threshold_keeps_running(
+    floors: Floors,
+) -> None:
+    """Green near red: its own power is in the load already, it is no new start."""
+    await _manual(floors, capacity=3, zones=True, heater_power=2000)
+    await _manual_heats(floors)
+    floors.load(3000)
+    await floors.tick(MINUTE)
+    await _hvac(floors, "floor_1", "auto")
+    await floors.tick(MINUTE)
+    assert ("turn_off", "floor_1") not in floors.calls
+    assert "floor_1" in floors.on()
+
+
+async def test_manual_to_auto_in_yellow_keeps_running(floors: Floors) -> None:
+    """Yellow starts nothing, but a running switch with a place goes on."""
+    await _manual(floors, capacity=3, zones=True)
+    await _manual_heats(floors)
+    floors.zone("yellow")
+    await floors.tick(MINUTE)
+    await _hvac(floors, "floor_1", "auto")
+    await floors.tick(MINUTE)
+    assert ("turn_off", "floor_1") not in floors.calls
+    assert "floor_1" in floors.on()

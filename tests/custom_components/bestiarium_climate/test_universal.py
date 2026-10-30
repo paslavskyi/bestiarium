@@ -258,3 +258,15 @@ async def test_off_by_another_read_from_power(floors: Floors) -> None:
     assert attributes["failed_attempts"] == 0
     assert attributes["pause_until"] is not None
     assert floors.state("floor_1") == "normal"
+
+
+async def test_power_gone_over_a_reload_is_switch_unavailable(
+    hass: HomeAssistant, floors: Floors
+) -> None:
+    """Reloaded while its power sensor is unavailable: "Switch unavailable"."""
+    await _running(floors)
+    floors.hass.states.async_set("sensor.floor_1_power", STATE_UNAVAILABLE)
+    await hass.config_entries.async_reload(floors.entry.entry_id)
+    await hass.async_block_till_done()
+    await floors.tick(3 * MINUTE)
+    assert floors.state("floor_1") == "switch_unavailable"

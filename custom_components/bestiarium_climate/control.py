@@ -276,13 +276,14 @@ class ThermostatControl:
         self._unsubscribe = [
             async_track_state_change_event(
                 self._hass, [self.switch, self._sensor], self._on_state
-            ),
-            async_at_started(self._hass, self._on_started),
+            )
         ]
+        # Read by power before HA's start is seen: on a reload it is at once
         if (reading := self._power_reading) is not None:
             reading.start()
             self._unsubscribe.append(reading.stop)
             self._power_was_on = reading.available and reading.is_on
+        self._unsubscribe.append(async_at_started(self._hass, self._on_started))
 
     @callback
     def async_stop(self) -> None:
@@ -482,29 +483,35 @@ class ThermostatControl:
         demand: bool | None,  # noqa: FBT001
         now: datetime,
         min_cycle: timedelta,
-    ) -> None:
+    ) -> bool:
         """
         Set what the manual mode asks for (None: not manual).
 
         Entering it, the switch is the person's: the balancer wants nothing
         of it and its stepwise "off" ends; the switch as it reads counts as
-        the last command. Leaving it with the switch on, no pause waits. A
-        cycle of the manual mode lasts at least the thermostat's own minimum
-        cycle duration.
+        the last command. A cycle of the manual mode lasts at least the
+        thermostat's own minimum cycle duration. Return whether it left the
+        manual mode with its switch running: the balancer keeps it running
+        if it has a place (keep_running).
         """
+        left_running = False
         if (demand is None) != (self._manual is None):
             running = self.reading(now) is Reading.ON
             self._manual_sent = running if demand is not None else None
             if demand is not None:
                 self.expected_on, self.expected_changed_at = False, now
                 self._stepwise = StepwiseOff()
-            elif running:
-                # Back to auto running: it never stopped, so no pause; it
-                # keeps running if it gets a place, else goes off stepwise
-                self.off_at = None
+            left_running = demand is None and running
             self._keep()
             self._refresh(now)
         self._manual, self._manual_cycle = demand, min_cycle
+        return left_running
+
+    def keep_running(self, now: datetime) -> None:
+        """Take the switch left running by the manual mode as running: no start."""
+        self.expected_on, self.expected_changed_at = True, now
+        self._keep()
+        self._refresh(now)
 
     def _manual_command(self, now: datetime) -> bool | None:
         """
