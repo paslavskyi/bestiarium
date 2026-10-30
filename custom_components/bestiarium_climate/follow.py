@@ -17,6 +17,7 @@ from homeassistant.core import callback
 from homeassistant.helpers.event import async_track_entity_registry_updated_event
 
 from .const import (
+    CONF_AIR_CONDITIONER,
     CONF_POWER_ENTITY,
     CONF_POWER_SOCKET,
     CONF_TARGET_SWITCH,
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 # The fields of the subentries that name an entity
 FOLLOWED = (
     CONF_TARGET_SWITCH,
+    CONF_AIR_CONDITIONER,
     CONF_TEMPERATURE_SENSOR,
     CONF_POWER_ENTITY,
     CONF_POWER_SOCKET,

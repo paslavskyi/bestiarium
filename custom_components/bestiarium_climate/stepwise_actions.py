@@ -126,16 +126,21 @@ class StepwiseActions:
             return
         self._gone_sockets = gone
         for control in controls:
-            if (found := virtual_switch(self._hass, control.switch)) is None:
+            # The socket of an air conditioner thermostat is in its own form
+            if (subentry_id := control.socket_subentry_id) is not None:
+                entry_id, title = control.entry_id, control.name
+            elif (found := virtual_switch(self._hass, control.switch)) is not None:
+                entry_id, subentry_id = found[0].entry_id, found[1].subentry_id
+                title = found[1].title
+            else:
                 continue
-            entry, subentry = found
             set_issue(
                 self._hass,
-                f"{ISSUE_SOCKET_GONE}_{subentry.subentry_id}",
+                f"{ISSUE_SOCKET_GONE}_{subentry_id}",
                 ISSUE_SOCKET_GONE,
                 control.socket in gone,
-                placeholders={"switch": subentry.title, "socket": control.socket or ""},
-                data={"entry_id": entry.entry_id, "subentry_id": subentry.subentry_id},
+                placeholders={"switch": title, "socket": control.socket or ""},
+                data={"entry_id": entry_id, "subentry_id": subentry_id},
             )
 
     def _thermostat_id(self, control: ThermostatControl) -> str | None:

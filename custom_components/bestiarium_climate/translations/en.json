@@ -63,6 +63,15 @@
           }
         }
       }
+    },
+    "select": {
+      "auto_mode": {
+        "name": "Auto mode",
+        "state": {
+          "heating": "Heat",
+          "cooling": "Cool"
+        }
+      }
     }
   },
   "config_subentries": {
@@ -263,6 +272,83 @@
         "switch_has_no_action": "This virtual switch has no action for this mode",
         "switch_taken": "Another thermostat already controls this switch: one switch, one thermostat",
         "switch_is_device": "This switch is the relay of the Bestiarium device {device}: one relay lives in one integration"
+      },
+      "abort": {
+        "reconfigure_successful": "Reconfiguration successful"
+      }
+    },
+    "ac_thermostat": {
+      "entry_type": "Air conditioner thermostat",
+      "initiate_flow": {
+        "user": "Add air conditioner thermostat",
+        "reconfigure": "Reconfigure air conditioner thermostat"
+      },
+      "step": {
+        "basic": {
+          "title": "Thermostat Settings",
+          "description": "Any air conditioner of HA (its climate entity) and the room's temperature sensor. Auto: the balancer shares the capacity and the thermostat sets the air conditioner to heat or cool (its entity \"Auto mode\"); heat, cool, dry, fan only: the air conditioner runs by itself, outside the capacity, until the red zone.",
+          "data": {
+            "name": "Name",
+            "temperature_sensor": "Temperature sensor",
+            "air_conditioner": "Air conditioner",
+            "setpoint_margin": "Setpoint margin (°C)",
+            "cold_tolerance": "Cold tolerance (°C)",
+            "hot_tolerance": "Hot tolerance (°C)",
+            "min_cycle_duration": "Minimum cycle duration",
+            "min_temp": "Minimum temperature",
+            "max_temp": "Maximum temperature",
+            "heater_power": "Heater power"
+          },
+          "data_description": {
+            "name": "Friendly name for this thermostat",
+            "temperature_sensor": "Sensor that provides current temperature",
+            "air_conditioner": "The climate entity of the air conditioner (an IR one of Bestiarium IR, or any other); not a thermostat of Bestiarium Climate",
+            "setpoint_margin": "In auto the air conditioner heats to the target plus this, cools to the target minus this (its own sensor reads warmer near it). The manual modes send the target as it is",
+            "cold_tolerance": "Temperature band below target before turning on",
+            "hot_tolerance": "Temperature band above target before turning off",
+            "min_cycle_duration": "Minimum time between on/off cycles (optional)",
+            "min_temp": "Minimum set temperature (optional)",
+            "max_temp": "Maximum set temperature (optional)",
+            "heater_power": "Used to check that a start fits under the red zone. Empty: the expected power of the Bestiarium device of this switch, else 2000 W"
+          }
+        },
+        "power": {
+          "title": "Power",
+          "description": "Whether the air conditioner runs is read from its power: a start is confirmed by it. Set the minimum power between what the unit draws when off and its lowest idle at the setpoint (see the sensor's history).",
+          "data": {
+            "power_entity": "Power sensor",
+            "min_power": "Minimum power (W) to treat device as on",
+            "power_tolerance_seconds": "Power tolerance (s)",
+            "power_hysteresis_percent": "Hysteresis (%)",
+            "power_delay_seconds": "Delay (s)",
+            "power_socket": "Power socket"
+          },
+          "data_description": {
+            "power_entity": "Sensor that measures the air conditioner's power (W)",
+            "min_power": "At or above this power the switch is on",
+            "power_tolerance_seconds": "No power data is shown (the switch unavailable) only after this long",
+            "power_hysteresis_percent": "On goes to off only below the minimum power minus this share of it",
+            "power_delay_seconds": "A change of the state (and no power data) is shown only after it has lasted this long",
+            "power_socket": "Optional. Cut when the air conditioner does not turn off after the attempts; never turned back on by the thermostat"
+          }
+        },
+        "presets": {
+          "title": "Preset Temperatures",
+          "description": "Optional preset target temperatures.",
+          "data": {
+            "away_temp": "Away temperature",
+            "comfort_temp": "Comfort temperature",
+            "eco_temp": "Eco temperature",
+            "home_temp": "Home temperature",
+            "sleep_temp": "Sleep temperature",
+            "activity_temp": "Activity temperature"
+          }
+        }
+      },
+      "error": {
+        "name_required": "Name is required",
+        "required": "This field is required",
+        "ac_taken": "Another thermostat already controls this air conditioner: one air conditioner, one thermostat"
       },
       "abort": {
         "reconfigure_successful": "Reconfiguration successful"

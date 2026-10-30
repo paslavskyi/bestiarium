@@ -62,8 +62,10 @@ async def setup_stand(url: str, token: str) -> None:
             await remove_stand_climate(ha)
             await recreate_devices(ha, reg)
             reg = await registry(ha)  # with the devices' "Allowed" switches
-            await recreate_climate(ha, reg)
+            # The air conditioner thermostat needs its Hisense first
             await recreate_ir(ha, reg)
+            reg = await registry(ha)
+            await recreate_climate(ha, reg)
             reg = await registry(ha)
             await write_dashboard(ha, reg, await write_scripts(ha, reg))
             await check_zones(ha, reg)

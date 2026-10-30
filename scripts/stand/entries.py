@@ -10,6 +10,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from .layout import (
+    AC_THERMOSTAT,
     CLIMATE,
     CLOUD_AC,
     CLOUD_AC_SWITCH,
@@ -320,6 +321,33 @@ async def recreate_climate(ha: HomeAssistant, reg: Registry) -> None:
             {},
         )
         print(f"  added {CLIMATE} universal thermostat: {name} on {switch}")
+    # The air conditioner thermostat (DEV-013) on the second Hisense, read
+    # by its socket's power; its socket the "Allowed" of that socket's device
+    name, thermometer, hisense, socket = AC_THERMOSTAT
+    air_conditioner = reg.ir_entity(hisense, "climate")
+    await ha.flow(
+        "subentries/flow",
+        [entry_id, "ac_thermostat"],
+        {
+            "name": name,
+            "temperature_sensor": reg.mock("sensor", f"mock_{thermometer}_temperature"),
+            "air_conditioner": air_conditioner,
+            "setpoint_margin": 1,
+            "cold_tolerance": 0.3,
+            "hot_tolerance": 0.3,
+            "min_cycle_duration": {"hours": 0, "minutes": 1, "seconds": 0},
+        },
+        {
+            "power_entity": reg.mock("sensor", f"mock_{socket}_power"),
+            "min_power": 20,
+            "power_tolerance_seconds": 60,
+            "power_hysteresis_percent": 20,
+            "power_delay_seconds": 10,
+            "power_socket": reg.control(reg.mock_device(socket)["id"], "allowed"),
+        },
+        {},
+    )
+    print(f"  added {CLIMATE} air conditioner thermostat: {name} on {air_conditioner}")
 
 
 async def recreate_cloud_ac_switch(ha: HomeAssistant) -> str:

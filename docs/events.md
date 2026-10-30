@@ -246,6 +246,8 @@ trigger:
 
 All events are fired from `custom_components/bestiarium_climate/balancer.py`: the rotation events only in a deficit of capacity, when a thermostat goes in or out of the rotation; the stepwise "off" events when a device goes on running while its thermostat wants it off (DEV-010).
 
+For an air conditioner thermostat (DEV-013) `switch_entity_id` is its air conditioner's `climate` entity; it has no events of its own.
+
 Removed in DEV-008 stage B ([necessity](concepts/necessity.md)): `bestiarium_climate_switch_failed` and `_switch_recovered` (the thermostat's "Control state" sensor tells it), `bestiarium_climate_capacity_exhausted` (fired every minute of a deficit, which is the normal state).
 
 ### `bestiarium_climate_device_rotated_in`

@@ -30,7 +30,8 @@ custom_components/bestiarium_mock/
 ├── __init__.py          # Entry setup/unload, migration 1 → 2
 ├── const.py             # Device set, fault profiles and parameters, grid constants
 ├── faults.py            # MockSocket — physical and reported state, the fault model
-├── ir_ac.py             # MockIrAc — the stand's Hisense: hears its emitter, draws by its state
+├── ir_ac.py             # MockIrAc — the stand's Hisense: hears its emitter, draws by its state, warms its room
+├── button.py            # "Remote: off" of each IR air conditioner (DEV-013)
 ├── infrared.py          # MockIrEmitter — the emitter of the IR air conditioner
 ├── coordinator.py       # MockDevicesCoordinator — sockets, thermometers, grid
 ├── entity.py            # MockSocketEntity, MockIrAcEntity — entities follow their device
@@ -80,7 +81,8 @@ Device names are translated (`device` in the translations, `translation_key`
 | `heater` | Mock Heater | 1500 W | Reliable | no Bestiarium device: the switch of the universal thermostat "Stand heater" (DEV-011), read by its power |
 | `ac_1..4` | Mock AC 1–4 Power | 5–1200 W | Reliable | the power of an air conditioner: an "always on" device in the first queue; the stand's IR scripts set 1200 W (running) or 5 W (standby); the AC's virtual switch of Bestiarium Climate reads this socket's power. its knob "IR lost" (`switch.mock_ac_N_ir_lost`, config) is an IR that does not reach the AC, the socket still working; its knob "IR hangs" (`switch.mock_ac_N_ir_hangs`, config) is an IR "on" that never ends while the knob is on (review 22, D3); the fault profile is the socket's (the power relay's) own (review 20, C7). `ac_4` is the cloud air conditioner of the universal thermostat "Stand cloud AC" (DEV-011): its template switch runs `ac_4`'s IR scripts as the home's Tuya scenes |
 | `hisense_power` | Mock Hisense Power | 5–1200 W | Reliable | the power of the stand's Hisense (DEV-012): what it draws is set by the air conditioner `hisense` by its state; an "always on" device in the first queue, as `ac_1..4` |
-| `thermo_1..5` | Mock Thermometer 1–5 | — | — | thermostat inputs |
+| `hisense_2_power` | Mock Hisense 2 Power | 5–1200 W | Reliable | the power of the second Hisense (DEV-013), the air conditioner thermostat's; as `hisense_power` |
+| `thermo_1..6` | Mock Thermometer 1–6 | — | — | thermostat inputs; `thermo_6` is the room of `hisense_2`, which warms or cools it |
 
 ---
 
@@ -147,10 +149,11 @@ profile" (`mock_<id>_reading_profile`, `config`).
 Grid: `sensor` "Grid Power" (`mock_grid_power`) and `select` "Fault profile"
 (`mock_grid_reading_profile`, `config`).
 
-### The IR air conditioner (DEV-012)
+### The IR air conditioners (DEV-012, DEV-013)
 
 The device `mock_hisense` ("Mock Hisense", model "Mock IR Air Conditioner") is
-a Hisense behind the socket `hisense_power`. It hears its emitter and
+a Hisense behind the socket `hisense_power`; `mock_hisense_2` ("Mock Hisense
+2") the same behind `hisense_2_power`, with a room. Each hears its emitter and
 recognises each frame with `bestiarium_ir/kelon168.py`, as the real unit:
 
 - a frame sets the whole state (mode, target, fan, on/off);
@@ -160,7 +163,13 @@ recognises each frame with `bestiarium_ir/kelon168.py`, as the real unit:
 - the socket cut: the unit is off and hears nothing; the power back: still off.
 
 It draws by its state: heat, cool, auto 1200 W, dry 300 W, fan only 40 W,
-off 5 W (idling at the target and a room that reacts are stage 4).
+off 5 W.
+
+**Its room** (DEV-013; `hisense_2` and `thermo_6`): every 10 s, heating or
+cooling, it moves the room 0.1 °C (0.6 °C a minute) until its own sensor —
+the room plus the knob "Sensor offset" — reaches its setpoint; then it
+**idles** at 40 W and the room stays. The room's temperature is set as by
+a tester (its number), so a scenario may set it too. `hisense` has no room.
 
 | Entity | Unique ID | Category | Notes |
 |---|---|---|---|
@@ -169,6 +178,10 @@ off 5 W (idling at the target and a room that reacts are stage 4).
 | `sensor` "Last frame" | `mock_hisense_last_frame` | diagnostic | carried out, only lit the display, off ignored, not recognised; attributes `action` (the button), `power`, `mode`, `temperature`, `fan` |
 | `switch` "IR lost" | `mock_hisense_ir_lost` | config | no frame reaches the unit |
 | `switch` "Ignores off" | `mock_hisense_ignores_off` | config | the unit runs on after "off" |
+| `number` "Sensor offset" | `mock_hisense_sensor_offset` | config | −5…5 °C, default 0: how much warmer than the room its own sensor reads (it idles sooner); restored |
+| `button` "Remote: off" | `mock_hisense_remote_off` | config | the unit turned off with its remote: no frame, HA's assumed state stays as it was (scenario 8) |
+
+The entities of `mock_hisense_2` are the same, `mock_hisense_2_…`.
 
 
 The reading profiles of the thermometers and the grid (`readings.py`,
@@ -259,16 +272,23 @@ the script fails if HA did not load them.
    the template switch "Stand cloud AC switch" made by the template
    helper's own form, whose actions are the IR scripts of `ac_4`, as the
    home's switches over Tuya scenes; made again on each run).
-   Then the stand's Hisense (DEV-012): Bestiarium IR is added if missing, and
-   its subentry "Stand Hisense" made again on the emitter
-   `infrared.mock_hisense_emitter`; the other subentries of Bestiarium IR are
-   kept.
+   The stand's Hisense units (DEV-012, DEV-013) come **before** the climate
+   entry (its air conditioner thermostat needs one): Bestiarium IR is added
+   if missing, and its subentries "Stand Hisense" and "Stand Hisense 2" made
+   again on the emitters `infrared.mock_hisense_emitter` and
+   `infrared.mock_hisense_2_emitter`; the other subentries of Bestiarium IR
+   are kept. Since DEV-013 the climate entry has the air conditioner
+   thermostat "Stand AC thermostat" on "Stand Hisense 2": thermometer 6,
+   margin +1 °C, the same minimum cycle, read by the power of
+   `hisense_2_power` (20 W), its socket the "Allowed" of that socket's
+   device. "Stand Hisense" stays driven by hand (scenarios 5, 6): under a
+   thermostat in "off" it would be turned off as working against it.
 
 4. Writes the scenario scripts `script.bestiarium_stand_*`:
 
    | Script | What it sets up |
    |---|---|
-   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway); the stand's loads allowed again (explicitly: a restart of HA in between changes nothing), the air conditioners' power sockets ("Allowed") on again, the three rooms at 20 °C; the Hisense off, then its display on (assumed only, no frame) and its knobs off |
+   | `reset` | every profile Reliable (sockets, thermometers, grid), thermostats off, mode "Grid on", cooker at 400 W; every socket off except the "always on" cooker and fridge, which stay on (the balancer would turn them on first anyway); the stand's loads allowed again (explicitly: a restart of HA in between changes nothing), the air conditioners' power sockets ("Allowed", the AC thermostat's too) on again, the rooms at 20 °C; each Hisense off, then its display on (assumed only, no frame) and its knobs off; "Auto mode" "Heat", "Sensor offset" 0 |
    | `night_case` | reset; the commode socket "Stuck state" and switched on (HA still shows off); green zone |
    | `red_zone_dead_socket` | reset; dead socket, night light and slow cloud socket on; then the dead socket stops answering, the cooker at 3100 W pushes the grid into the red zone |
    | `slow_cloud` | reset; commode, bedside and boiler on; the slow cloud socket off with profile "Slow cloud"; green zone |
@@ -295,11 +315,20 @@ the script fails if HA did not load them.
    | `climate_coexistence` | scenario 9: reset; the stand's loads not allowed; AC 1 and AC 2 (virtual thermostats) and "Stand heater" (auto) want heat, capacity 2: two run; after the minimum cycle the rotation lets the waiting one in |
    | `hisense_manual_modes` | scenario 5 (DEV-012): reset; the Hisense heats to 24 °C, 10 s later cools to 22 °C, then dry, fan only, the fan speed high, off: each a frame of its own (one in the emitter's logbook) and its power (1200, 1200, 300, 40, 40, 5 W) |
    | `hisense_display` | scenario 6 (DEV-012): reset; heat 24 °C; the display off (one display frame); the target 26 °C: two frames 3 s apart, the first only lights the display ("Last frame": only lit the display, then carried out); off: one frame |
+   | `ac_auto` | scenario 3 (DEV-013): reset; room 6 at 18 °C, target 21, "Stand AC thermostat" in auto: one frame "heat 22 °C" (the margin), 1200 W, "Normal"; the room rises 0.6 °C a minute; at about 20.7 °C a frame "off", 5 W |
+   | `ac_idle` | scenario 3: reset; "Sensor offset" 2; the same start; at a room of 20 °C the unit idles (40 W), the room stays; for 3 minutes the thermostat still heats, no frame, "Normal"; then the room at 21 °C: a frame "off" |
+   | `ac_auto_cool` | scenario 4: reset; "Auto mode" "Cool"; room 26 °C, target 23, auto: a frame "cool 22 °C", the room falls; at about 23.3 °C "off" |
+   | `ac_stepwise` | scenario 7: reset; auto, running; the knob "Ignores off"; the room at 23 °C: "off" three times a minute apart (ignored, the unit runs or idles), "Does not turn off", the event "out of control", then the socket cut (0 W) and the event "power cut" |
+   | `ac_off_against` | scenario 7: reset (the thermostat off); "Stand Hisense 2" set to heat 24 °C from its own card: it runs against the thermostat, which sends "off" at once |
+   | `ac_remote` | scenario 8: reset; auto, running; "Remote: off": HA still shows heat (assumed), 5 W; a step later off by another, after the pause a new frame "heat 22 °C"; then "Stand Hisense 2" set to cool 20 °C from its card: within a cycle "heat 22 °C" again |
+   | `ac_manual_alone` | scenario 8: reset; the thermostat in "heat" (manual): one frame "heat 21 °C"; "Stand Hisense 2" set to cool from its card: the thermostat leaves it alone |
    | `cloud_ac_universal` | scenario 10: reset; "Stand cloud AC" in auto, its room at 18 °C: the template switch runs the IR script, 1200 W, it runs by its power; the room at 25 °C: off (5 W); cold again and running, its IR lost and the room warm: "off" three times a minute apart, "Does not turn off", the event "out of control" — no socket is cut (it has none) |
 
 5. Writes the dashboard "Стенд Bestiarium" (`/bestiarium-stand`): grid, mode
-   and zones; a section of the Hisense (its climate, display, state, last
-   frame, emitter and power); the scenario buttons; a section per socket
+   and zones; a section "Термостат кондиціонера" (the thermostat, "Auto mode",
+   its control state, room 6, the power, the knobs "Ignores off", "IR lost",
+   "Sensor offset", "Remote: off"); a section per Hisense (its climate,
+   display, state, last frame, emitter and power); the scenario buttons; a section per socket
    (switch, power, profile, control state; the heading and the switch tile
    open the device page with its knobs; the free Matter socket has no control
    state); a logbook of the sockets, zones, mode and the Hisense's frames.

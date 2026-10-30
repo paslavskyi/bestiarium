@@ -77,6 +77,8 @@ STAND_DEVICES = (
     ),
     # The power of the stand's Hisense (DEV-012), as of the other ACs
     StandDevice("hisense_power", LOAD_PRIORITY_ALWAYS_ON, first_queue=True),
+    # The power of the second Hisense, the air conditioner thermostat's (DEV-013)
+    StandDevice("hisense_2_power", LOAD_PRIORITY_ALWAYS_ON, first_queue=True),
 )
 # One relay lives in one integration (review 18): the floors are only
 # devices; the climate thermostats run air conditioners through virtual
@@ -98,8 +100,17 @@ UNIVERSAL_THERMOSTATS = (
 )
 HEATER_W = 1500
 # The Hisense air conditioners of Bestiarium IR (DEV-012): name, mock id; each
-# on its mock emitter
-STAND_HISENSE = (("Stand Hisense", "hisense"),)
+# on its mock emitter. The first is driven by hand (scenarios 5, 6); the
+# second by the air conditioner thermostat (DEV-013), its room following it
+STAND_HISENSE = (("Stand Hisense", "hisense"), ("Stand Hisense 2", "hisense_2"))
+# The air conditioner thermostat (DEV-013): name, thermometer, its air
+# conditioner (a Hisense above), the socket whose power it reads
+AC_THERMOSTAT = (
+    "Stand AC thermostat",
+    "thermo_6",
+    "Stand Hisense 2",
+    "hisense_2_power",
+)
 # The thermostats of the stand before review 18, on the floors
 RETIRED_THERMOSTATS = frozenset({"Stand floor 1", "Stand floor 2", "Stand floor 3"})
 AC_RUNNING_W = 1200

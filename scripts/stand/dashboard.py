@@ -13,6 +13,7 @@ from custom_components.bestiarium_mock.const import MOCK_DEVICES
 
 from .ha import StandError
 from .layout import (
+    AC_THERMOSTAT,
     DASHBOARD,
     MODE,
     STAND_DEVICES,
@@ -44,10 +45,16 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
         (reg.thermostat(name), reg.control_state(name), thermometer, socket)
         for name, thermometer, socket in UNIVERSAL_THERMOSTATS
     ]
+    ac_name, ac_thermometer, ac_hisense, ac_socket = AC_THERMOSTAT
+    ac_mock = dict(STAND_HISENSE)[ac_hisense]
+    ac = (reg.thermostat(ac_name), reg.control_state(ac_name))
     new = {
-        entity
-        for thermostat, control, _, _ in universal
-        for entity in (thermostat, control)
+        *ac,
+        *(
+            entity
+            for thermostat, control, _, _ in universal
+            for entity in (thermostat, control)
+        ),
     }
     thermostats = [
         (thermostat, reg.mock("sensor", f"mock_{thermometer}_temperature"), thermometer)
@@ -110,6 +117,30 @@ def _dashboard(reg: Registry, scripts: list[str]) -> dict[str, Any]:
                         _tile(control),
                         _tile(reg.mock("sensor", f"mock_{thermometer}_temperature")),
                         _tile(reg.mock("sensor", f"mock_{socket}_power")),
+                    )
+                ),
+            ],
+        },
+        {
+            "type": "grid",
+            "cards": [
+                {"type": "heading", "heading": "Термостат кондиціонера"},
+                _tile(ac[0], features=[{"type": "climate-hvac-modes"}]),
+                *(
+                    _tile(e["entity_id"], features=[{"type": "select-options"}])
+                    for e in climate
+                    if e["entity_id"].startswith("select.")
+                ),
+                _tile(ac[1]),
+                _tile(reg.mock("sensor", f"mock_{ac_thermometer}_temperature")),
+                _tile(reg.mock("sensor", f"mock_{ac_socket}_power")),
+                *(
+                    _tile(reg.mock(domain, f"mock_{ac_mock}_{key}"))
+                    for domain, key in (
+                        ("switch", "ignores_off"),
+                        ("switch", "ir_lost"),
+                        ("number", "sensor_offset"),
+                        ("button", "remote_off"),
                     )
                 ),
             ],

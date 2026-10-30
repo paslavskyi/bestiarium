@@ -13,6 +13,7 @@ from .const import (
     GRID_RANDOM_MAX_W,
     GRID_RANDOM_MIN_W,
     GRID_UPDATE_INTERVAL_SECONDS,
+    IR_AC_ROOM_INTERVAL_SECONDS,
     LOGGER,
     MOCK_DEVICES,
     MOCK_GRID,
@@ -72,6 +73,7 @@ class MockDevicesCoordinator:
         # Grid state
         self._grid_random_power: float = 0
         self._unsub_timer: callable | None = None
+        self._unsub_rooms: callable | None = None
 
     def register_grid_power_sensor(self, sensor: MockGridPowerSensor) -> None:
         """Register the grid power sensor."""
@@ -106,6 +108,11 @@ class MockDevicesCoordinator:
             self._async_update_grid_periodic,
             timedelta(seconds=GRID_UPDATE_INTERVAL_SECONDS),
         )
+        self._unsub_rooms = async_track_time_interval(
+            self.hass,
+            self._async_follow_rooms,
+            timedelta(seconds=IR_AC_ROOM_INTERVAL_SECONDS),
+        )
 
     async def async_stop(self) -> None:
         """Stop the coordinator."""
@@ -118,9 +125,10 @@ class MockDevicesCoordinator:
             reading.stop()
         for unsub in self._unsub_sockets:
             unsub()
-        if self._unsub_timer:
-            self._unsub_timer()
-            self._unsub_timer = None
+        for unsub in (self._unsub_timer, self._unsub_rooms):
+            if unsub:
+                unsub()
+        self._unsub_timer = self._unsub_rooms = None
 
     @callback
     def notify_temperature_number_changed(self, device_id: str) -> None:
@@ -143,6 +151,17 @@ class MockDevicesCoordinator:
         """Update all thermometers."""
         for thermo_spec in MOCK_THERMOMETERS:
             self._update_thermometer(thermo_spec.device_id)
+
+    @callback
+    def _async_follow_rooms(self, _now: datetime) -> None:
+        """Let each air conditioner with a room warm or cool it a step."""
+        for ac in self.ir_acs.values():
+            if (room := ac.spec.room) is None:
+                continue
+            number = self._temperature_numbers[room]
+            temperature = float(number.native_value)
+            if (moved := ac.follow_room(temperature)) != temperature:
+                number.set_temperature(moved)
 
     @callback
     def _update_grid(self) -> None:

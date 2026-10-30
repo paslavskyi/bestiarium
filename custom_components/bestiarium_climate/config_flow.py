@@ -25,6 +25,7 @@ from .const import (
     CAPACITY_MAX,
     CAPACITY_MIN,
     CAPACITY_STEP,
+    CONF_AIR_CONDITIONER,
     CONF_CAPACITY,
     CONF_COLD_TOLERANCE,
     CONF_COOLING_ACTION,
@@ -44,6 +45,7 @@ from .const import (
     CONF_POWER_TOLERANCE,
     CONF_PRESETS,
     CONF_RECOVERY_TIMEOUT,
+    CONF_SETPOINT_MARGIN,
     CONF_SWITCH_NAME,
     CONF_TARGET_SWITCH,
     CONF_TEMPERATURE_SENSOR,
@@ -53,14 +55,17 @@ from .const import (
     DEFAULT_POWER_DELAY_SECONDS,
     DEFAULT_POWER_HYSTERESIS_PERCENT,
     DEFAULT_POWER_TOLERANCE_SECONDS,
+    DEFAULT_SETPOINT_MARGIN,
     DEFAULT_TOLERANCE,
     DEFAULT_UNIVERSAL_MIN_POWER,
     DEVICE_CLASS_POWER,
     DEVICE_CLASS_TEMPERATURE,
     DOMAIN,
+    DOMAIN_CLIMATE,
     DOMAIN_SENSOR,
     DOMAIN_SWITCH,
     PRESET_KEYS,
+    SUBENTRY_TYPE_AC,
     SUBENTRY_TYPE_SWITCH,
     SUBENTRY_TYPE_THERMOSTAT,
     SUBENTRY_TYPE_UNIVERSAL,
@@ -371,6 +376,7 @@ class BestiariumClimateFlowHandler(ConfigFlow, domain=DOMAIN):
             SUBENTRY_TYPE_SWITCH: SwitchSubentryFlowHandler,
             SUBENTRY_TYPE_THERMOSTAT: ThermostatSubentryFlowHandler,
             SUBENTRY_TYPE_UNIVERSAL: UniversalThermostatSubentryFlowHandler,
+            SUBENTRY_TYPE_AC: AirConditionerThermostatSubentryFlowHandler,
         }
 
 
@@ -543,10 +549,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                 errors[CONF_THERMOSTAT_NAME] = "name_required"
             if not user_input.get(CONF_TEMPERATURE_SENSOR):
                 errors[CONF_TEMPERATURE_SENSOR] = "required"
-            if not user_input.get(CONF_TARGET_SWITCH):
-                errors[CONF_TARGET_SWITCH] = "required"
-            else:
-                errors.update(self._switch_errors(user_input))
+            errors.update(self._device_errors(user_input))
 
             if not errors:
                 # An optional field cleared in the form goes
@@ -560,14 +563,6 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
         )
         temp_sensor_default = self._options.get(CONF_TEMPERATURE_SENSOR) or (
             subentry.data.get(CONF_TEMPERATURE_SENSOR) if subentry else None
-        )
-        target_switch_default = self._options.get(CONF_TARGET_SWITCH) or (
-            subentry.data.get(CONF_TARGET_SWITCH) if subentry else None
-        )
-        thermo_mode_default = self._options.get(CONF_THERMOSTAT_MODE) or (
-            subentry.data.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING)
-            if subentry
-            else ClimateMode.HEATING
         )
         cold_tol_default = self._options.get(CONF_COLD_TOLERANCE)
         if cold_tol_default is None and subentry:
@@ -605,26 +600,7 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
                         device_class=DEVICE_CLASS_TEMPERATURE,
                     ),
                 ),
-                vol.Required(
-                    CONF_TARGET_SWITCH,
-                    default=target_switch_default,
-                ): self._switch_selector(),
-                vol.Required(
-                    CONF_THERMOSTAT_MODE,
-                    default=thermo_mode_default,
-                ): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[
-                            selector.SelectOptionDict(
-                                value=ClimateMode.HEATING, label="Heating"
-                            ),
-                            selector.SelectOptionDict(
-                                value=ClimateMode.COOLING, label="Cooling"
-                            ),
-                        ],
-                        mode=selector.SelectSelectorMode.DROPDOWN,
-                    ),
-                ),
+                **self._device_schema(subentry),
                 vol.Required(
                     CONF_COLD_TOLERANCE,
                     default=cold_tol_default,
@@ -701,6 +677,45 @@ class ThermostatSubentryFlowHandler(ConfigSubentryFlow):
             errors=errors,
             description_placeholders={"device": self._device_name},
         )
+
+    def _device_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
+        """Return why the device of the basic step cannot serve, if it cannot."""
+        if not user_input.get(CONF_TARGET_SWITCH):
+            return {CONF_TARGET_SWITCH: "required"}
+        return self._switch_errors(user_input)
+
+    def _device_schema(self, subentry: ConfigSubentry | None) -> dict[vol.Marker, Any]:
+        """Return the fields of the device: the switch and what it does."""
+        target_switch_default = self._options.get(CONF_TARGET_SWITCH) or (
+            subentry.data.get(CONF_TARGET_SWITCH) if subentry else None
+        )
+        thermo_mode_default = self._options.get(CONF_THERMOSTAT_MODE) or (
+            subentry.data.get(CONF_THERMOSTAT_MODE, ClimateMode.HEATING)
+            if subentry
+            else ClimateMode.HEATING
+        )
+        return {
+            vol.Required(
+                CONF_TARGET_SWITCH,
+                default=target_switch_default,
+            ): self._switch_selector(),
+            vol.Required(
+                CONF_THERMOSTAT_MODE,
+                default=thermo_mode_default,
+            ): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=[
+                        selector.SelectOptionDict(
+                            value=ClimateMode.HEATING, label="Heating"
+                        ),
+                        selector.SelectOptionDict(
+                            value=ClimateMode.COOLING, label="Cooling"
+                        ),
+                    ],
+                    mode=selector.SelectSelectorMode.DROPDOWN,
+                ),
+            ),
+        }
 
     def _switch_selector(self) -> selector.EntitySelector:
         """Return the selector of the switch: any switch."""
@@ -863,6 +878,88 @@ class ControlOptionsFlow(OptionsFlow):
                         )
                     )
                     for setting in fields(ControlSettings)
+                }
+            ),
+        )
+
+
+def climate_thermostats(hass: HomeAssistant) -> list[str]:
+    """Return the thermostats of Climate: they are no air conditioners."""
+    return [
+        entity.entity_id
+        for entity in er.async_get(hass).entities.values()
+        if entity.platform == DOMAIN and entity.domain == DOMAIN_CLIMATE
+    ]
+
+
+class AirConditionerThermostatSubentryFlowHandler(
+    UniversalThermostatSubentryFlowHandler
+):
+    """
+    Subentry flow of an air conditioner thermostat: basic, power, presets.
+
+    Any climate of an air conditioner, and its margin; its power sensor is
+    required (a start is confirmed by power) and its socket optional. What
+    auto does is an entity of the thermostat, not a field.
+    """
+
+    def _device_errors(self, user_input: dict[str, Any]) -> dict[str, str]:
+        """One air conditioner, one thermostat (any thermostat of any entry)."""
+        besides = None if self._is_new else self._get_reconfigure_subentry().subentry_id
+        if thermostats_of(self.hass, user_input[CONF_AIR_CONDITIONER], besides=besides):
+            return {CONF_AIR_CONDITIONER: "ac_taken"}
+        return {}
+
+    def _device_schema(self, subentry: ConfigSubentry | None) -> dict[vol.Marker, Any]:
+        """Return the air conditioner and the margin of its setpoint."""
+        saved = self._options or (subentry.data if subentry else {})
+        return {
+            vol.Required(
+                CONF_AIR_CONDITIONER, default=saved.get(CONF_AIR_CONDITIONER)
+            ): selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=DOMAIN_CLIMATE,
+                    exclude_entities=climate_thermostats(self.hass),
+                )
+            ),
+            vol.Required(
+                CONF_SETPOINT_MARGIN,
+                default=saved.get(CONF_SETPOINT_MARGIN, DEFAULT_SETPOINT_MARGIN),
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=0,
+                    max=10,
+                    step=0.5,
+                    unit_of_measurement="°C",
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+        }
+
+    async def async_step_power(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> SubentryFlowResult:
+        """Step 2: the power sensor, when it reads on, and the socket."""
+        if user_input is not None:
+            # A socket cleared in the form goes
+            self._options.pop(CONF_POWER_SOCKET, None)
+            return await super().async_step_power(user_input)
+        return self.async_show_form(
+            step_id="power",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_POWER_ENTITY, default=self._options.get(CONF_POWER_ENTITY)
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=DOMAIN_SENSOR, device_class=DEVICE_CLASS_POWER
+                        )
+                    ),
+                    **power_schema(
+                        self._options, min_power=DEFAULT_UNIVERSAL_MIN_POWER
+                    ),
+                    **socket_schema(self.hass, self._options),
                 }
             ),
         )

@@ -205,3 +205,23 @@ async def test_the_devices_of_the_universal_thermostats(
         assert hass.states.get(entity_id(domain, unique_id)) is not None
     heater = next(spec for spec in MOCK_DEVICES if spec.device_id == "heater")
     assert heater.power_w == 1500  # noqa: PLR2004
+
+
+async def test_the_devices_of_the_air_conditioner_thermostat(
+    hass: HomeAssistant, entity_id: EntityId
+) -> None:
+    """DEV-013: a second IR air conditioner, its power, a sixth room; config knobs."""
+    for domain, unique_id in (
+        ("sensor", "mock_thermo_6_temperature"),
+        ("sensor", "mock_hisense_2_power_power"),
+        ("infrared", "mock_hisense_2_emitter"),
+        ("number", "mock_hisense_2_sensor_offset"),
+        ("button", "mock_hisense_2_remote_off"),
+        ("button", "mock_hisense_remote_off"),
+    ):
+        assert hass.states.get(entity_id(domain, unique_id)) is not None
+    for domain, unique_id in (
+        ("number", "mock_hisense_2_sensor_offset"),
+        ("button", "mock_hisense_2_remote_off"),
+    ):
+        assert _category(hass, entity_id(domain, unique_id)) is EntityCategory.CONFIG

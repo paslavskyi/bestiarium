@@ -37,7 +37,6 @@ from .const import (
     CAPACITY_MAX,
     CAPACITY_MIN,
     CONF_MIN_WORKING_TIME,
-    CONF_TARGET_SWITCH,
     DEFAULT_CAPACITY,
     DOMAIN,
     DOMAIN_BESTIARIUM_DEVICES,
@@ -73,6 +72,7 @@ from .devices import (
 )
 from .repairs import set_issue
 from .stepwise_actions import StepwiseActions
+from .switch_source import controlled_entity
 from .util import duration_dict_to_timedelta
 from .zone_rules import Candidate, ZoneInput, arrange_zone
 
@@ -89,7 +89,7 @@ if TYPE_CHECKING:
 def shared_switches(hass: HomeAssistant, *, besides: str | None = None) -> set[str]:
     """Return the switches more than one thermostat controls (any climate entry)."""
     targets = Counter(
-        subentry.data.get(CONF_TARGET_SWITCH)
+        controlled_entity(subentry.data)
         for entry in hass.config_entries.async_entries(DOMAIN)
         if entry.entry_id != besides
         for subentry in entry.subentries.values()
@@ -256,15 +256,16 @@ class BalancingCoordinator:
 
     def _follow_power(self) -> bool:
         """
-        Follow the switches and what powers them now; return whether it changed.
+        Follow what powers the switches now; return whether it changed.
 
         What powers them is found once (devices.PowerSupply), and again when
         a Bestiarium device is added, removed or changed (its relay renamed).
 
-        Decide at once when a power relay or a switch changes its state, not
-        its attributes: the rotation changes, a virtual switch shows its "on"
-        late, a person turns one on or off (an "off" by another gets no
-        command until the tolerance confirms it).
+        Decide at once when a power relay changes its state, not its
+        attributes. A switch's own change is its control's (SIGNAL_SWITCH_CHANGED):
+        the rotation changes, a virtual switch shows its "on" late, a person
+        turns one on or off (an "off" by another gets no command until the
+        tolerance confirms it).
         """
         # Every control finds its power again, not only up to the first change
         changed = [c for c in self.controls.values() if c.follow_power()]
@@ -272,10 +273,7 @@ class BalancingCoordinator:
             self._power_unsubscribe()
         self._power_unsubscribe = async_track_state_change_event(
             self._hass,
-            [
-                *(r for c in self.controls.values() for r in c.power.relays),
-                *(c.switch for c in self.controls.values()),
-            ],
+            [r for c in self.controls.values() for r in c.power.relays],
             self._on_changed,
         )
         return bool(changed)
@@ -586,11 +584,12 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
+            control.setting = thermostat.ac_setting
             # The manual mode: by the temperature alone, outside the capacity.
             # Back to auto running, it goes on if it has a place (the owner,
             # DEV-011), else it is turned off stepwise
             if control.set_manual(
-                thermostat.wants_work if thermostat.manual else None,
+                thermostat.manual_demand,
                 now,
                 thermostat.min_cycle_duration,
             ) and sum(c.expected_on for c in self.controls.values()) < (
@@ -813,11 +812,6 @@ class BalancingCoordinator:
         lasting problem, so the refusal itself is only a debug line.
         """
         try:
-            await self._hass.services.async_call(
-                "switch",
-                "turn_on" if on else "turn_off",
-                {"entity_id": control.switch},
-                blocking=True,
-            )
+            await control.source.async_turn(on=on)
         except HomeAssistantError as err:
             LOGGER.debug("%s: switch %s refused: %s", control.name, control.switch, err)
