@@ -15,6 +15,7 @@ from .layout import (
     CLOUD_AC_SWITCH,
     DEVICES,
     HEATER_W,
+    IR,
     LOAD_LIMIT_W,
     MOCK,
     MODE,
@@ -24,6 +25,7 @@ from .layout import (
     RETIRED_THERMOSTATS,
     SCRIPT_PREFIX,
     STAND_DEVICES,
+    STAND_HISENSE,
     TEMPLATE,
     TEST_ENTITY_ID,
     THERMOSTATS,
@@ -345,3 +347,34 @@ async def recreate_cloud_ac_switch(ha: HomeAssistant) -> str:
     switch = next(e["entity_id"] for e in entities if e["config_entry_id"] == entry_id)
     print(f"  added the template switch {switch}")
     return switch
+
+
+async def recreate_ir(ha: HomeAssistant, reg: Registry) -> None:
+    """
+    Make the stand's Hisense air conditioners again, each on its mock emitter.
+
+    Bestiarium IR is added if missing; its other subentries (the blasters and
+    air conditioners of the development HA) are kept.
+    """
+    entries = await ha.entries(IR)
+    if entries:
+        entry_id = entries[0]["entry_id"]
+    else:
+        entry_id = (await ha.flow("flow", IR))["result"]["entry_id"]
+        print("  added Bestiarium IR")
+    names = {name for name, _ in STAND_HISENSE}
+    for subentry in await ha.ws("config_entries/subentries/list", entry_id=entry_id):
+        if subentry["title"] in names:
+            await ha.ws(
+                "config_entries/subentries/delete",
+                entry_id=entry_id,
+                subentry_id=subentry["subentry_id"],
+            )
+    for name, mock_id in STAND_HISENSE:
+        emitter = reg.mock("infrared", f"mock_{mock_id}_emitter")
+        await ha.flow(
+            "subentries/flow",
+            [entry_id, "hisense"],
+            {"name": name, "emitter": emitter},
+        )
+        print(f"  added {IR} air conditioner: {name} on {emitter}")

@@ -177,6 +177,12 @@ async def test_stand_setup_is_repeatable(
     assert templates[0].options["turn_on"] == [
         {"action": f"script.{SCRIPT_PREFIX}ir_ac_4_on"}
     ]
+    # DEV-012: the stand's Hisense on its mock emitter
+    (ir_entry,) = hass.config_entries.async_entries("bestiarium_ir")
+    assert [
+        (subentry.title, dict(subentry.data))
+        for subentry in ir_entry.subentries.values()
+    ] == [("Stand Hisense", {"emitter": "infrared.mock_hisense_emitter"})]
     assert len(hass.config_entries.async_entries("bestiarium_mode")) == 1
     assert len(hass.config_entries.async_entries("bestiarium_mock")) == 1
     assert DASHBOARD in hass.data["lovelace"].dashboards
@@ -319,6 +325,10 @@ class _Registry:
     def mock_device(self, mock_id: str) -> dict:
         return {"id": mock_id}
 
+    def ir_entity(self, name: str, domain: str) -> str:
+        slug = name.lower().replace(" ", "_")
+        return f"{domain}.{slug}_display" if domain == "switch" else f"{domain}.{slug}"
+
     def control(self, device_id: str, key: str) -> str:
         return f"switch.{device_id}_{key}"
 
@@ -344,6 +354,7 @@ def test_reset_leaves_always_on_devices_on() -> None:
         "switch.mock_fridge",
         *(f"switch.mock_{ac}" for _, _, ac in THERMOSTATS),
         "switch.mock_ac_4",
+        "switch.mock_hisense_power",
     }
     assert "switch.mock_fridge" not in switched["switch.turn_off"]
 
@@ -556,3 +567,67 @@ def test_old_scenarios_heat_only_the_virtual_thermostats() -> None:
         assert _modes(scripts[name]["sequence"])["heat"] == {
             f"climate.stand_ac_{n}" for n in (1, 2, 3)
         }
+
+
+def test_the_hisense_has_its_scenarios() -> None:
+    """DEV-012: scenarios 5 and 6; the reset turns the Hisense off, display on."""
+    scripts = scenario_scripts(_Registry())
+    reset = scripts["reset"]["sequence"]
+    assert "climate.stand_hisense" in _modes(reset)["off"]
+    off = _modes(reset)["off"]
+    assert {"switch.mock_hisense_ir_lost", "switch.mock_hisense_ignores_off"} <= {
+        entity
+        for step in reset
+        if step.get("action") == "switch.turn_off"
+        for entity in step["target"]["entity_id"]
+    }
+    # The display on while the Hisense may still run (a frame then), before
+    # it goes off: the stand's display and HA's assumed one agree
+    display_on = next(
+        n
+        for n, step in enumerate(reset)
+        if step
+        == {
+            "action": "switch.turn_on",
+            "target": {"entity_id": "switch.stand_hisense_display"},
+        }
+    )
+    hisense_off = next(
+        n
+        for n, step in enumerate(reset)
+        if step.get("target", {}).get("entity_id") == "climate.stand_hisense"
+    )
+    assert display_on < hisense_off
+    assert "climate.stand_hisense" in off
+
+    manual = scripts["hisense_manual_modes"]["sequence"]
+    commands = [
+        (step["action"], step["data"])
+        for step in manual
+        if step.get("target", {}).get("entity_id") == "climate.stand_hisense"
+    ]
+    assert commands == [
+        ("climate.set_temperature", {"temperature": 24, "hvac_mode": "heat"}),
+        ("climate.set_temperature", {"temperature": 22, "hvac_mode": "cool"}),
+        ("climate.set_hvac_mode", {"hvac_mode": "dry"}),
+        ("climate.set_hvac_mode", {"hvac_mode": "fan_only"}),
+        ("climate.set_fan_mode", {"fan_mode": "high"}),
+        ("climate.set_hvac_mode", {"hvac_mode": "off"}),
+    ]
+    # Each step waits longer than the 3 s pause between frames
+    assert all(
+        step["delay"]["seconds"] > 3  # noqa: PLR2004
+        for step in manual
+        if "delay" in step
+    )
+
+    display = scripts["hisense_display"]["sequence"]
+    assert {
+        "action": "switch.turn_off",
+        "target": {"entity_id": "switch.stand_hisense_display"},
+    } in display
+    assert display[-1] == {
+        "action": "climate.set_hvac_mode",
+        "target": {"entity_id": "climate.stand_hisense"},
+        "data": {"hvac_mode": "off"},
+    }

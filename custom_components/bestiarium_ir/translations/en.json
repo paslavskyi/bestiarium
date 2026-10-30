@@ -1,0 +1,130 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Bestiarium IR is already set up: add blasters and air conditioners to it."
+    }
+  },
+  "config_subentries": {
+    "blaster": {
+      "entry_type": "Zigbee IR blaster",
+      "initiate_flow": {
+        "user": "Add Zigbee IR blaster",
+        "reconfigure": "Reconfigure Zigbee IR blaster"
+      },
+      "step": {
+        "user": {
+          "title": "Zigbee IR blaster",
+          "description": "A Tuya/Zosung TS1201 IR blaster in ZHA becomes an infrared emitter of Home Assistant.",
+          "data": {
+            "zha_device": "TS1201 device"
+          }
+        },
+        "reconfigure": {
+          "title": "Zigbee IR blaster",
+          "data": {
+            "zha_device": "TS1201 device"
+          }
+        }
+      },
+      "abort": {
+        "already_configured": "This TS1201 is already a blaster.",
+        "reconfigure_successful": "The blaster is reconfigured."
+      }
+    },
+    "hisense": {
+      "entry_type": "Hisense air conditioner",
+      "initiate_flow": {
+        "user": "Add Hisense air conditioner",
+        "reconfigure": "Reconfigure Hisense air conditioner"
+      },
+      "step": {
+        "user": {
+          "title": "Hisense air conditioner",
+          "description": "A Hisense air conditioner (remote DG11R2-01, protocol Kelon168) controlled through an infrared emitter.",
+          "data": {
+            "name": "Name",
+            "emitter": "Infrared emitter"
+          }
+        },
+        "reconfigure": {
+          "title": "Hisense air conditioner",
+          "data": {
+            "name": "Name",
+            "emitter": "Infrared emitter"
+          }
+        }
+      },
+      "abort": {
+        "no_emitters": "There is no infrared emitter in Home Assistant: add a blaster first.",
+        "reconfigure_successful": "The air conditioner is reconfigured."
+      }
+    }
+  },
+  "exceptions": {
+    "timing_too_long": {
+      "message": "The IR command cannot be sent by a TS1201: {error}."
+    }
+  },
+  "entity": {
+    "climate": {
+      "hisense": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Auto",
+              "min": "Minimum",
+              "low": "Low",
+              "medium": "Medium",
+              "high": "High",
+              "max": "Maximum"
+            }
+          }
+        }
+      }
+    },
+    "switch": {
+      "display": {
+        "name": "Display"
+      }
+    }
+  },
+  "issues": {
+    "blaster_device_gone": {
+      "title": "The TS1201 of the blaster {name} is gone",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Blaster {name}",
+            "description": "The TS1201 device of this blaster is no longer in ZHA. Choose the TS1201 it now is.",
+            "data": {
+              "zha_device": "TS1201 device"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "The blaster was removed."
+        },
+        "error": {
+          "already_configured": "This TS1201 is already another blaster."
+        }
+      }
+    },
+    "emitter_gone": {
+      "title": "The infrared emitter of {name} is gone",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Air conditioner {name}",
+            "description": "The infrared emitter of this air conditioner is no longer in Home Assistant. Choose the emitter that reaches it.",
+            "data": {
+              "emitter": "Infrared emitter"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "The air conditioner was removed."
+        }
+      }
+    }
+  }
+}

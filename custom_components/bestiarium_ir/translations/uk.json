@@ -1,0 +1,130 @@
+{
+  "config": {
+    "abort": {
+      "single_instance_allowed": "Bestiarium IR уже налаштовано: додавайте до нього бластери й кондиціонери."
+    }
+  },
+  "config_subentries": {
+    "blaster": {
+      "entry_type": "Zigbee ІЧ-бластер",
+      "initiate_flow": {
+        "user": "Додати Zigbee ІЧ-бластер",
+        "reconfigure": "Переналаштувати Zigbee ІЧ-бластер"
+      },
+      "step": {
+        "user": {
+          "title": "Zigbee ІЧ-бластер",
+          "description": "ІЧ-бластер Tuya/Zosung TS1201 у ZHA стає ІЧ-передавачем Home Assistant.",
+          "data": {
+            "zha_device": "Пристрій TS1201"
+          }
+        },
+        "reconfigure": {
+          "title": "Zigbee ІЧ-бластер",
+          "data": {
+            "zha_device": "Пристрій TS1201"
+          }
+        }
+      },
+      "abort": {
+        "already_configured": "Цей TS1201 уже бластер.",
+        "reconfigure_successful": "Бластер переналаштовано."
+      }
+    },
+    "hisense": {
+      "entry_type": "Кондиціонер Hisense",
+      "initiate_flow": {
+        "user": "Додати кондиціонер Hisense",
+        "reconfigure": "Переналаштувати кондиціонер Hisense"
+      },
+      "step": {
+        "user": {
+          "title": "Кондиціонер Hisense",
+          "description": "Кондиціонер Hisense (пульт DG11R2-01, протокол Kelon168), яким керує ІЧ-передавач.",
+          "data": {
+            "name": "Назва",
+            "emitter": "ІЧ-передавач"
+          }
+        },
+        "reconfigure": {
+          "title": "Кондиціонер Hisense",
+          "data": {
+            "name": "Назва",
+            "emitter": "ІЧ-передавач"
+          }
+        }
+      },
+      "abort": {
+        "no_emitters": "У Home Assistant немає ІЧ-передавача: спершу додайте бластер.",
+        "reconfigure_successful": "Кондиціонер переналаштовано."
+      }
+    }
+  },
+  "exceptions": {
+    "timing_too_long": {
+      "message": "TS1201 не може надіслати цю ІЧ-команду: {error}."
+    }
+  },
+  "entity": {
+    "climate": {
+      "hisense": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Авто",
+              "min": "Мінімальна",
+              "low": "Низька",
+              "medium": "Середня",
+              "high": "Висока",
+              "max": "Максимальна"
+            }
+          }
+        }
+      }
+    },
+    "switch": {
+      "display": {
+        "name": "Екран"
+      }
+    }
+  },
+  "issues": {
+    "blaster_device_gone": {
+      "title": "Зник TS1201 бластера {name}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Бластер {name}",
+            "description": "Пристрою TS1201 цього бластера більше немає в ZHA. Виберіть TS1201, яким він є тепер.",
+            "data": {
+              "zha_device": "Пристрій TS1201"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "Бластер видалено."
+        },
+        "error": {
+          "already_configured": "Цей TS1201 уже інший бластер."
+        }
+      }
+    },
+    "emitter_gone": {
+      "title": "Зник ІЧ-передавач {name}",
+      "fix_flow": {
+        "step": {
+          "init": {
+            "title": "Кондиціонер {name}",
+            "description": "ІЧ-передавача цього кондиціонера більше немає в Home Assistant. Виберіть передавач, що до нього дістає.",
+            "data": {
+              "emitter": "ІЧ-передавач"
+            }
+          }
+        },
+        "abort": {
+          "subentry_removed": "Кондиціонер видалено."
+        }
+      }
+    }
+  }
+}

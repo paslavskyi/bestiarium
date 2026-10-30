@@ -90,6 +90,7 @@ class MockSocket:
     def restore(self, *, on: bool) -> None:
         """Restore the state the socket had before a restart."""
         self.physical_on = self.reported_on = on
+        self._changed()
 
     @callback
     def command(self, *, on: bool) -> None:

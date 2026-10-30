@@ -15,6 +15,7 @@ from custom_components.bestiarium_mock.const import (
     FAULT_PARAMS,
     MOCK_DEVICES,
     MOCK_GRID,
+    MOCK_IR_ACS,
     MOCK_THERMOMETERS,
     FaultProfile,
 )
@@ -140,7 +141,8 @@ async def test_names_are_translated() -> None:
         assert set(states) == set(FaultProfile)
         assert set(translations["entity"]["number"]) >= {p.name for p in FAULT_PARAMS}
         assert set(translations["device"]) == {
-            spec.device_id for spec in (*MOCK_DEVICES, *MOCK_THERMOMETERS, MOCK_GRID)
+            spec.device_id
+            for spec in (*MOCK_DEVICES, *MOCK_THERMOMETERS, MOCK_GRID, *MOCK_IR_ACS)
         }
 
 

@@ -5,6 +5,10 @@
     "@paslavskyi"
   ],
   "config_flow": true,
+  "dependencies": [
+    "bestiarium_ir",
+    "infrared"
+  ],
   "documentation": "https://github.com/paslavskyi/bestiarium",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/paslavskyi/bestiarium/issues",

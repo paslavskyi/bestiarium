@@ -1,0 +1,20 @@
+{
+  "domain": "bestiarium_ir",
+  "name": "Bestiarium IR",
+  "after_dependencies": [
+    "zha"
+  ],
+  "codeowners": [
+    "@paslavskyi"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "infrared"
+  ],
+  "documentation": "https://github.com/paslavskyi/bestiarium",
+  "integration_type": "hub",
+  "iot_class": "assumed_state",
+  "issue_tracker": "https://github.com/paslavskyi/bestiarium/issues",
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

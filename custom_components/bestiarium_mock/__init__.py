@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from .data import BestiariumMockConfigEntry
 
 PLATFORMS: list[Platform] = [
+    Platform.INFRARED,
     Platform.SWITCH,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,

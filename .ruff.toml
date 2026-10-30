@@ -35,5 +35,11 @@ keep-runtime-typing = true
     "F841",
 ]
 
+"tests/custom_components/bestiarium_ir/**" = [
+    "S101",
+    "PLR2004",
+    "SLF001",
+]
+
 [lint.mccabe]
 max-complexity = 25

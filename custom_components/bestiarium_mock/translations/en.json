@@ -21,6 +21,9 @@
       },
       "ir_hangs": {
         "name": "IR hangs"
+      },
+      "ignores_off": {
+        "name": "Ignores off"
       }
     },
     "sensor": {
@@ -32,6 +35,54 @@
       },
       "temperature": {
         "name": "Temperature"
+      },
+      "ac_state": {
+        "name": "Air conditioner state",
+        "state": {
+          "off": "Off",
+          "heat": "Heat",
+          "cool": "Cool",
+          "auto": "Auto",
+          "dry": "Dry",
+          "fan_only": "Fan only"
+        },
+        "state_attributes": {
+          "temperature": {
+            "name": "Target"
+          },
+          "fan": {
+            "name": "Fan speed"
+          },
+          "display": {
+            "name": "Display"
+          }
+        }
+      },
+      "last_frame": {
+        "name": "Last frame",
+        "state": {
+          "applied": "Carried out",
+          "display_lit": "Only lit the display",
+          "off_ignored": "Off ignored",
+          "not_recognised": "Not recognised"
+        },
+        "state_attributes": {
+          "action": {
+            "name": "Button"
+          },
+          "power": {
+            "name": "On"
+          },
+          "mode": {
+            "name": "Mode"
+          },
+          "temperature": {
+            "name": "Target"
+          },
+          "fan": {
+            "name": "Fan speed"
+          }
+        }
       }
     },
     "binary_sensor": {
@@ -88,6 +139,11 @@
           "no_data": "No data",
           "frozen": "Frozen"
         }
+      }
+    },
+    "infrared": {
+      "emitter": {
+        "name": "IR emitter"
       }
     }
   },
@@ -168,6 +224,12 @@
     },
     "thermo_5": {
       "name": "Mock Thermometer 5"
+    },
+    "hisense": {
+      "name": "Mock Hisense"
+    },
+    "hisense_power": {
+      "name": "Mock Hisense Power"
     }
   }
 }

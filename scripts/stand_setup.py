@@ -34,6 +34,7 @@ from scripts.stand.entries import (
     normalize_mock,
     recreate_climate,
     recreate_devices,
+    recreate_ir,
     remove_broken_automations,
     remove_stand_climate,
 )
@@ -62,6 +63,7 @@ async def setup_stand(url: str, token: str) -> None:
             await recreate_devices(ha, reg)
             reg = await registry(ha)  # with the devices' "Allowed" switches
             await recreate_climate(ha, reg)
+            await recreate_ir(ha, reg)
             reg = await registry(ha)
             await write_dashboard(ha, reg, await write_scripts(ha, reg))
             await check_zones(ha, reg)

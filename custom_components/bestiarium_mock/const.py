@@ -148,6 +148,9 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
     # A plain heater on its own socket: the universal thermostat's (DEV-011);
     # no Bestiarium device, one relay lives in one integration
     MockDeviceSpec(device_id="heater", power_w=1500),
+    # The power of the stand's IR air conditioner (DEV-012): what it draws is
+    # set by the unit (MockIrAc), not by a knob
+    MockDeviceSpec(device_id="hisense_power", power_w=5),
     # The power of four air conditioners: 5 W on standby; the stand's IR
     # scripts set 1200 W when one runs (review 18: as in the owner's home).
     # The fourth is the cloud AC of a universal thermostat (DEV-011)
@@ -162,6 +165,38 @@ MOCK_DEVICES: tuple[MockDeviceSpec, ...] = (
         for number in range(1, 5)
     ),
 )
+
+
+@dataclass(frozen=True)
+class MockIrAcSpec:
+    """An IR air conditioner of the stand: its emitter, behind a mock socket."""
+
+    device_id: str
+    socket: str
+
+
+# The Hisense of the stand (DEV-012): it hears its emitter's Kelon168 frames
+MOCK_IR_ACS: tuple[MockIrAcSpec, ...] = (MockIrAcSpec("hisense", "hisense_power"),)
+
+# What the stand's air conditioner draws, by its state (design 6)
+IR_AC_POWER_W: dict[str, float] = {
+    "off": 5,
+    "heat": 1200,
+    "cool": 1200,
+    "auto": 1200,
+    "dry": 300,
+    "fan_only": 40,
+}
+
+
+class IrFrameOutcome(StrEnum):
+    """What the stand's air conditioner did with the last frame it heard."""
+
+    APPLIED = "applied"
+    DISPLAY_LIT = "display_lit"  # the display was off: the frame only lit it
+    OFF_IGNORED = "off_ignored"  # the knob "Ignores off"
+    NOT_RECOGNISED = "not_recognised"
+
 
 # Thermometer specifications (passive temperature sensors)
 MOCK_THERMOMETERS: tuple[MockThermometerSpec, ...] = (

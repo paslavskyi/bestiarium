@@ -16,9 +16,11 @@ from .const import (
     LOGGER,
     MOCK_DEVICES,
     MOCK_GRID,
+    MOCK_IR_ACS,
     MOCK_THERMOMETERS,
 )
 from .faults import MockSocket
+from .ir_ac import MockIrAc
 from .readings import MockReading
 
 if TYPE_CHECKING:
@@ -49,6 +51,10 @@ class MockDevicesCoordinator:
         self._unsub_sockets = [
             socket.add_listener(self._update_grid) for socket in self.sockets.values()
         ]
+        self.ir_acs: dict[str, MockIrAc] = {
+            spec.device_id: MockIrAc(spec, self.sockets[spec.socket])
+            for spec in MOCK_IR_ACS
+        }
         self._grid_power_sensor: MockGridPowerSensor | None = None
         # What HA sees of the thermometers and the grid, by device id
         self.readings: dict[str, MockReading] = {
@@ -106,6 +112,8 @@ class MockDevicesCoordinator:
         LOGGER.debug("Stopping mock devices coordinator")
         for socket in self.sockets.values():
             socket.stop()
+        for ac in self.ir_acs.values():
+            ac.stop()
         for reading in self.readings.values():
             reading.stop()
         for unsub in self._unsub_sockets:

@@ -25,6 +25,7 @@ from .layout import (
     RED_W,
     SCRIPT_PREFIX,
     STAND_DEVICES,
+    STAND_HISENSE,
     THERMOSTATS,
     UNIVERSAL_THERMOSTATS,
     YELLOW_W,
@@ -306,6 +307,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                         ]
                     },
                 },
+                *_hisense_reset(reg),
                 {
                     "action": "number.set_value",
                     "target": {"entity_id": capacity},
@@ -701,6 +703,7 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 room(cloud_room, 25),
             ],
         },
+        **_hisense_scenarios(reg, reset),
         "unstable_tuya": {
             "alias": "Стенд: нестабільна Tuya",
             "icon": "mdi:wifi-strength-alert-outline",
@@ -708,6 +711,104 @@ def scenario_scripts(reg: Registry) -> dict[str, dict[str, Any]]:
                 reset,
                 profile("tuya_socket", FaultProfile.UNSTABLE),
                 turn("turn_on", "tuya_socket"),
+            ],
+        },
+    }
+
+
+def _hisense_mode(climate: str, hvac_mode: str, **data: Any) -> dict[str, Any]:
+    """Put the stand's Hisense in a mode, with a target when one is given."""
+    return {
+        "action": "climate.set_temperature" if data else "climate.set_hvac_mode",
+        "target": {"entity_id": climate},
+        "data": {**data, "hvac_mode": hvac_mode},
+    }
+
+
+def _hisense_reset(reg: Registry) -> list[dict[str, Any]]:
+    """
+    Return the reset's steps of the stand's Hisense (DEV-012).
+
+    The display on while the unit may still run (a display frame then; of a
+    unit that is off, assumed only: DEV-012 review, U3), so the stand's
+    display and the one HA assumes agree; then off; its knobs back.
+    """
+    ((name, mock_id),) = STAND_HISENSE
+    return [
+        {
+            "action": "switch.turn_on",
+            "target": {"entity_id": reg.ir_entity(name, "switch")},
+        },
+        _hisense_mode(reg.ir_entity(name, "climate"), "off"),
+        {
+            "action": "switch.turn_off",
+            "target": {
+                "entity_id": [
+                    reg.mock("switch", f"mock_{mock_id}_{knob}")
+                    for knob in ("ir_lost", "ignores_off")
+                ]
+            },
+        },
+    ]
+
+
+def _hisense_scenarios(
+    reg: Registry, reset: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """
+    Return the scenarios of the stand's Hisense (DEV-012).
+
+    Scenario 5: each manual mode gives its own frame and power, once.
+    Scenario 6: with the display off a frame goes twice (the first only
+    lights it); "off" goes once.
+    """
+    ((name, _),) = STAND_HISENSE
+    climate = reg.ir_entity(name, "climate")
+    display = reg.ir_entity(name, "switch")
+
+    def mode(hvac_mode: str, **data: Any) -> dict[str, Any]:
+        return _hisense_mode(climate, hvac_mode, **data)
+
+    def call(service: str, **data: Any) -> dict[str, Any]:
+        return {
+            "action": f"climate.{service}",
+            "target": {"entity_id": climate},
+            "data": data,
+        }
+
+    # Long enough to see each frame's state and power on the dashboard
+    step = {"delay": {"seconds": 10}}
+    return {
+        "hisense_manual_modes": {
+            "alias": "Стенд: Hisense — ручні режими",
+            "icon": "mdi:air-conditioner",
+            "sequence": [
+                reset,
+                mode("heat", temperature=24),
+                step,
+                mode("cool", temperature=22),
+                step,
+                mode("dry"),
+                step,
+                mode("fan_only"),
+                step,
+                call("set_fan_mode", fan_mode="high"),
+                step,
+                mode("off"),
+            ],
+        },
+        "hisense_display": {
+            "alias": "Стенд: Hisense — екран",
+            "icon": "mdi:monitor-off",
+            "sequence": [
+                reset,
+                mode("heat", temperature=24),
+                step,
+                {"action": "switch.turn_off", "target": {"entity_id": display}},
+                step,
+                call("set_temperature", temperature=26),
+                step,
+                mode("off"),
             ],
         },
     }
