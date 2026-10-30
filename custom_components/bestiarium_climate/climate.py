@@ -6,6 +6,9 @@ import contextlib
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.climate import (
+    ATTR_FAN_MODE,
+    ATTR_FAN_MODES,
+    ATTR_HVAC_MODES,
     PRESET_NONE,
     ClimateEntity,
     ClimateEntityFeature,
@@ -24,22 +27,28 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 
 from .const import (
+    CONF_AIR_CONDITIONER,
     CONF_COLD_TOLERANCE,
     CONF_HOT_TOLERANCE,
     CONF_MAX_TEMP,
     CONF_MIN_CYCLE_DURATION,
     CONF_MIN_TEMP,
     CONF_PRESETS,
+    CONF_SETPOINT_MARGIN,
     CONF_TEMPERATURE_SENSOR,
     CONF_THERMOSTAT_MODE,
+    DEFAULT_SETPOINT_MARGIN,
     DEFAULT_TOLERANCE,
     DOMAIN,
     PRESET_KEYS,
+    SIGNAL_AUTO_MODE_CHANGED,
     SIGNAL_CONTROL_CHANGED,
+    SUBENTRY_TYPE_AC,
     SUBENTRY_TYPE_UNIVERSAL,
     ClimateMode,
 )
 from .control import ThermostatMemory, async_get_thermostat_memory
+from .switch_source import AcSetting
 from .util import duration_dict_to_timedelta
 
 if TYPE_CHECKING:
@@ -47,7 +56,7 @@ if TYPE_CHECKING:
     from datetime import timedelta
 
     from homeassistant.config_entries import ConfigSubentry
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import Event, EventStateChangedData, HomeAssistant
     from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
     from .balancer import BalancingCoordinator
@@ -65,11 +74,7 @@ async def async_setup_entry(
     memory = await async_get_thermostat_memory(hass)
     for subentry_id, control in coordinator.controls.items():
         subentry = entry.subentries[subentry_id]
-        thermostat = (
-            UniversalThermostat
-            if subentry.subentry_type == SUBENTRY_TYPE_UNIVERSAL
-            else VirtualThermostat
-        )
+        thermostat = THERMOSTATS.get(subentry.subentry_type, VirtualThermostat)
         async_add_entities(
             [thermostat(hass, entry, subentry, control, memory)],
             config_subentry_id=subentry_id,
@@ -227,6 +232,16 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
     def manual(self) -> bool:
         """Return whether a person runs it: the balancer leaves it alone."""
         return False
+
+    @property
+    def manual_demand(self) -> bool | None:
+        """Return what its manual mode asks of the switch; None: not manual."""
+        return None
+
+    @property
+    def ac_setting(self) -> AcSetting | None:
+        """Return what it wants its air conditioner set to; a switch has none."""
+        return None
 
     @property
     def wants_work(self) -> bool:
@@ -429,6 +444,200 @@ class UniversalThermostat(VirtualThermostat):
         """Return whether it is in its manual mode."""
         return self._attr_hvac_mode == self._manual_mode
 
+    @property
+    def manual_demand(self) -> bool | None:
+        """Return what the temperature asks in the manual mode: on or off."""
+        return self.wants_work if self.manual else None
+
     def _restorable_modes(self) -> tuple[HVACMode, ...]:
         """Return its own modes."""
         return tuple(self._attr_hvac_modes)
+
+
+# The manual modes of an air conditioner thermostat, and what each shows
+MANUAL_ACTIONS = {
+    HVACMode.HEAT: HVACAction.HEATING,
+    HVACMode.COOL: HVACAction.COOLING,
+    HVACMode.DRY: HVACAction.DRYING,
+    HVACMode.FAN_ONLY: HVACAction.FAN,
+}
+
+
+class AirConditionerThermostat(VirtualThermostat):
+    """
+    Air conditioner thermostat: auto balanced, off, or a manual mode.
+
+    Auto heats or cools, by its entity "Auto mode", as the balancer decides,
+    setting the air conditioner to the target plus or minus the margin; a
+    manual mode sets it to the person's mode and target once, outside the
+    capacity, until the red zone or the overload turns it off. The modes and
+    fan speeds offered are the air conditioner's.
+    """
+
+    _model = "Air Conditioner Thermostat"
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: BestiariumClimateConfigEntry,
+        subentry: ConfigSubentry,
+        control: ThermostatControl,
+        memory: ThermostatMemory,
+    ) -> None:
+        """Initialize the thermostat; auto heats until the auto mode says otherwise."""
+        super().__init__(hass, entry, subentry, control, memory)
+        self._air_conditioner: str = subentry.data[CONF_AIR_CONDITIONER]
+        self._margin = float(
+            subentry.data.get(CONF_SETPOINT_MARGIN, DEFAULT_SETPOINT_MARGIN)
+        )
+        self._read_auto_mode()
+        # The speed a person chose here; until then the air conditioner's own
+        self._fan_mode: str | None = None
+
+    def _read_auto_mode(self) -> None:
+        self._ac_mode = self._memory.get(self.subentry_id).get(
+            "auto_mode", ClimateMode.HEATING
+        ) == (ClimateMode.COOLING)
+
+    def _ac_attribute(self, name: str) -> Any:
+        state = self._hass.states.get(self._air_conditioner)
+        return state.attributes.get(name) if state else None
+
+    @property
+    def hvac_modes(self) -> list[HVACMode]:
+        """Return auto, off, and the manual modes the air conditioner has."""
+        modes = self._ac_attribute(ATTR_HVAC_MODES) or []
+        return [
+            HVACMode.AUTO,
+            HVACMode.OFF,
+            *(mode for mode in MANUAL_ACTIONS if mode in modes),
+        ]
+
+    @property
+    def fan_modes(self) -> list[str] | None:
+        """Return the air conditioner's fan speeds."""
+        return self._ac_attribute(ATTR_FAN_MODES)
+
+    @property
+    def fan_mode(self) -> str | None:
+        """Return the speed chosen here, else the air conditioner's own."""
+        return self._fan_mode or self._ac_attribute(ATTR_FAN_MODE)
+
+    @property
+    def supported_features(self) -> ClimateEntityFeature:
+        """Return the fan speed too, once the air conditioner shows its speeds."""
+        if self.fan_modes:
+            return self._attr_supported_features | ClimateEntityFeature.FAN_MODE
+        return self._attr_supported_features
+
+    @property
+    def manual(self) -> bool:
+        """Return whether a manual mode runs the air conditioner."""
+        return self._attr_hvac_mode in MANUAL_ACTIONS
+
+    @property
+    def _auto_mode(self) -> HVACMode:
+        """Return the air conditioner's mode in auto."""
+        return HVACMode.COOL if self._ac_mode else HVACMode.HEAT
+
+    @property
+    def ac_setting(self) -> AcSetting | None:
+        """
+        Return what it wants the air conditioner set to; None when off.
+
+        Auto: its auto mode, the target plus the margin to heat, minus it to
+        cool. A manual mode: that mode and the person's target as it is (no
+        target for the fan only).
+        """
+        mode, target = self._attr_hvac_mode, self._target_temp
+        if mode == HVACMode.OFF or target is None:
+            return None
+        if mode == HVACMode.AUTO:
+            margin = -self._margin if self._ac_mode else self._margin
+            return AcSetting(self._auto_mode, target + margin, self._fan_mode)
+        temperature = None if mode == HVACMode.FAN_ONLY else target
+        return AcSetting(HVACMode(mode), temperature, self._fan_mode)
+
+    def _update_hvac_action(self) -> bool:
+        """
+        Show the action: of the mode in a manual one, of the demand in auto.
+
+        Auto without the air conditioner's mode of it has nothing to do.
+        """
+        current = self._attr_hvac_action
+        mode = self._attr_hvac_mode
+        if mode in MANUAL_ACTIONS:
+            self._attr_hvac_action = MANUAL_ACTIONS[HVACMode(mode)]
+            return current != self._attr_hvac_action
+        if mode == HVACMode.AUTO and self._auto_mode not in self.hvac_modes:
+            self._attr_hvac_action = HVACAction.IDLE
+            return current != self._attr_hvac_action
+        return super()._update_hvac_action()
+
+    async def async_set_fan_mode(self, fan_mode: str) -> None:
+        """Choose the air conditioner's fan speed."""
+        self._fan_mode = fan_mode
+        self.async_write_ha_state()
+        self._request_balance()
+
+    async def async_set_temperature(self, **kwargs: Any) -> None:
+        """Set the target; a running air conditioner gets its setpoint at once."""
+        await super().async_set_temperature(**kwargs)
+        self._request_balance()
+
+    async def async_set_preset_mode(self, preset_mode: str | None) -> None:
+        """Set a preset; a running air conditioner gets its setpoint at once."""
+        await super().async_set_preset_mode(preset_mode)
+        self._request_balance()
+
+    def _restorable_modes(self) -> tuple[HVACMode, ...]:
+        """Return all its modes: the air conditioner may not be loaded yet."""
+        return (HVACMode.AUTO, HVACMode.OFF, *MANUAL_ACTIONS)
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        """Keep the fan speed chosen here too."""
+        kept = super().extra_restore_state_data.as_dict()
+        return RestoredExtraData({**kept, "fan_mode": self._fan_mode})
+
+    async def _async_restore(self) -> None:
+        """Restore the fan speed chosen here too."""
+        await super()._async_restore()
+        if extra := await self.async_get_last_extra_data():
+            self._fan_mode = extra.as_dict().get("fan_mode")
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the auto mode and the air conditioner's modes and speeds."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_AUTO_MODE_CHANGED.format(self.subentry_id),
+                self._async_auto_mode_changed,
+            )
+        )
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self._air_conditioner], self._async_ac_changed
+            )
+        )
+
+    @callback
+    def _async_auto_mode_changed(self) -> None:
+        self._read_auto_mode()
+        self._update_hvac_action()
+        self.async_write_ha_state()
+        self._request_balance()
+
+    @callback
+    def _async_ac_changed(self, _event: Event[EventStateChangedData]) -> None:
+        """Show the air conditioner's modes and speed as they are now."""
+        self._update_hvac_action()
+        self.async_write_ha_state()
+
+
+# The class of each new type of thermostat; the old one is VirtualThermostat
+THERMOSTATS: dict[str, type[VirtualThermostat]] = {
+    SUBENTRY_TYPE_UNIVERSAL: UniversalThermostat,
+    SUBENTRY_TYPE_AC: AirConditionerThermostat,
+}

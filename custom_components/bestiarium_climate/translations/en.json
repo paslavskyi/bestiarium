@@ -63,6 +63,15 @@
           }
         }
       }
+    },
+    "select": {
+      "auto_mode": {
+        "name": "Auto mode",
+        "state": {
+          "heating": "Heat",
+          "cooling": "Cool"
+        }
+      }
     }
   },
   "config_subentries": {

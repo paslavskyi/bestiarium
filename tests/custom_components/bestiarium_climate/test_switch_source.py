@@ -53,7 +53,7 @@ class Watched:
 
     def start(self, subentry: ConfigSubentry) -> SwitchSource:
         """Make the source of a subentry and start it."""
-        self.source = switch_source(self.hass, subentry, "Heater")
+        self.source = switch_source(self.hass, subentry, "Heater", setting=lambda: None)
         self.source.start(self.changes.append)
         return self.source
 
@@ -182,4 +182,6 @@ async def test_factory_picks_the_source(hass: HomeAssistant) -> None:
         (_subentry(SUBENTRY_TYPE_UNIVERSAL), EntitySwitch),
         (_subentry(SUBENTRY_TYPE_UNIVERSAL, power_entity=POWER), PoweredSwitch),
     ):
-        assert type(switch_source(hass, subentry, "Heater")) is kind
+        assert (
+            type(switch_source(hass, subentry, "Heater", setting=lambda: None)) is kind
+        )

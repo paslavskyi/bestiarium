@@ -88,6 +88,8 @@ EVENT_MANUAL_TURNED_OFF = "bestiarium_climate_manual_turned_off"
 SIGNAL_CONTROL_CHANGED = f"{DOMAIN}_control_changed_{{}}"
 # A switch read by power changed: the balancer decides again
 SIGNAL_SWITCH_CHANGED = f"{DOMAIN}_switch_changed_{{}}"
+# The auto mode of an air conditioner thermostat changed
+SIGNAL_AUTO_MODE_CHANGED = f"{DOMAIN}_auto_mode_changed_{{}}"
 
 # The thermostats' state the balancer keeps across restarts (Store)
 STORAGE_KEY = f"{DOMAIN}.thermostats"

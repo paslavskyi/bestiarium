@@ -39,6 +39,7 @@ from .command import (
 from .const import (
     CONF_HEATER_POWER,
     CONF_POWER_ENTITY,
+    CONF_POWER_SOCKET,
     CONF_RECOVERY_TIMEOUT,
     CONF_TEMPERATURE_SENSOR,
     DOMAIN,
@@ -71,6 +72,7 @@ if TYPE_CHECKING:
     )
 
     from .data import BestiariumClimateConfigEntry
+    from .switch_source import AcSetting
 
 GONE_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 # The pause after a heater turned off, when its thermostat sets no minimum
@@ -200,9 +202,20 @@ class ThermostatControl:
         self._entry = entry
         self.subentry_id = subentry.subentry_id
         self.name = subentry.title
+        self.entry_id = entry.entry_id
+        # What an air conditioner thermostat wants its air conditioner set
+        # to, given by the balancer each cycle; None for a switch
+        self.setting: AcSetting | None = None
+        # The last setting repaired in auto, and what the device showed then:
+        # one repair for each change of either
+        self._repaired: tuple[AcSetting | None, AcSetting | None] | None = None
         # Where it reads its switch and sends it commands
-        self.source = switch_source(hass, subentry, self.name)
+        self.source = switch_source(
+            hass, subentry, self.name, setting=lambda: self.setting
+        )
         self.switch = self.source.entity_id
+        # An air conditioner thermostat's own socket
+        self._socket: str | None = subentry.data.get(CONF_POWER_SOCKET)
         self._sensor: str = subentry.data[CONF_TEMPERATURE_SENSOR]
         # The power the thermostat's form gives its heater, if any
         self.heater_power: float | None = subentry.data.get(CONF_HEATER_POWER)
@@ -284,14 +297,21 @@ class ThermostatControl:
 
     def follow_power(self) -> bool:
         """Find again what powers the switch; return whether it changed."""
-        power = power_supply(self._hass, self.switch, self._power_entity)
+        power = power_supply(
+            self._hass, self.switch, self._power_entity, socket=self._socket
+        )
         changed, self.power = power != self.power, power
         return changed
 
     @property
     def socket(self) -> str | None:
-        """Return the socket of its virtual switch, if it has one."""
+        """Return its own socket or its virtual switch's, if it has one."""
         return self.power.socket
+
+    @property
+    def socket_subentry_id(self) -> str | None:
+        """Return the subentry whose form sets the socket: its own, if it has one."""
+        return self.subentry_id if self._socket else None
 
     @property
     def no_temperature(self) -> bool:
@@ -341,7 +361,7 @@ class ThermostatControl:
             ):
                 return Reading.STARTING
             off = self._turned_off_at()
-            if off is not None and now - off < self._tolerance:
+            if off is not None and now - off < self._off_confirmation:
                 return Reading.OFF_UNCONFIRMED
         return Reading.OFF
 
@@ -378,7 +398,7 @@ class ThermostatControl:
         off = self._turned_off_at()
         if off is None or self.reading(now) is not Reading.OFF_UNCONFIRMED:
             return None
-        return off + self._tolerance
+        return off + self._off_confirmation
 
     def _turned_off_at(self) -> datetime | None:
         """Return when another turned the switch, wanted on, off after its last "on"."""
@@ -396,7 +416,16 @@ class ThermostatControl:
         return None
 
     @property
-    def _tolerance(self) -> timedelta:
+    def _off_confirmation(self) -> timedelta:
+        """
+        Return how long an "off" by another lasts before it is confirmed.
+
+        The tolerance; an air conditioner idling at its setpoint may draw
+        little for a minute or two and run on: a whole step (DEV-013, design
+        10).
+        """
+        if self.source.idles:
+            return timedelta(seconds=self.settings.off_interval_seconds)
         return timedelta(seconds=self.settings.tolerance_seconds)
 
     def set_expected(self, on: bool, now: datetime) -> None:  # noqa: FBT001
@@ -527,7 +556,24 @@ class ThermostatControl:
         latest = self._commands.latest()
         if latest is not None and latest.running:
             return None if latest.on is wanted else wanted
+        if actual and wanted and self._repair_due():
+            return True
         return None if actual is wanted else wanted
+
+    def _repair_due(self) -> bool:
+        """
+        Return whether a running air conditioner gets its setting again.
+
+        It does not show what its thermostat wants: the thermostat changed
+        (a target, a speed, the auto mode) or another changed it (a dashboard,
+        a voice, an automation). Once for each change of the two: a setting
+        it never shows is not sent every cycle. A switch has no setting.
+        """
+        wanted, shown = self.source.wanted(), self.source.setting()
+        if wanted is None or wanted.matches(shown) or self._repaired == (wanted, shown):
+            return False
+        self._repaired = (wanted, shown)
+        return True
 
     def send(
         self,

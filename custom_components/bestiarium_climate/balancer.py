@@ -56,7 +56,6 @@ from .const import (
     SHEDDING_ZONES,
     SIGNAL_CONTROL_CHANGED,
     SIGNAL_SWITCH_CHANGED,
-    SUBENTRY_TYPE_AC,
     THERMOSTAT_TYPES,
     ZONE_SENSOR_UNIQUE_ID,
     ControlState,
@@ -183,9 +182,7 @@ class BalancingCoordinator:
                 self._hass, self._entry, subentry, memory, zone=self._zone
             )
             for subentry in self._entry.subentries.values()
-            # The air conditioner thermostat comes with its climate entity
             if subentry.subentry_type in THERMOSTAT_TYPES
-            and subentry.subentry_type != SUBENTRY_TYPE_AC
         }
 
     def start(self) -> None:
@@ -587,11 +584,12 @@ class BalancingCoordinator:
         for subentry_id, thermostat in thermostats.items():
             control = self.controls[subentry_id]
             control.pause = thermostat.min_cycle_duration or DEFAULT_PAUSE
+            control.setting = thermostat.ac_setting
             # The manual mode: by the temperature alone, outside the capacity.
             # Back to auto running, it goes on if it has a place (the owner,
             # DEV-011), else it is turned off stepwise
             if control.set_manual(
-                thermostat.wants_work if thermostat.manual else None,
+                thermostat.manual_demand,
                 now,
                 thermostat.min_cycle_duration,
             ) and sum(c.expected_on for c in self.controls.values()) < (

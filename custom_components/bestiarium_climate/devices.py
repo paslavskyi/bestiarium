@@ -127,7 +127,7 @@ class PowerSupply:
     # The Bestiarium device that powers its virtual switch, and its relay
     device: str | None = None
     relay: str | None = None
-    # The virtual switch's own socket
+    # The socket of an air conditioner thermostat or of a virtual switch
     socket: str | None = None
 
     @property
@@ -137,19 +137,24 @@ class PowerSupply:
 
 
 def power_supply(
-    hass: HomeAssistant, switch: str, power: str | None = None
+    hass: HomeAssistant,
+    switch: str,
+    power: str | None = None,
+    *,
+    socket: str | None = None,
 ) -> PowerSupply:
     """
     Find what powers a switch: the device of its power sensor; a socket, if any.
 
-    Only a virtual switch has a socket.
+    The socket is an air conditioner thermostat's own (`socket`), else its
+    virtual switch's.
     """
     device = power_device(hass, switch, power)
     return PowerSupply(
         switch,
         device=device.entry_id if device else None,
         relay=device.data.get(DEVICES_SWITCH) if device else None,
-        socket=power_socket(hass, switch),
+        socket=socket or power_socket(hass, switch),
     )
 
 
