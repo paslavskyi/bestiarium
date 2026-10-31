@@ -26,7 +26,7 @@ custom_components/bestiarium_mode/
 ├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones, views of the zone)
 ├── repairs.py           # Repairs: the zones' power sensor is gone, its fix flow
 ├── number.py            # PowerLoadLimitNumber entity (runtime load limit)
-├── card.py              # Serves the power flow card (static path, extra JS URL)
+├── card.py              # Serves the power flow card (stable no-cache URL, extra JS URL)
 ├── frontend/
 │   ├── power-flow-card.js   # The card's element
 │   └── power-flow-model.js  # What it shows: pure functions
@@ -300,15 +300,39 @@ inverter, the sun, the battery. Five nodes (Мережа, Сонце, Інвер
 without the grid); a tap opens `navigation_path` when it is set.
 
 **Why in Mode.** The power modes are Mode's subject, and Mode is always set up
-in the home. `async_setup` (the integration's, not an entry's) serves
-`frontend/` as the static path `/bestiarium_mode/frontend/<digest of its
-files>` and adds its `power-flow-card.js` to every page of HA
-(`frontend.add_extra_js_url`), only when HA's frontend is loaded
-(`after_dependencies: ["frontend", "http"]`). An update of Bestiarium is a new
-URL for the card and for the model it imports, so both are cached for long;
-an update of HA does not touch the files. Nothing to do but
+in the home. `async_setup` (the integration's, not an entry's) serves the
+two files of `frontend/` at `/api/bestiarium_mode/frontend/<file>` and adds
+its `power-flow-card.js` to every page of HA (`frontend.add_extra_js_url`),
+only when HA's frontend is loaded (`after_dependencies: ["frontend", "http"]`).
+Nothing to do but
 add the card to a dashboard (it is in the card picker). No HACS, no card-mod,
 no CDN: icons are HA's own `ha-icon`.
+
+**Updates (DEV-015).** The card's URL never changes, so a page keeps its card
+across an update of Bestiarium:
+
+- HA's service worker answers pages and most files from its cache first
+  (stale-while-revalidate), but sends `/api/…` only to the network. A page
+  served from that cache after an update still asks the server for the card,
+  and gets the current one.
+- The files carry `Cache-Control: no-cache`: the browser asks again on every
+  page load and gets a `304` when nothing changed. The model, imported
+  relatively, comes from the same path, so the card and the model are always
+  one version.
+- A page open across a restart of HA keeps the module it loaded; when it
+  reconnects, the frontend imports the same URL, which is that module.
+- The URL needs no token (a module script carries none). It is safe: the view
+  serves exactly the two file names it knows and never builds a path from
+  the request; any other name is a `404`.
+- **Transitional:** the digest path of DEV-014,
+  `/bestiarium_mode/frontend/<digest>/<file>`, is a second URL of the same
+  view for pages cached before DEV-015. It goes away in a later task, once
+  every device has lived through one update.
+
+**A limit of HA.** A page opened before the card was first installed has no
+module for it: the card may show «Помилка конфігурації» until that page is
+reloaded once. This is how HA adds extra modules to its pages; it concerns only
+the first install, not updates.
 
 **Files.** `power-flow-model.js` — pure functions (`readings`, `flowModel`,
 `kw`, `hours`, `skeleton`), tested with `node --test` (`make test-card`, part
