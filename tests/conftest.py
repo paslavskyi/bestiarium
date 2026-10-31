@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterator
 
 import pytest
+from homeassistant.helpers import deprecation
 
 pytest_plugins = "pytest_homeassistant_custom_component"
 
@@ -44,15 +45,22 @@ def deprecated_entity_members() -> list[str]:
 @pytest.fixture(autouse=True)
 def fail_on_deprecated_ha_usage(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
     """Fail the test if HA reports deprecated API usage by a Bestiarium integration."""
+    # HA 2026.11 reports a use of a deprecated entity member once per call site;
+    # HA 2026.10 has no such members
+    getattr(deprecation, "_REPORTED_DEPRECATED_ENTITY_USAGE", set()).clear()
     yield
     reports = [
         message
-        for record in caplog.get_records("call")
+        for record in caplog.get_records("setup") + caplog.get_records("call")
         if (message := record.getMessage())
         and (
             (record.name in HA_USAGE_REPORT_LOGGERS and "bestiarium_" in message)
             # HA 2026.11 reports a deprecated entity member through its module
-            or ("bestiarium_" in record.name and "deprecated" in message)
+            or (
+                "bestiarium_" in record.name
+                and record.levelno >= logging.WARNING
+                and "deprecated" in message
+            )
         )
     ]
     if reports:
