@@ -1,5 +1,10 @@
 {
   "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium IR"
+      }
+    },
     "abort": {
       "single_instance_allowed": "Bestiarium IR уже налаштовано: додавайте до нього бластери й кондиціонери."
     }
