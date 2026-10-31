@@ -12,6 +12,5 @@ def test_no_deprecated_ha_entity_members(deprecated_entity_members: list[str]) -
     for module in pkgutil.walk_packages(
         [str(CUSTOM_COMPONENTS)], prefix="custom_components."
     ):
-        if module.name.startswith("custom_components.bestiarium_"):
-            import_module(module.name)
+        import_module(module.name)
     assert deprecated_entity_members == []  # noqa: S101
