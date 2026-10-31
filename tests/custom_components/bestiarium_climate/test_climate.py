@@ -6,6 +6,7 @@ import pytest
 from homeassistant.components.climate import HVACAction, HVACMode
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import ServiceValidationError
 from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
@@ -219,3 +220,37 @@ async def test_mode_and_target_survive_a_restart_without_temperature(
     state = hass.states.get("climate.room_thermostat")
     assert state.state == "heat"
     assert state.attributes["temperature"] == 23.0
+
+
+async def test_temperatures_unchanged(
+    hass: HomeAssistant, climate_entry_with_thermostat
+) -> None:
+    """The current temperature, the target and its limits reach the state as set."""
+    data = climate_entry_with_thermostat.subentries["thermo_01"].data
+    data["min_temp"] = 16.0
+    data["max_temp"] = 28.0
+    hass.states.async_set("sensor.temp", "21.5")
+    hass.states.async_set("switch.room", "off")
+    await hass.config_entries.async_setup(climate_entry_with_thermostat.entry_id)
+    await hass.async_block_till_done()
+    entity_id = hass.states.async_all("climate")[0].entity_id
+
+    await hass.services.async_call(
+        "climate",
+        "set_temperature",
+        {"entity_id": entity_id, "temperature": 23},
+        blocking=True,
+    )
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "climate",
+            "set_temperature",
+            {"entity_id": entity_id, "temperature": 29},
+            blocking=True,
+        )
+
+    attributes = hass.states.get(entity_id).attributes
+    assert attributes["current_temperature"] == 21.5
+    assert attributes["temperature"] == 23
+    assert attributes["min_temp"] == 16
+    assert attributes["max_temp"] == 28

@@ -85,7 +85,8 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
     """Virtual thermostat with hysteresis; the balancer controls its switch."""
 
     _attr_has_entity_name = True
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS  # for HA 2026.10
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE | ClimateEntityFeature.PRESET_MODE
     )
@@ -185,14 +186,17 @@ class VirtualThermostat(ClimateEntity, RestoreEntity):
         return self.hvac_action in (HVACAction.OFF, HVACAction.IDLE)
 
     @property
-    def current_temperature(self) -> float | None:
+    def native_current_temperature(self) -> float | None:
         """Return current temperature from sensor."""
         return self._cur_temp
 
     @property
-    def target_temperature(self) -> float | None:
+    def native_target_temperature(self) -> float | None:
         """Return target temperature."""
         return self._target_temp
+
+    current_temperature = native_current_temperature  # for HA 2026.10
+    target_temperature = native_target_temperature  # for HA 2026.10
 
     def _temperature_demand_heat(self) -> bool:
         """Return whether heating is needed (current temp below target - cold_tol)."""

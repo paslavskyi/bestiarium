@@ -192,6 +192,8 @@ ifaddr==0.2.0
     # via
     #   homeassistant
     #   zeroconf
+infrared-protocols==10.1.0
+    # via -r requirements.in
 iniconfig==2.3.1
     # via pytest
 installer==1.1.0
