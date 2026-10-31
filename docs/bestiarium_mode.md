@@ -322,8 +322,9 @@ across an update of Bestiarium:
 - A page open across a restart of HA keeps the module it loaded; when it
   reconnects, the frontend imports the same URL, which is that module.
 - The URL needs no token (a module script carries none). It is safe: the view
-  serves exactly the two file names it knows and never builds a path from
-  the request; any other name is a `404`.
+  checks the name against the two files it knows before it builds any path;
+  anything else is a `404` (or a `400` from HA's own filter for an encoded
+  `..`).
 - **Transitional:** the digest path of DEV-014,
   `/bestiarium_mode/frontend/<digest>/<file>`, is a second URL of the same
   view for pages cached before DEV-015. It goes away in a later task, once

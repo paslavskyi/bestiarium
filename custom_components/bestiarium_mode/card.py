@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 CARD_URL = "/api/bestiarium_mode/frontend"
-LEGACY_URL = "/bestiarium_mode/frontend/{digest}"
 CARD_DIR = Path(__file__).parent / "frontend"
 CARD_FILES = ("power-flow-card.js", "power-flow-model.js")
 
@@ -38,7 +37,7 @@ class CardView(HomeAssistantView):
     """The files of the card; a module script carries no token."""
 
     url = f"{CARD_URL}/{{filename}}"
-    extra_urls = [f"{LEGACY_URL}/{{filename}}"]  # noqa: RUF012
+    extra_urls = ["/bestiarium_mode/frontend/{digest}/{filename}"]  # noqa: RUF012
     name = "api:bestiarium_mode:card"
     requires_auth = False
 
