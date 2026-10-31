@@ -68,7 +68,7 @@ Each integration is added through the Home Assistant UI via **Settings → Devic
 
 The project uses a devcontainer for development. Open in VS Code or Cursor with the Dev Containers extension.
 
-Requires Python 3.14 (Home Assistant 2026.10).
+Requires Python 3.14 and Home Assistant 2026.10.4 or newer.
 
 ```bash
 # Install dependencies
