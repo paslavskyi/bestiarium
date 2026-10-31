@@ -110,7 +110,8 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
     _attr_name = None
     _attr_translation_key = "hisense"
     _attr_assumed_state = True
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS  # for HA 2026.10
     _attr_target_temperature_step = 1.0
     _attr_min_temp = float(MIN_TEMP)
     _attr_max_temp = float(MAX_TEMP)
@@ -130,7 +131,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         self._attr_hvac_modes = [HVACMode.OFF, *_MODES]
         self._attr_fan_modes = [fan.value for fan in Kelon168Fan]
         self._attr_hvac_mode = HVACMode.OFF
-        self._attr_target_temperature = float(AUTO_TEMP)
+        self._target_temperature = float(AUTO_TEMP)
         self._attr_fan_mode = Kelon168Fan.AUTO.value
         self._last_active = HVACMode.HEAT
         # What the person wants: a frame is built from it in its turn, so a
@@ -141,7 +142,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
     def _assumed(self) -> tuple[HVACMode, float, str]:
         return (
             self._attr_hvac_mode,
-            self._attr_target_temperature,
+            self._target_temperature,
             self._attr_fan_mode,
         )
 
@@ -157,10 +158,17 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             if stored.get("fan_mode") in self._attr_fan_modes:
                 self._attr_fan_mode = stored["fan_mode"]
             if isinstance(stored.get("temperature"), (int, float)):
-                self._attr_target_temperature = float(stored["temperature"])
+                self._target_temperature = float(stored["temperature"])
             if stored.get("last_active_hvac_mode") in _MODES:
                 self._last_active = HVACMode(stored["last_active_hvac_mode"])
         self._wanted = self._built = self._assumed()
+
+    @property
+    def native_target_temperature(self) -> float:
+        """Return the assumed target."""
+        return self._target_temperature
+
+    target_temperature = native_target_temperature  # for HA 2026.10
 
     @property
     @override
@@ -238,7 +246,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
         )
         # A target or a speed of a unit off or in its own auto waits for later
         if hvac_mode is None and self._wanted[0] in (HVACMode.OFF, HVACMode.AUTO):
-            self._attr_target_temperature = self._wanted[1]
+            self._target_temperature = self._wanted[1]
             self._attr_fan_mode = self._wanted[2]
             self.async_write_ha_state()
             return
@@ -258,7 +266,7 @@ class HisenseClimate(InfraredEmitterConsumerEntity, ClimateEntity, RestoreEntity
             # Nothing reached the unit: what is wanted is what was sent before
             self._wanted = self._built = self._assumed()
             raise
-        self._attr_hvac_mode, self._attr_target_temperature, self._attr_fan_mode = sent
+        self._attr_hvac_mode, self._target_temperature, self._attr_fan_mode = sent
         if sent[0] is not HVACMode.OFF:
             self._last_active = sent[0]
         self.async_write_ha_state()
