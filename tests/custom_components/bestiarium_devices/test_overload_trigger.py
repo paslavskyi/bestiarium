@@ -218,6 +218,46 @@ async def test_the_meter_shows_it_during_the_hold(
     assert home.turned_off == ["switch.first", "switch.second"]
 
 
+async def test_the_first_queue_helped_cleared_as_without_the_action(
+    hass: HomeAssistant, home: Home
+) -> None:
+    """Over the limit at the signal, below the margin by the 5th second: cleared."""
+    home.script[3] = home.load("3000")
+    hass.states.async_set(POWER, "5300")
+
+    await home.signal()
+
+    assert home.seen(EVENT_OVERLOAD_CLEARED) == [5]
+    assert home.seen(EVENT_OVERLOAD_SECOND_QUEUE) == []
+    assert home.turned_off == ["switch.first"]
+
+
+async def test_the_meter_showed_it_then_fell_before_the_5th_second(home: Home) -> None:
+    """The meter leads once it has shown the overload: cleared, not held."""
+    home.script[2] = home.load("6000")
+    home.script[3] = home.load("3000")
+
+    await home.signal()
+
+    assert home.seen(EVENT_OVERLOAD_CLEARED) == [5]
+    assert home.seen(EVENT_OVERLOAD_SECOND_QUEUE) == []
+
+
+async def test_a_repeat_after_the_meter_fell_does_not_put_the_decision_off(
+    hass: HomeAssistant, home: Home
+) -> None:
+    """The review's point 4: decided on the 5th second, not 30 s later."""
+    home.script[3] = home.load("3000")
+    home.script[4] = home.call()
+    hass.states.async_set(POWER, "5300")
+
+    await home.signal()
+
+    assert home.seen(EVENT_OVERLOAD_FIRST_QUEUE) == [0]
+    assert home.seen(EVENT_OVERLOAD_SECOND_QUEUE) == [5]
+    assert home.seen(EVENT_OVERLOAD_CLEARED) == []
+
+
 async def test_low_on_the_5th_second_over_the_limit_on_the_8th(home: Home) -> None:
     """The case of the plan review: the second queue at once, not on the 31st."""
     home.script[8] = home.load("6000")

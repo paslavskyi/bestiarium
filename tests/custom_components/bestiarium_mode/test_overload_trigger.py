@@ -140,22 +140,69 @@ async def test_a_meter_over_the_limit_needs_no_waiting(
     assert ATTR_AWAITING_METER not in hass.states.get(OVERLOAD_SENSOR).attributes
 
 
-async def test_the_meter_ends_the_waiting_not_the_hold(
+async def test_the_meter_over_the_limit_ends_the_hold(
     hass: HomeAssistant, grid: Grid
 ) -> None:
-    """The meter ends the waiting not the hold."""
+    """Once the meter has shown the overload, it leads the zone at once."""
     await grid.setup("1000")
     await trigger(hass)
 
     await grid.load("6000")
+    assert grid.zone is Zone.OVERLOAD
     assert ATTR_AWAITING_METER not in hass.states.get(OVERLOAD_SENSOR).attributes
 
-    # What the meter has shown stays, the hold too
     await grid.load("1000")
+    assert grid.zone is Zone.PAUSE
+
+
+async def test_the_meter_over_the_limit_at_the_call_is_no_hold(
+    hass: HomeAssistant, grid: Grid, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The load falls after the first queue: down at once, as without the action."""
+    await grid.setup("6000")
     await trigger(hass)
-    await grid.tick(29)
-    assert ATTR_AWAITING_METER not in hass.states.get(OVERLOAD_SENSOR).attributes
+    assert "Overload triggered by the relay" in caplog.text
+
+    await grid.load("1000")
+
+    assert grid.zone is Zone.PAUSE
+
+
+async def test_a_repeat_after_the_meter_showed_it_awaits_nothing(
+    hass: HomeAssistant, grid: Grid, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The zone goes up and is held again, but the meter's answer is not due again."""
+    await grid.setup("6000")
+    await trigger(hass)
+    await grid.load("1000")
+    assert grid.zone is Zone.PAUSE
+
+    await grid.tick(10)
+    await trigger(hass, "the relay again")
+
     assert grid.zone is Zone.OVERLOAD
+    assert ATTR_AWAITING_METER not in hass.states.get(OVERLOAD_SENSOR).attributes
+    assert caplog.text.count("Overload triggered") == 1
+
+    await grid.tick(29)
+    assert grid.zone is Zone.OVERLOAD
+    await grid.tick(1)
+    assert grid.zone is Zone.PAUSE
+
+
+async def test_a_call_after_the_first_hold_awaits_the_meter_again(
+    hass: HomeAssistant, grid: Grid, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A signal later than the first call's hold is a new one."""
+    await grid.setup("6000")
+    await trigger(hass)
+    await grid.load("1000")
+
+    await grid.tick(30)
+    await trigger(hass)
+
+    assert ATTR_AWAITING_METER in hass.states.get(OVERLOAD_SENSOR).attributes
+    assert caplog.text.count("Overload triggered") == 2  # noqa: PLR2004
 
 
 async def test_a_repeated_call_counts_the_hold_again(
@@ -177,7 +224,7 @@ async def test_a_repeated_call_counts_the_hold_again(
     await grid.tick(1)
     assert grid.zone is Zone.PAUSE
 
-    assert "Overload triggered by the relay, held for 30 s" in caplog.text
+    assert "Overload triggered by the relay" in caplog.text
     assert caplog.text.count("Overload triggered") == 1
 
 

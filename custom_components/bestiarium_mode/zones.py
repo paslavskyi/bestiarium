@@ -3,7 +3,8 @@ The power load zone of the home: one zone at a time.
 
 Up at once; down only below the threshold minus a margin; green only after a
 pause; no data only after a tolerance (docs/concepts/stability.md). An action
-may raise the overload ahead of the meter, which cannot lower it during a hold.
+may raise the overload ahead of the meter, which cannot lower it during a hold,
+until it shows the overload itself.
 """
 
 from __future__ import annotations
@@ -147,6 +148,8 @@ class ZoneTracker:
         self.awaiting_meter = False
         self._cancel_hold: CALLBACK_TYPE | None = None  # the overload is held
         self._hold_extended_until: datetime | None = None
+        # Until then a signal repeats the last one: the meter's answer is not due
+        self._repeat_until = dt_util.utc_from_timestamp(0)
         self._cancel_pause: CALLBACK_TYPE | None = None
         self._cancel_tolerance: CALLBACK_TYPE | None = None
         self._unsubscribe: list[CALLBACK_TYPE] = []
@@ -175,22 +178,30 @@ class ZoneTracker:
         """
         Raise the overload now and hold it against the meter.
 
-        A call during the hold only extends it: the meter's answer stays due at
-        the end of the first call's hold (the balancer's second queue).
+        A meter that shows the overload needs no hold: it leads the zone. A
+        repeat puts nothing off: during the hold it only extends it, and within
+        the first call's hold time the meter's answer is not due again (the
+        balancer's second queue).
         """
-        hold_seconds = self.config.hold_seconds
+        now = dt_util.utcnow()
+        hold = timedelta(seconds=self.config.hold_seconds)
         if self._cancel_hold:
             LOGGER.debug("Overload hold extended by %s", source)
-            self._hold_extended_until = dt_util.utcnow() + timedelta(
-                seconds=hold_seconds
-            )
+            self._hold_extended_until = now + hold
             return
-        LOGGER.warning("Overload triggered by %s, held for %s s", source, hold_seconds)
-        self._cancel_hold = async_call_later(
-            self._hass, hold_seconds, self._on_hold_timer
-        )
+        repeat = now < self._repeat_until
+        if repeat:
+            LOGGER.debug("Overload signal repeated by %s", source)
+        else:
+            LOGGER.warning("Overload triggered by %s", source)
+            self._repeat_until = now + hold
         power = _watts(self._hass.states.get(self.config.power_sensor_id))
-        self.awaiting_meter = power is None or power < self.config.limit_w
+        if power is not None and power >= self.config.limit_w:
+            return
+        self._cancel_hold = async_call_later(
+            self._hass, hold.total_seconds(), self._on_hold_timer
+        )
+        self.awaiting_meter = not repeat
         if self.zone is Zone.OVERLOAD:
             self._changed()  # the attribute of the overload sensor
         else:
@@ -225,10 +236,13 @@ class ZoneTracker:
             LOGGER.info("Power load data is back")
         config = self.config
         if self._cancel_hold:
-            if self.awaiting_meter and power >= config.limit_w:
-                self.awaiting_meter = False
-                self._changed()
-            return
+            if power < config.limit_w:
+                return
+            self._cancel_hold()
+            self._cancel_hold = None
+            self._hold_extended_until = None
+            self.awaiting_meter = False
+            self._changed()
         up = config.zone_of(power)
         down = config.zone_of(power + config.margin_w)
         if _LEVEL[up] > _LEVEL[self.zone]:
