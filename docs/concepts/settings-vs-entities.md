@@ -49,6 +49,6 @@ fault parameters on the device page only). `bestiarium_devices` never offers a `
 | Load limit | number entity (`bestiarium_mode`) | an automation changes it when the power source changes |
 | Priorities per mode | configuration | set once per device |
 | Estimated power, reset of the learned consumption | options flow of the device (DEV-008) | set once; were a number and a button, removed by migration 1.3 |
-| The zones' margin (3 %), pause before green (30 s), power data tolerance (60 s) | `bestiarium_mode` load limits (DEV-008) | algorithm parameters |
+| The zones' margin (3 %), pause before green (30 s), power data tolerance (60 s), overload hold (30 s, DEV-017) | `bestiarium_mode` load limits (DEV-008) | algorithm parameters |
 | Attempts, deferral, tolerance, hysteresis, response time, red zone limit (DEV-007) | options flow of the device (`ControlSettings`) | algorithm parameters |
 | Control state, control events (DEV-007) | diagnostic entities | to be seen, not operated |

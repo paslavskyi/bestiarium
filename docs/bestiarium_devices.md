@@ -178,6 +178,7 @@ These unique_ids are a contract with `bestiarium_mode`; the end-to-end tests run
 | `GREEN_INTERVAL_SECONDS` | `60` | Green strategy periodic interval |
 | `RED_INTERVAL_SECONDS` | `5` | Red strategy periodic interval |
 | `OVERLOAD_WAIT_SECONDS` | `5` | Pause between first and second overload queue |
+| `OVERLOAD_METER_POLL_SECONDS` | `1` | How often the shutdown looks whether the overload still awaits the meter |
 
 ### Hard-coded parameters and why (DEC-013)
 
@@ -414,6 +415,23 @@ Checked only where the balancer turns a device on by itself: the green strategy 
 - **Skips**: Devices already OFF, devices with priority `9999` (ALWAYS_ON), deferred devices
 - **Sorting**: Candidates sorted by priority ascending
 - **Waiting**: while a device of the queue may still answer its turn-off command (its response time, at most `red_max_wait_seconds` for the whole series), the red strategy turns off no other device. Then it defers that device and turns off the next one in the same step. Devices off by mode do not hold the queue
+
+#### The second queue of an overload
+
+After the first queue the shutdown waits 5 s and asks the overload sensor whether the overload has gone. An overload raised by the action `trigger_overload` of `bestiarium_mode` is held there against the meter for a while, so the answer could only be "no": while the sensor has `awaiting_meter`, the shutdown waits on (it looks every second). The owner's rule (DEV-017):
+
+| Situation | When the second queue is decided |
+|---|---|
+| No action called | after 5 s, as always |
+| The meter is at the limit or more when the signal comes | after 5 s |
+| The meter shows the limit or more during the hold | at once, not before 5 s from the start of the shutdown |
+| The meter stays below the limit to the end of the hold | at the end of the hold |
+| A repeated signal during the hold | at the end of the hold counted from the **first** call; the zone is still held on by the repeat, so the overload has not gone and the second queue goes |
+| No power data | at the end of the hold; the sensor is unavailable (or the zone waits for the tolerance), the overload has not gone and the second queue goes |
+
+"Gone" is the sensor being off: at the end of the hold a load below the limit but within the zone's margin keeps the overload on, and the second queue goes.
+
+One shutdown at a time: an overload that comes back while one runs (the meter's overload ended and a signal raised it, or the meter flapped within the 5 s) starts no other; before DEV-017 two ran side by side, with doubled events.
 
 Green, red and "Allowed" fire their `device_turned_on/off` event from one place (`_fire_switched`, payload `DeviceSwitchedData`); the strategies, overload and mode application send relay commands through `_async_command`, which logs a command HA refused (`HomeAssistantError`) and goes on with the other devices. Overload and mode application send their command to deferred devices too, without waiting or counting attempts.
 
