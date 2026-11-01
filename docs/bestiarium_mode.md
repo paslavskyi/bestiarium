@@ -223,21 +223,21 @@ red_threshold    = limit_w * red_zone_percent / 100
 
 There is no entry to name: a home has one Mode entry at most. Without one loaded the action raises the error `not_loaded`, without load limits `no_load_limits`.
 
-**The hold** (`ac_overload_hold_seconds`, 30 s, in the load limits form): for this long after a call the meter cannot lower the zone, because its reading may not have caught up yet. A repeated call counts the hold again, in the zone it changes nothing. During the hold:
+**The hold** (`ac_overload_hold_seconds`, 30 s, in the load limits form): for this long after a call a reading below the limit cannot lower the zone, because it may not have caught up yet. A repeated call counts the hold again, in the zone it changes nothing. **A meter that shows the limit or more ends the hold**, at the call or during it: its readings can be trusted now, so it leads the zone by the usual rules, and the zone falls as soon as the load does. A call within the hold time of the first one, after the meter ended the hold and the zone fell, raises and holds the zone again, without `awaiting_meter`. During the hold:
 
 | What | What it does |
 |---|---|
-| Overload sensor | on, also without power data; `awaiting_meter: true` until the meter shows the limit or the first call's hold ends |
+| Overload sensor | on, also without power data; `awaiting_meter: true` until the first call's hold time ends |
 | Green, yellow, red sensors | off |
 | Power flow card | nothing: it does not read the zones |
-| A reading | is followed, but lowers nothing; a reading of the limit or more ends `awaiting_meter` for the rest of the hold |
+| A reading | below the limit lowers nothing; of the limit or more ends the hold |
 | Power data lost | the tolerance runs as usual, but "no data" waits for the end of the hold |
 | A limit change | the thresholds change at once, the zone stays; the end of the hold reads the new limit |
 | A restart of HA, a reload of the entry | the hold is gone (it lives in memory only), the zone follows the meter |
 
 **After the hold** the zone follows the usual rules: down by the load with the margin, and green only through the whole pause, counted from the end of the hold. No power data for longer than the tolerance: "no data"; less: the zone stays until the tolerance ends.
 
-**The log**: one `warning` with the source when a hold starts, a repeated call only `debug`. No new event: the events tell the integration's decisions, and these are the same; the script knows what it called (and can add `logbook.log` if it should be seen in the logbook).
+**The log**: one `warning` with the source for a signal, a repeated call only `debug`. No new event: the events tell the integration's decisions, and these are the same; the script knows what it called (and can add `logbook.log` if it should be seen in the logbook).
 
 **Between the integrations**: `awaiting_meter` on the overload sensor is read by the balancer, like `red_threshold`. See [the second queue's rule](bestiarium_devices.md#the-second-queue-of-an-overload).
 

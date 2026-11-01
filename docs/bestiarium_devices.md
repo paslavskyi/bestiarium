@@ -418,15 +418,16 @@ Checked only where the balancer turns a device on by itself: the green strategy 
 
 #### The second queue of an overload
 
-After the first queue the shutdown waits 5 s and asks the overload sensor whether the overload has gone. An overload raised by the action `trigger_overload` of `bestiarium_mode` is held there against the meter for a while, so the answer could only be "no": while the sensor has `awaiting_meter`, the shutdown waits on (it looks every second). The owner's rule (DEV-017):
+After the first queue the shutdown waits 5 s and asks the overload sensor whether the overload has gone. An overload raised by the action `trigger_overload` of `bestiarium_mode` is held there against a meter that has not shown it, so the answer could only be "no": while the sensor has `awaiting_meter`, the shutdown waits on (it looks every second). The owner's rule (DEV-017):
 
 | Situation | When the second queue is decided |
 |---|---|
 | No action called | after 5 s, as always |
-| The meter is at the limit or more when the signal comes | after 5 s |
-| The meter shows the limit or more during the hold | at once, not before 5 s from the start of the shutdown |
+| The meter is at the limit or more when the signal comes | after 5 s, with no hold: if the load has fallen below the margin by then, `cleared`, as without the signal |
+| The meter shows the limit or more during the hold | at once, not before 5 s from the start of the shutdown; the hold is over, so a load that has fallen by then gives `cleared` |
 | The meter stays below the limit to the end of the hold | at the end of the hold |
 | A repeated signal during the hold | at the end of the hold counted from the **first** call; the zone is still held on by the repeat, so the overload has not gone and the second queue goes |
+| A repeated signal after the meter ended the hold and the load fell, within the first call's hold time | no later than it would be without the repeat: the zone is raised and held, with no `awaiting_meter`, so the overload has not gone and the second queue goes |
 | No power data | at the end of the hold; the sensor is unavailable (or the zone waits for the tolerance), the overload has not gone and the second queue goes |
 
 "Gone" is the sensor being off: at the end of the hold a load below the limit but within the zone's margin keeps the overload on, and the second queue goes.

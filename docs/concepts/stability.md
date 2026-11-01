@@ -97,7 +97,8 @@ up at once, down only below the threshold minus a margin (3 % of the limit),
 green after a pause (30 s), "no data" only after a tolerance (60 s).
 
 The action `trigger_overload` (DEV-017) meets a meter that may lag behind a
-signal: the meter cannot lower the zone for a hold (30 s), and the balancer holds
-its second queue back until the meter shows the overload or the hold ends. A
-reading that stays below the limit is no evidence during the hold; one at the
-limit or more is at once.
+signal: a reading below the limit cannot lower the zone for a hold (30 s), and
+the balancer holds its second queue back until the meter shows the overload or
+the hold ends. A reading that stays below the limit is no evidence during the
+hold; one at the limit or more is, at once: it ends the hold, and from then on
+the meter leads the zone by the usual rules.
