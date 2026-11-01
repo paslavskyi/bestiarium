@@ -25,6 +25,8 @@ custom_components/bestiarium_mode/
 ├── zones.py             # ZoneTracker — the one current zone of the entry
 ├── binary_sensor.py     # PowerLoadBinarySensor entities (4 zones, views of the zone)
 ├── repairs.py           # Repairs: the zones' power sensor is gone, its fix flow
+├── services.py          # The action trigger_overload
+├── services.yaml        # Its description
 ├── number.py            # PowerLoadLimitNumber entity (runtime load limit)
 ├── card.py              # Serves the power flow card (stable no-cache URL, extra JS URL)
 ├── frontend/
@@ -39,6 +41,7 @@ tests/custom_components/bestiarium_mode/
 ├── test_config_flow.py
 ├── test_binary_sensor.py
 ├── test_zones.py
+├── test_overload_trigger.py
 ├── test_number.py
 ├── test_select.py
 └── test_card.py
@@ -80,6 +83,7 @@ The config entry stores two top-level keys in `entry.data`:
         "ac_overload_recovery_seconds": int,  # The pause before green, s (default 30, range 1–300)
         "ac_zone_hysteresis_percent": float,  # The margin of going down, % of the limit (default 3, 0–20)
         "ac_power_tolerance_seconds": int,   # No power data longer than this: no data (default 60, 0–600)
+        "ac_overload_hold_seconds": int,     # How long trigger_overload holds the overload, s (default 30, 1–300)
     }
 }
 ```
@@ -194,6 +198,7 @@ Rules (the owner's model, DEV-008):
 - **The pause only before green**: yellow → pause → green after the pause continuously below "yellow threshold − margin"; a load within the margin restarts it, above the yellow threshold it is yellow at once (the next pause starts from zero).
 - **Lost data**: the zone stays as it was for the tolerance, then no data; data back → the zone by the load at once (green through the pause).
 - **A limit change** recalculates by the same rules.
+- **The action `trigger_overload`** raises the overload at once, whatever the zone or the meter; see [below](#the-action-trigger_overload).
 
 | Zone (sensor) | Threshold | Icon |
 |---|---|---|
@@ -208,6 +213,34 @@ yellow_threshold = limit_w * yellow_zone_percent / 100
 red_threshold    = limit_w * red_zone_percent / 100
 ```
 
+### The action `trigger_overload`
+
+`bestiarium_mode.trigger_overload` (DEV-017, FR-031) is a second channel next to the power sensor: a script calls it when another signal tells of an overload, and whichever comes first starts the shutdown. It only moves the zone: the sensors, the balancer's two queues, the thermostats and the events are those of an overload by the meter. It knows nothing about what gives the signal.
+
+| Field | Required | Description |
+|---|---|---|
+| `source` | yes | Where the signal comes from; goes to the log |
+
+There is no entry to name: a home has one Mode entry at most. Without one loaded the action raises the error `not_loaded`, without load limits `no_load_limits`.
+
+**The hold** (`ac_overload_hold_seconds`, 30 s, in the load limits form): for this long after a call a reading below the limit cannot lower the zone, because it may not have caught up yet. A repeated call counts the hold again, in the zone it changes nothing. **A meter that shows the limit or more ends the hold**, at the call or during it: its readings can be trusted now, so it leads the zone by the usual rules, and the zone falls as soon as the load does. A call within the hold time of the first one, after the meter ended the hold and the zone fell, raises and holds the zone again, without `awaiting_meter`. During the hold:
+
+| What | What it does |
+|---|---|
+| Overload sensor | on, also without power data; `awaiting_meter: true` until the first call's hold time ends |
+| Green, yellow, red sensors | off |
+| Power flow card | nothing: it does not read the zones |
+| A reading | below the limit lowers nothing; of the limit or more ends the hold |
+| Power data lost | the tolerance runs as usual, but "no data" waits for the end of the hold |
+| A limit change | the thresholds change at once, the zone stays; the end of the hold reads the new limit |
+| A restart of HA, a reload of the entry | the hold is gone (it lives in memory only), the zone follows the meter |
+
+**After the hold** the zone follows the usual rules: down by the load with the margin, and green only through the whole pause, counted from the end of the hold. No power data for longer than the tolerance: "no data"; less: the zone stays until the tolerance ends.
+
+**The log**: one `warning` with the source for a signal and for a repeat that raises the zone again; a repeat during the hold or one that changes no zone only `debug`. No new event: the events tell the integration's decisions, and these are the same; the script knows what it called (and can add `logbook.log` if it should be seen in the logbook).
+
+**Between the integrations**: `awaiting_meter` on the overload sensor is read by the balancer, like `red_threshold`. See [the second queue's rule](bestiarium_devices.md#the-second-queue-of-an-overload).
+
 ### Entity Attributes
 
 Only what something reads (DEV-008 stage B, [necessity](concepts/necessity.md)); the limit is the limit entity's, the thresholds are configuration.
@@ -215,6 +248,7 @@ Only what something reads (DEV-008 stage B, [necessity](concepts/necessity.md));
 | Attribute | Sensor | Description |
 |---|---|---|
 | `red_threshold` | red | its threshold in watts; the balancer of `bestiarium_devices` reads it |
+| `awaiting_meter` | overload | only while `trigger_overload`'s overload awaits the meter (`true`); the balancer holds its second queue back |
 
 Removed in DEV-008 stage B: `zone` and `limit_w` on every sensor, the other zones' thresholds, green's `recovery_pending` (the pause is "all four off and available"), yellow's `yellow_threshold`.
 

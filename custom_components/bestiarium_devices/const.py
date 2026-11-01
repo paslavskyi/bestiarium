@@ -129,11 +129,13 @@ ZONE_SENSOR_UNIQUE_ID = "power_load_{zone}"
 MODE_AC_LOAD_LIMITS = "ac_load_limits"
 MODE_AC_POWER_SENSOR = "ac_power_sensor"
 MODE_RED_THRESHOLD = "red_threshold"
+MODE_AWAITING_METER = "awaiting_meter"
 
 # Balancing strategy timing constants (in seconds)
 GREEN_INTERVAL_SECONDS = 60
 RED_INTERVAL_SECONDS = 5
 OVERLOAD_WAIT_SECONDS = 5
+OVERLOAD_METER_POLL_SECONDS = 1
 
 # Event types for automations
 EVENT_DEVICE_TURNED_ON = "bestiarium_devices_device_turned_on"

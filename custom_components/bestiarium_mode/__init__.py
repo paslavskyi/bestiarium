@@ -18,6 +18,7 @@ from .card import async_register_card
 from .const import DOMAIN, LOGGER
 from .data import power_load_monitoring_configured
 from .repairs import async_watch_power_sensor
+from .services import async_register_services
 from .zones import ZoneTracker
 
 if TYPE_CHECKING:
@@ -36,8 +37,9 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:  # noqa: ARG001
-    """Serve the power flow card (DEV-014)."""
+    """Serve the power flow card (DEV-014) and register the actions."""
     await async_register_card(hass)
+    async_register_services(hass)
     return True
 
 

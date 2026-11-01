@@ -13,12 +13,14 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from .const import (
     CONF_AC_LOAD_LIMIT_W,
     CONF_AC_LOAD_LIMITS,
+    CONF_AC_OVERLOAD_HOLD_SECONDS,
     CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
     CONF_AC_POWER_TOLERANCE_SECONDS,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
     CONF_AC_ZONE_HYSTERESIS_PERCENT,
+    DEFAULT_OVERLOAD_HOLD_SECONDS,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_RED_ZONE_PERCENT,
@@ -218,6 +220,9 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         default_tolerance = existing_limits.get(
             CONF_AC_POWER_TOLERANCE_SECONDS, DEFAULT_POWER_TOLERANCE_SECONDS
         )
+        default_hold = existing_limits.get(
+            CONF_AC_OVERLOAD_HOLD_SECONDS, DEFAULT_OVERLOAD_HOLD_SECONDS
+        )
 
         if user_input is not None:
             yellow = int(user_input[CONF_AC_YELLOW_ZONE_PERCENT])
@@ -242,6 +247,9 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     ),
                     CONF_AC_POWER_TOLERANCE_SECONDS: int(
                         user_input[CONF_AC_POWER_TOLERANCE_SECONDS]
+                    ),
+                    CONF_AC_OVERLOAD_HOLD_SECONDS: int(
+                        user_input[CONF_AC_OVERLOAD_HOLD_SECONDS]
                     ),
                 }
                 return await self._async_step_options_list()
@@ -319,6 +327,17 @@ class BestiariumModeFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                     selector.NumberSelectorConfig(
                         min=0,
                         max=600,
+                        step=1,
+                        unit_of_measurement="s",
+                        mode=selector.NumberSelectorMode.BOX,
+                    ),
+                ),
+                vol.Required(
+                    CONF_AC_OVERLOAD_HOLD_SECONDS, default=default_hold
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(
+                        min=1,
+                        max=300,
                         step=1,
                         unit_of_measurement="s",
                         mode=selector.NumberSelectorMode.BOX,
