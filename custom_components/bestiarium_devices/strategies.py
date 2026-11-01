@@ -24,6 +24,7 @@ from .const import (
     LOAD_PRIORITY_ALWAYS_ON,
     LOAD_PRIORITY_OFF,
     LOGGER,
+    OVERLOAD_METER_POLL_SECONDS,
     OVERLOAD_WAIT_SECONDS,
     RED_INTERVAL_SECONDS,
     DeviceSwitchedData,
@@ -41,6 +42,7 @@ from .helpers import (
     get_mode_state,
     is_allowed,
     load_and_red_threshold,
+    overload_awaits_meter,
 )
 
 if TYPE_CHECKING:
@@ -68,6 +70,7 @@ class Strategies:
         self._controls = controls
         self._power_memory = power_memory
         self._overload_cleared = overload_cleared
+        self._overload_running = False
 
     def _devices(self) -> list[tuple[ConfigEntry, DeviceControl, State | None]]:
         """
@@ -438,7 +441,22 @@ class Strategies:
         return count
 
     async def async_overload(self) -> None:
-        """Run overload handling using a two-step shutdown strategy."""
+        """
+        Run the two-step shutdown, one at a time.
+
+        An overload that comes back during a shutdown is left to it: its second
+        queue is still to be decided.
+        """
+        if self._overload_running:
+            LOGGER.debug("OVERLOAD: The shutdown is already running")
+            return
+        self._overload_running = True
+        try:
+            await self._async_two_step_shutdown()
+        finally:
+            self._overload_running = False
+
+    async def _async_two_step_shutdown(self) -> None:
         LOGGER.warning("OVERLOAD: Executing two-step emergency shutdown")
         entries = [entry for entry, _control, _state in self._devices()]
 
@@ -479,6 +497,9 @@ class Strategies:
             return
 
         await asyncio.sleep(OVERLOAD_WAIT_SECONDS)
+        # A look, not a listener: the sensor may be renamed or go during the wait
+        while overload_awaits_meter(self._hass):  # noqa: ASYNC110
+            await asyncio.sleep(OVERLOAD_METER_POLL_SECONDS)
 
         if self._overload_cleared():
             LOGGER.info("OVERLOAD: Overload cleared during wait; skipping second queue")
