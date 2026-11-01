@@ -64,7 +64,7 @@
           "ac_overload_recovery_seconds": "After the load drops below the yellow threshold minus the margin, how long it must stay there before the green zone (and turning devices on) starts",
           "ac_zone_hysteresis_percent": "A zone goes down only when the load is this much below its threshold; up is at once",
           "ac_power_tolerance_seconds": "How long the zone stays as it was when the power sensor gives no data; then the zone is “no data”",
-          "ac_overload_hold_seconds": "After the Trigger overload action the overload lasts at least this long, whatever the power sensor shows; each new call counts it again"
+          "ac_overload_hold_seconds": "After the Trigger overload action a reading below the limit cannot end the overload for this long; each new call counts it again. A reading at the limit or more ends the hold: the power sensor leads the zone again"
         }
       },
       "add": {
@@ -263,7 +263,7 @@
   "services": {
     "trigger_overload": {
       "name": "Trigger overload",
-      "description": "Start the overload zone now, ahead of the power sensor, with the same two-step shutdown, and hold it for the overload hold time. A repeated call counts the hold again.",
+      "description": "Start the overload zone now, ahead of the power sensor, with the same two-step shutdown. For the overload hold time a reading below the limit cannot end it, and a repeated call counts that time again. A reading at the limit or more ends the hold: the power sensor leads the zone again.",
       "fields": {
         "source": {
           "name": "Source",

@@ -258,6 +258,24 @@ async def test_a_repeat_after_the_meter_fell_does_not_put_the_decision_off(
     assert home.seen(EVENT_OVERLOAD_CLEARED) == []
 
 
+async def test_a_signal_soon_after_cleared_decides_the_second_queue_in_5_s(
+    hass: HomeAssistant, home: Home
+) -> None:
+    """Cleared on the 5th, a signal on the 10th: the second queue on the 15th."""
+    home.script[3] = home.load("3000")
+    hass.states.async_set(POWER, "5300")
+    await home.signal()
+    assert home.seen(EVENT_OVERLOAD_CLEARED) == [5]
+    assert home.seen(EVENT_OVERLOAD_SECOND_QUEUE) == []
+
+    await home.sleep(5)
+    await home.signal()
+
+    assert home.seen(EVENT_OVERLOAD_FIRST_QUEUE) == [0, 10]
+    assert home.seen(EVENT_OVERLOAD_SECOND_QUEUE) == [15]
+    assert home.seen(EVENT_OVERLOAD_CLEARED) == [5]
+
+
 async def test_low_on_the_5th_second_over_the_limit_on_the_8th(home: Home) -> None:
     """The case of the plan review: the second queue at once, not on the 31st."""
     home.script[8] = home.load("6000")

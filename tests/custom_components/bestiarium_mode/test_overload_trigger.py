@@ -182,12 +182,23 @@ async def test_a_repeat_after_the_meter_showed_it_awaits_nothing(
 
     assert grid.zone is Zone.OVERLOAD
     assert ATTR_AWAITING_METER not in hass.states.get(OVERLOAD_SENSOR).attributes
-    assert caplog.text.count("Overload triggered") == 1
+    assert "Overload triggered by the relay again" in caplog.text
 
     await grid.tick(29)
     assert grid.zone is Zone.OVERLOAD
     await grid.tick(1)
     assert grid.zone is Zone.PAUSE
+
+
+async def test_a_repeat_that_changes_no_zone_is_no_new_line(
+    hass: HomeAssistant, grid: Grid, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The meter leads the overload and a repeat comes: nothing new has started."""
+    await grid.setup("6000")
+    await trigger(hass)
+    await trigger(hass, "the relay again")
+
+    assert caplog.text.count("Overload triggered") == 1
 
 
 async def test_a_call_after_the_first_hold_awaits_the_meter_again(

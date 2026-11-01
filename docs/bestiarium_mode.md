@@ -237,7 +237,7 @@ There is no entry to name: a home has one Mode entry at most. Without one loaded
 
 **After the hold** the zone follows the usual rules: down by the load with the margin, and green only through the whole pause, counted from the end of the hold. No power data for longer than the tolerance: "no data"; less: the zone stays until the tolerance ends.
 
-**The log**: one `warning` with the source for a signal, a repeated call only `debug`. No new event: the events tell the integration's decisions, and these are the same; the script knows what it called (and can add `logbook.log` if it should be seen in the logbook).
+**The log**: one `warning` with the source for a signal and for a repeat that raises the zone again; a repeat during the hold or one that changes no zone only `debug`. No new event: the events tell the integration's decisions, and these are the same; the script knows what it called (and can add `logbook.log` if it should be seen in the logbook).
 
 **Between the integrations**: `awaiting_meter` on the overload sensor is read by the balancer, like `red_threshold`. See [the second queue's rule](bestiarium_devices.md#the-second-queue-of-an-overload).
 

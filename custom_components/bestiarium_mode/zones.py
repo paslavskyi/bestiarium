@@ -190,10 +190,11 @@ class ZoneTracker:
             self._hold_extended_until = now + hold
             return
         repeat = now < self._repeat_until
-        if repeat:
+        if repeat and self.zone is Zone.OVERLOAD:
             LOGGER.debug("Overload signal repeated by %s", source)
         else:
             LOGGER.warning("Overload triggered by %s", source)
+        if not repeat:
             self._repeat_until = now + hold
         power = _watts(self._hass.states.get(self.config.power_sensor_id))
         if power is not None and power >= self.config.limit_w:
