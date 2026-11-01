@@ -53,7 +53,8 @@
           "ac_red_zone_percent": "Red zone (%)",
           "ac_overload_recovery_seconds": "Pause before green (s)",
           "ac_zone_hysteresis_percent": "Zone margin (% of the limit)",
-          "ac_power_tolerance_seconds": "Power data tolerance (s)"
+          "ac_power_tolerance_seconds": "Power data tolerance (s)",
+          "ac_overload_hold_seconds": "Overload hold (s)"
         },
         "data_description": {
           "ac_power_sensor": "Sensor that measures AC power (W)",
@@ -62,7 +63,8 @@
           "ac_red_zone_percent": "Red critical threshold percentage",
           "ac_overload_recovery_seconds": "After the load drops below the yellow threshold minus the margin, how long it must stay there before the green zone (and turning devices on) starts",
           "ac_zone_hysteresis_percent": "A zone goes down only when the load is this much below its threshold; up is at once",
-          "ac_power_tolerance_seconds": "How long the zone stays as it was when the power sensor gives no data; then the zone is “no data”"
+          "ac_power_tolerance_seconds": "How long the zone stays as it was when the power sensor gives no data; then the zone is “no data”",
+          "ac_overload_hold_seconds": "After the Trigger overload action the overload lasts at least this long, whatever the power sensor shows; each new call counts it again"
         }
       },
       "add": {
@@ -246,6 +248,26 @@
               "ac_power_sensor": "Power sensor"
             }
           }
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Bestiarium Mode is not set up or not loaded"
+    },
+    "no_load_limits": {
+      "message": "The AC load limits of Bestiarium Mode are not configured, so there is no overload to trigger"
+    }
+  },
+  "services": {
+    "trigger_overload": {
+      "name": "Trigger overload",
+      "description": "Start the overload zone now, ahead of the power sensor, with the same two-step shutdown, and hold it for the overload hold time. A repeated call counts the hold again.",
+      "fields": {
+        "source": {
+          "name": "Source",
+          "description": "Where the signal comes from, for the log, e.g. “inverter to home relay”"
         }
       }
     }

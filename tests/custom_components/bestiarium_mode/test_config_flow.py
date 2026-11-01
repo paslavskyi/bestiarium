@@ -15,12 +15,14 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.bestiarium_mode.const import (
     CONF_AC_LOAD_LIMIT_W,
     CONF_AC_LOAD_LIMITS,
+    CONF_AC_OVERLOAD_HOLD_SECONDS,
     CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
     CONF_AC_POWER_TOLERANCE_SECONDS,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
     CONF_AC_ZONE_HYSTERESIS_PERCENT,
+    DEFAULT_OVERLOAD_HOLD_SECONDS,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_ZONE_HYSTERESIS_PERCENT,
@@ -88,6 +90,7 @@ async def test_config_flow_create_entry(hass: HomeAssistant) -> None:
         CONF_AC_RED_ZONE_PERCENT: 90,
         CONF_AC_ZONE_HYSTERESIS_PERCENT: DEFAULT_ZONE_HYSTERESIS_PERCENT,
         CONF_AC_POWER_TOLERANCE_SECONDS: DEFAULT_POWER_TOLERANCE_SECONDS,
+        CONF_AC_OVERLOAD_HOLD_SECONDS: DEFAULT_OVERLOAD_HOLD_SECONDS,
         CONF_AC_OVERLOAD_RECOVERY_SECONDS: DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     }
 
@@ -201,6 +204,7 @@ async def test_config_flow_reconfigure_updates_entry(hass: HomeAssistant) -> Non
         CONF_AC_RED_ZONE_PERCENT: 90,
         CONF_AC_ZONE_HYSTERESIS_PERCENT: DEFAULT_ZONE_HYSTERESIS_PERCENT,
         CONF_AC_POWER_TOLERANCE_SECONDS: DEFAULT_POWER_TOLERANCE_SECONDS,
+        CONF_AC_OVERLOAD_HOLD_SECONDS: DEFAULT_OVERLOAD_HOLD_SECONDS,
         CONF_AC_OVERLOAD_RECOVERY_SECONDS: DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     }
 
@@ -238,3 +242,52 @@ async def test_reconfigure_message_from_integration_translations(
 
     assert result["reason"] == "reconfigure_successful"
     assert result.get("translation_domain") is None
+
+
+async def test_overload_hold_in_the_load_limits_form(hass: HomeAssistant) -> None:
+    """The form offers the default for an entry without it and keeps a new value."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id="bestiarium_mode",
+        data={
+            "options": [{"name": "Eco"}],
+            "ac_load_limits": {
+                CONF_AC_POWER_SENSOR: "sensor.ac_power",
+                CONF_AC_LOAD_LIMIT_W: 3000,
+            },
+        },
+        minor_version=2,
+    )
+    entry.add_to_hass(hass)
+    hass.states.async_set(
+        "sensor.ac_power",
+        "100",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    result = await entry.start_reconfigure_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "configure_ac_load_limits"}
+    )
+    hold = next(
+        key
+        for key in result["data_schema"].schema
+        if key == CONF_AC_OVERLOAD_HOLD_SECONDS
+    )
+    assert hold.default() == DEFAULT_OVERLOAD_HOLD_SECONDS
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        {
+            CONF_AC_POWER_SENSOR: "sensor.ac_power",
+            CONF_AC_LOAD_LIMIT_W: 3000,
+            CONF_AC_YELLOW_ZONE_PERCENT: 75,
+            CONF_AC_RED_ZONE_PERCENT: 90,
+            CONF_AC_OVERLOAD_HOLD_SECONDS: 45,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "complete"}
+    )
+    assert result["type"] == FlowResultType.ABORT
+    limits = entry.data["ac_load_limits"]
+    assert limits[CONF_AC_OVERLOAD_HOLD_SECONDS] == 45  # noqa: PLR2004

@@ -1,0 +1,7 @@
+trigger_overload:
+  fields:
+    source:
+      required: true
+      example: "inverter to home relay"
+      selector:
+        text:

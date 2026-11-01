@@ -14,6 +14,7 @@ CONF_AC_RED_ZONE_PERCENT = "ac_red_zone_percent"
 CONF_AC_OVERLOAD_RECOVERY_SECONDS = "ac_overload_recovery_seconds"  # green's pause
 CONF_AC_ZONE_HYSTERESIS_PERCENT = "ac_zone_hysteresis_percent"
 CONF_AC_POWER_TOLERANCE_SECONDS = "ac_power_tolerance_seconds"
+CONF_AC_OVERLOAD_HOLD_SECONDS = "ac_overload_hold_seconds"
 
 # Default values
 DEFAULT_YELLOW_ZONE_PERCENT = 75
@@ -21,6 +22,7 @@ DEFAULT_RED_ZONE_PERCENT = 90
 DEFAULT_OVERLOAD_RECOVERY_SECONDS = 30
 DEFAULT_ZONE_HYSTERESIS_PERCENT = 3
 DEFAULT_POWER_TOLERANCE_SECONDS = 60
+DEFAULT_OVERLOAD_HOLD_SECONDS = 30
 
 # AC load limit range (W), shared by the config flow and the limit entity
 LOAD_LIMIT_MIN_W = 1
@@ -28,5 +30,10 @@ LOAD_LIMIT_MAX_W = 100000
 
 EVENT_LOAD_LIMIT_CHANGED = f"{DOMAIN}_load_limit_changed"
 SIGNAL_ZONE_CHANGED = f"{DOMAIN}_zone_changed_{{}}"
+# On the overload sensor while the action's overload awaits the meter: the
+# balancer holds its second queue back
+ATTR_AWAITING_METER = "awaiting_meter"
+SERVICE_TRIGGER_OVERLOAD = "trigger_overload"
+ATTR_SOURCE = "source"
 # Sent by the reconfigure form: ({old name: new name}, [removed names])
 SIGNAL_MODES_RENAMED = f"{DOMAIN}_options_renamed"
