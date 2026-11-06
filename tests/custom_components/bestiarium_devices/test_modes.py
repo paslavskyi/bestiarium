@@ -14,7 +14,7 @@ from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import CoreState, Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.bestiarium_devices.const import (
     CONF_DEFAULT_PRIORITY,

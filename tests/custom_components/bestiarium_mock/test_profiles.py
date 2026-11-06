@@ -7,7 +7,7 @@ from collections.abc import Callable
 import pytest
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     mock_restore_cache_with_extra_data,
 )
 

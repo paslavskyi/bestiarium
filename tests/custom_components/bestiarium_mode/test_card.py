@@ -10,7 +10,7 @@ import pytest
 from aiohttp.test_utils import TestClient
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+from pytest_homeassistant.typing import ClientSessionGenerator
 
 from custom_components.bestiarium_mode.card import CARD_FILES
 from custom_components.bestiarium_mode.const import DOMAIN

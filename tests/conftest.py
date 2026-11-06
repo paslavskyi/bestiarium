@@ -1,12 +1,30 @@
 """Test configuration for bestiarium_mode."""
 
 import logging
+import sys
 from collections.abc import Iterator
+from importlib import import_module
 
 import pytest
+from homeassistant.const import MAJOR_VERSION, MINOR_VERSION
 from homeassistant.helpers import deprecation
 
-pytest_plugins = "pytest_homeassistant_custom_component"
+HA_2026_11 = (MAJOR_VERSION, MINOR_VERSION) >= (2026, 11)
+
+if not HA_2026_11:
+    # for HA 2026.10: its test plugin under the name of the one HA 2026.11 ships
+    for _module in (
+        "",
+        ".common",
+        ".components",
+        ".components.recorder",
+        ".components.recorder.common",
+        ".typing",
+    ):
+        sys.modules[f"pytest_homeassistant{_module}"] = import_module(
+            f"pytest_homeassistant_custom_component{_module}"
+        )
+    pytest_plugins = "pytest_homeassistant_custom_component"
 
 HA_USAGE_REPORT_LOGGERS = (
     "homeassistant.helpers.frame",
@@ -45,9 +63,9 @@ def deprecated_entity_members() -> list[str]:
 @pytest.fixture(autouse=True)
 def fail_on_deprecated_ha_usage(caplog: pytest.LogCaptureFixture) -> Iterator[None]:
     """Fail the test if HA reports deprecated API usage by a Bestiarium integration."""
-    # HA 2026.11 reports a use of a deprecated entity member once per call site;
-    # HA 2026.10 has no such members
-    getattr(deprecation, "_REPORTED_DEPRECATED_ENTITY_USAGE", set()).clear()
+    if HA_2026_11:
+        # HA reports a use of a deprecated entity member once per call site
+        deprecation._REPORTED_DEPRECATED_ENTITY_USAGE.clear()  # noqa: SLF001
     yield
     reports = [
         message

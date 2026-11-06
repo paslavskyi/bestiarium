@@ -18,7 +18,7 @@ from .tuya_codes import decode_code, load_vectors
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant, ServiceCall
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 async def test_home_code_goes_to_zha(

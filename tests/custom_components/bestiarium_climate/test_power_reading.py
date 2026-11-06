@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.bestiarium_climate.power_reading import (
     PowerReading,
