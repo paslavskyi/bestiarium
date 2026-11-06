@@ -64,8 +64,7 @@ class MockIrAc:
         self.last_frame: Kelon168Command | None = None
         self.last_outcome: IrFrameOutcome | None = None
         self._listeners: list[Callable[[], None]] = []
-        # The socket's own power (5 W) is the unit's off
-        self._unsub_socket = socket.add_listener(self._socket_changed)
+        self._unsub_socket: CALLBACK_TYPE | None = None
 
     @property
     def state(self) -> str:
@@ -79,9 +78,20 @@ class MockIrAc:
         return lambda: self._listeners.remove(listener)
 
     @callback
+    def start(self) -> None:
+        """
+        Follow the socket once both are restored; a socket restored off turns it off.
+
+        Before, a socket not restored yet reads off and would turn it off.
+        """
+        self._unsub_socket = self._socket.add_listener(self._socket_changed)
+        self._socket_changed()
+
+    @callback
     def stop(self) -> None:
         """Stop following the socket."""
-        self._unsub_socket()
+        if self._unsub_socket:
+            self._unsub_socket()
 
     @callback
     def restore(
