@@ -16,7 +16,7 @@ import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import Event, HomeAssistant, callback
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
     async_mock_service,
