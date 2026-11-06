@@ -24,7 +24,7 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.script import script_stack_cv
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     async_fire_time_changed,
     async_mock_service,
@@ -717,6 +717,9 @@ async def test_the_large_default_of_devices_is_no_power(
     assert expected_power(hass, device.entry_id) == 1150.0
 
 
+# HA 2026.11 removes the thermostat before the reload, which then leaves the
+# polling of its emptied platform running
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_repairs_of_a_removed_thermostat_go(
     hass: HomeAssistant, setup: Setup
 ) -> None:

@@ -20,7 +20,7 @@ from .conftest import RecordingEmitter, ir_entry, set_up
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 
 async def test_one_entry_only(hass: HomeAssistant) -> None:

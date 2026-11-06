@@ -1,5 +1,10 @@
 {
   "config": {
+    "step": {
+      "user": {
+        "title": "Bestiarium IR"
+      }
+    },
     "abort": {
       "single_instance_allowed": "Bestiarium IR is already set up: add blasters and air conditioners to it."
     }

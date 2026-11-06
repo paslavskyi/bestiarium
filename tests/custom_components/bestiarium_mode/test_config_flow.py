@@ -10,7 +10,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from custom_components.bestiarium_mode.const import (
     CONF_AC_LOAD_LIMIT_W,
@@ -288,6 +288,8 @@ async def test_overload_hold_in_the_load_limits_form(hass: HomeAssistant) -> Non
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "complete"}
     )
+    await hass.async_block_till_done()
     assert result["type"] == FlowResultType.ABORT
+    assert entry.state is ConfigEntryState.LOADED
     limits = entry.data["ac_load_limits"]
     assert limits[CONF_AC_OVERLOAD_HOLD_SECONDS] == 45  # noqa: PLR2004

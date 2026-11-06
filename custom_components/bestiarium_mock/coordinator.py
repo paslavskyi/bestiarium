@@ -99,6 +99,8 @@ class MockDevicesCoordinator:
 
         for socket in self.sockets.values():
             socket.start()
+        for ac in self.ir_acs.values():
+            ac.start()
 
         # Initial update
         self._update_all_thermometers()

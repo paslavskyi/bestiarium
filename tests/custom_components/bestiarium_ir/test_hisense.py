@@ -16,7 +16,7 @@ from homeassistant.const import ATTR_TEMPERATURE, STATE_UNAVAILABLE
 from homeassistant.core import State
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     mock_restore_cache_with_extra_data,
 )
 
@@ -45,7 +45,7 @@ from .conftest import (
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
-    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from pytest_homeassistant.common import MockConfigEntry
 
 AC = tuple["MockConfigEntry", str]
 

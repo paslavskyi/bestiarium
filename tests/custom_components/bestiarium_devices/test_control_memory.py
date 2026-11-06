@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant.common import async_fire_time_changed
 
 from custom_components.bestiarium_devices.const import RESPONSE_MEMORY_SIZE
 from custom_components.bestiarium_devices.control import ResponseMemory

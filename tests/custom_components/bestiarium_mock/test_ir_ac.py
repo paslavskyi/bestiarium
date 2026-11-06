@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigSubentryData
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant, State
 from infrared_protocols.commands.gree_ac import GreeAcCommand, GreeAcMode
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     mock_restore_cache,
 )
