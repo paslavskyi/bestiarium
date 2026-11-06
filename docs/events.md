@@ -116,7 +116,7 @@ action:
 
 ### `bestiarium_devices_overload_first_queue`
 
-**When**: Overload strategy completes first-queue shutdown (high-priority devices turned off).
+**When**: Overload strategy completes first-queue shutdown (high-priority devices turned off). The action `bestiarium_mode.trigger_overload` starts the same shutdown, with these same events and no field to tell it: `overload_cleared` is then always `false`, and the next event (`second_queue` or `cleared`) may come up to the overload hold later, by [the second queue's rule](bestiarium_devices.md#the-second-queue-of-an-overload).
 
 | Field                | Type    | Description                              |
 |----------------------|---------|------------------------------------------|

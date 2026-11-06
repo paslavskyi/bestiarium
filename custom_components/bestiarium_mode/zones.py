@@ -2,12 +2,15 @@
 The power load zone of the home: one zone at a time.
 
 Up at once; down only below the threshold minus a margin; green only after a
-pause; no data only after a tolerance (docs/concepts/stability.md).
+pause; no data only after a tolerance (docs/concepts/stability.md). An action
+may raise the overload ahead of the meter, which cannot lower it during a hold,
+until it shows the overload itself.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -15,16 +18,19 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_call_later, async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_AC_LOAD_LIMIT_W,
     CONF_AC_LOAD_LIMITS,
+    CONF_AC_OVERLOAD_HOLD_SECONDS,
     CONF_AC_OVERLOAD_RECOVERY_SECONDS,
     CONF_AC_POWER_SENSOR,
     CONF_AC_POWER_TOLERANCE_SECONDS,
     CONF_AC_RED_ZONE_PERCENT,
     CONF_AC_YELLOW_ZONE_PERCENT,
     CONF_AC_ZONE_HYSTERESIS_PERCENT,
+    DEFAULT_OVERLOAD_HOLD_SECONDS,
     DEFAULT_OVERLOAD_RECOVERY_SECONDS,
     DEFAULT_POWER_TOLERANCE_SECONDS,
     DEFAULT_RED_ZONE_PERCENT,
@@ -36,6 +42,8 @@ from .const import (
 )
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from homeassistant.core import CALLBACK_TYPE, HomeAssistant, State
 
     from .data import BestiariumModeConfigEntry
@@ -74,6 +82,7 @@ class ZoneConfig:
     margin_w: float
     pause_seconds: float
     tolerance_seconds: float
+    hold_seconds: float
 
     @classmethod
     def of(cls, entry: BestiariumModeConfigEntry) -> ZoneConfig:
@@ -99,6 +108,9 @@ class ZoneConfig:
             ),
             tolerance_seconds=limits.get(
                 CONF_AC_POWER_TOLERANCE_SECONDS, DEFAULT_POWER_TOLERANCE_SECONDS
+            ),
+            hold_seconds=limits.get(
+                CONF_AC_OVERLOAD_HOLD_SECONDS, DEFAULT_OVERLOAD_HOLD_SECONDS
             ),
         )
 
@@ -132,6 +144,12 @@ class ZoneTracker:
         self.config = ZoneConfig.of(entry)
         self.zone = Zone.NO_DATA
         self._data_lost = False  # no data longer than the tolerance
+        # The overload was raised by the action and the meter has not shown it
+        self.awaiting_meter = False
+        self._cancel_hold: CALLBACK_TYPE | None = None  # the overload is held
+        self._hold_extended_until: datetime | None = None
+        # Until then a signal repeats the last one: the meter's answer is not due
+        self._repeat_until = dt_util.utc_from_timestamp(0)
         self._cancel_pause: CALLBACK_TYPE | None = None
         self._cancel_tolerance: CALLBACK_TYPE | None = None
         self._unsubscribe: list[CALLBACK_TYPE] = []
@@ -156,6 +174,41 @@ class ZoneTracker:
         self._cancel_timers()
 
     @callback
+    def async_trigger_overload(self, source: str) -> None:
+        """
+        Raise the overload now and hold it against the meter.
+
+        A meter that shows the overload needs no hold: it leads the zone. A
+        repeat puts nothing off: during the hold it only extends it, and within
+        the first call's hold time the meter's answer is not due again (the
+        balancer's second queue).
+        """
+        now = dt_util.utcnow()
+        hold = timedelta(seconds=self.config.hold_seconds)
+        if self._cancel_hold:
+            LOGGER.debug("Overload hold extended by %s", source)
+            self._hold_extended_until = now + hold
+            return
+        repeat = now < self._repeat_until
+        if repeat and self.zone is Zone.OVERLOAD:
+            LOGGER.debug("Overload signal repeated by %s", source)
+        else:
+            LOGGER.warning("Overload triggered by %s", source)
+        if not repeat:
+            self._repeat_until = now + hold
+        power = _watts(self._hass.states.get(self.config.power_sensor_id))
+        if power is not None and power >= self.config.limit_w:
+            return
+        self._cancel_hold = async_call_later(
+            self._hass, hold.total_seconds(), self._on_hold_timer
+        )
+        self.awaiting_meter = not repeat
+        if self.zone is Zone.OVERLOAD:
+            self._changed()  # the attribute of the overload sensor
+        else:
+            self._set(Zone.OVERLOAD)
+
+    @callback
     def _on_power(self, _event: Event) -> None:
         self._update()
 
@@ -169,6 +222,8 @@ class ZoneTracker:
         power = _watts(self._hass.states.get(self.config.power_sensor_id))
         if power is None:
             self._stop_pause()
+            if self._data_lost and not self._cancel_hold:
+                self._set(Zone.NO_DATA)
             if self._cancel_tolerance is None and not self._data_lost:
                 self._cancel_tolerance = async_call_later(
                     self._hass, self.config.tolerance_seconds, self._on_tolerance
@@ -181,6 +236,14 @@ class ZoneTracker:
             self._data_lost = False
             LOGGER.info("Power load data is back")
         config = self.config
+        if self._cancel_hold:
+            if power < config.limit_w:
+                return
+            self._cancel_hold()
+            self._cancel_hold = None
+            self._hold_extended_until = None
+            self.awaiting_meter = False
+            self._changed()
         up = config.zone_of(power)
         down = config.zone_of(power + config.margin_w)
         if _LEVEL[up] > _LEVEL[self.zone]:
@@ -223,6 +286,22 @@ class ZoneTracker:
         self._set(Zone.GREEN)
 
     @callback
+    def _on_hold_timer(self, _now: object) -> None:
+        """End the hold; if it was extended, stop awaiting the meter and go on."""
+        self._cancel_hold = None
+        self.awaiting_meter = False
+        if self._hold_extended_until is None:
+            self._update()
+        else:
+            self._cancel_hold = async_call_later(
+                self._hass,
+                max(0, (self._hold_extended_until - dt_util.utcnow()).total_seconds()),
+                self._on_hold_timer,
+            )
+            self._hold_extended_until = None
+        self._changed()
+
+    @callback
     def _on_tolerance(self, _now: object) -> None:
         self._cancel_tolerance = None
         self._data_lost = True
@@ -231,10 +310,14 @@ class ZoneTracker:
             self.config.power_sensor_id,
             self.config.tolerance_seconds,
         )
-        self._set(Zone.NO_DATA)
+        if not self._cancel_hold:
+            self._set(Zone.NO_DATA)
 
     def _cancel_timers(self) -> None:
         self._stop_pause()
+        if self._cancel_hold:
+            self._cancel_hold()
+            self._cancel_hold = None
         if self._cancel_tolerance:
             self._cancel_tolerance()
             self._cancel_tolerance = None

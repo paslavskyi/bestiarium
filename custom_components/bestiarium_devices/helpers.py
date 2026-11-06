@@ -27,6 +27,7 @@ from .const import (
     LOAD_PRIORITY_MIN,
     MODE_AC_LOAD_LIMITS,
     MODE_AC_POWER_SENSOR,
+    MODE_AWAITING_METER,
     MODE_RED_THRESHOLD,
     MODE_SELECT_UNIQUE_ID,
     UNIT_WATT,
@@ -99,6 +100,15 @@ def load_and_red_threshold(hass: HomeAssistant) -> tuple[float, float] | None:
         return load, float(red_state.attributes[MODE_RED_THRESHOLD])
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def overload_awaits_meter(hass: HomeAssistant) -> bool:
+    """Return whether the action's overload still awaits the meter's answer."""
+    sensor = mode_entity_id(
+        hass, "binary_sensor", ZONE_SENSOR_UNIQUE_ID.format(zone="overload")
+    )
+    state = hass.states.get(sensor) if sensor else None
+    return state is not None and MODE_AWAITING_METER in state.attributes
 
 
 def validate_power_sensor(hass: HomeAssistant, entity_id: str) -> str | None:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
-from .const import SIGNAL_ZONE_CHANGED
+from .const import ATTR_AWAITING_METER, SIGNAL_ZONE_CHANGED
 from .zones import Zone, ZoneTracker
 
 if TYPE_CHECKING:
@@ -70,13 +70,15 @@ class PowerLoadBinarySensor(BinarySensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """
-        Return the red threshold on the red sensor: the balancer reads it.
+        Return what the balancer reads: the red threshold, the awaited meter.
 
         Nothing else: the pause is "all four off and available", the limit is
         the limit entity's, the other thresholds are configuration.
         """
         if self._zone is Zone.RED:
             return {"red_threshold": self._tracker.config.red_threshold}
+        if self._zone is Zone.OVERLOAD and self._tracker.awaiting_meter:
+            return {ATTR_AWAITING_METER: True}
         return None
 
     async def async_added_to_hass(self) -> None:
