@@ -288,6 +288,8 @@ async def test_overload_hold_in_the_load_limits_form(hass: HomeAssistant) -> Non
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"next_step_id": "complete"}
     )
+    await hass.async_block_till_done()
     assert result["type"] == FlowResultType.ABORT
+    assert entry.state is ConfigEntryState.LOADED
     limits = entry.data["ac_load_limits"]
     assert limits[CONF_AC_OVERLOAD_HOLD_SECONDS] == 45  # noqa: PLR2004
