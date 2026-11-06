@@ -717,6 +717,9 @@ async def test_the_large_default_of_devices_is_no_power(
     assert expected_power(hass, device.entry_id) == 1150.0
 
 
+# HA 2026.11 removes the thermostat before the reload, which then leaves the
+# polling of its emptied platform running
+@pytest.mark.parametrize("expected_lingering_timers", [True])
 async def test_the_repairs_of_a_removed_thermostat_go(
     hass: HomeAssistant, setup: Setup
 ) -> None:
